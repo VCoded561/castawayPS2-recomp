@@ -40,6 +40,7 @@ WorkHistory/
 *.txt
 *.md
 !README.md
+!LICENSE*
 castaway_functions - Copy.toml
 
 # Reference Repos, MCP & Scratch Scripts
