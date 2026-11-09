@@ -1,0 +1,1 @@
+dotnet run --project src/Castaway.Host/Castaway.Host.csproj

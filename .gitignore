@@ -1,0 +1,59 @@
+# Build Results
+[Bb]in/
+[Oo]bj/
+[Ll]og/
+[Ll]ogs/
+*.log
+
+# Visual Studio / Rider / VSCode
+.vs/
+.idea/
+.vscode/
+*.user
+*.suo
+*.userprefs
+*.sln.docstates
+
+# Generated Transpiled C# (AOT generated from SLUS_216.64 via Tools/PS2Recomp)
+src/Castaway.Generated/*.cs
+!src/Castaway.Generated/Castaway.Generated.csproj
+
+# Proprietary Game Files & Asset Dumps (Users must provide their own retail disc)
+Data/
+Game Data/
+Saves/
+*.ARC
+*.arc
+SLUS*
+*.iso
+*.cue
+*.img
+
+# Frame and VRAM Debug Dumps
+*.bmp
+*.png
+vu1_programs.json
+
+# Internal Documentation & Work History
+Docs/
+WorkHistory/
+*.txt
+*.md
+!README.md
+castaway_functions - Copy.toml
+
+# Reference Repos, MCP & Scratch Scripts
+.agents/
+Ghidra&Ps2Recomp output/
+pcsx2 patches/
+Tools/pcsx2 source/
+Tools/ps2-web-recomp-main/
+Tools/PS2Recomp-main/
+Tools/tsc-blender-io-main/
+Tools/tsc-texture-extractor-main/
+Tools/Recomp agent skill/
+Tools/__pycache__/
+Tools/*.py
+Tools/trace_loop.cs
+scratch_*.py
+*.pyc
