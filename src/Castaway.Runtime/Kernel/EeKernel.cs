@@ -1566,12 +1566,14 @@ public sealed unsafe class EeKernel
     }
 
     private bool _inTriggerVBlank;
+    public unsafe delegate void VBlankTickHandler(byte* ram);
     internal MmioRouter? Mmio { get; set; }
     public Action? OnMainThreadIdleTick { get; set; }
+    public VBlankTickHandler? OnVBlankTick { get; set; }
 
     public void StepFrameTimers(CpuContext* ctx, byte* ram)
     {
-        // Advance hardware timers by 1 frame (1/60s = 9,600 ticks at 576 kHz)
+        // Advance hardware timers (fixed 16.667 ms step or real-time wall-clock delta) and assert VBlank/timer INTC bits
         Mmio?.StepFrameTimers(ram);
         IntcStat |= (1u << 9) | (1u << 10);
 
@@ -1600,6 +1602,9 @@ public sealed unsafe class EeKernel
     {
         // Set INTC VBlank start (bit 2) and VBlank end (bit 3)
         IntcStat |= (1u << 2) | (1u << 3);
+
+        if (ram != null)
+            OnVBlankTick?.Invoke(ram);
 
         if (_vsyncFlagPtr1 != 0)
             BinaryPrimitives.WriteUInt32LittleEndian(new Span<byte>(ram + (_vsyncFlagPtr1 & 0x01FFFFFFu), 4), 1);
@@ -1654,6 +1659,24 @@ public sealed unsafe class EeKernel
         finally
         {
             *callerCtx = saved;
+        }
+    }
+
+    /// <summary>
+    /// Formats a compact summary of all EE kernel threads and their current wait state for watchdog diagnostics.
+    /// </summary>
+    public string FormatThreadStates()
+    {
+        lock (_syncLock)
+        {
+            var sb = new System.Text.StringBuilder();
+            foreach (var kv in _threads)
+            {
+                var t = kv.Value;
+                if (sb.Length > 0) sb.Append(", ");
+                sb.Append($"T{t.Id}:{t.Status}(wait={t.WaitType},sema={t.WaitSemaId},entry=0x{t.EntryPc:X8})");
+            }
+            return sb.ToString();
         }
     }
 }

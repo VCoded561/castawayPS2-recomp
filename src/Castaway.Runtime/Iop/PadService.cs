@@ -53,6 +53,7 @@ public sealed unsafe class PadService
     private readonly Ps2PadButtons[] _latchedButtons = [Ps2PadButtons.None, Ps2PadButtons.None];
     private Ps2PadButtons _lastLoggedButtons = Ps2PadButtons.None;
     private uint _frameCounter = 1;
+    private int _rpcDefaultLogCount;
 
     public DualShock2State GetPortState(int port = 0) => _portStates[Math.Clamp(port, 0, 1)];
 
@@ -314,6 +315,13 @@ public sealed unsafe class PadService
             default:
             {
                 // SetMainMode (0x06), SetActDirect (0x08), SetActAlign (0x09), GetButtonMask (0x0A), SetButtonInfo (0x0B), Init (0x10)
+                if (_rpcDefaultLogCount < 30 && cmd != 0x08)
+                {
+                    _rpcDefaultLogCount++;
+                    int p = BinaryPrimitives.ReadInt32LittleEndian(send[4..8]);
+                    int sl = BinaryPrimitives.ReadInt32LittleEndian(send[8..12]);
+                    Console.WriteLine($"[PadService] RPC cmd=0x{cmd:X2} port={p} slot={sl}");
+                }
                 BinaryPrimitives.WriteInt32LittleEndian(recv[0..4], 1);
                 BinaryPrimitives.WriteInt32LittleEndian(recv[12..16], 1);
                 BinaryPrimitives.WriteInt32LittleEndian(recv[20..24], 1);

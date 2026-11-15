@@ -23,7 +23,10 @@ public sealed unsafe class DvdVirtualFileSystem : IDisposable
     private readonly List<DvdFileEntry> _sortedByLba = new();
     private readonly Dictionary<int, OpenFileHandle> _openHandles = new();
     private readonly Dictionary<uint, int> _eaSlotToFd = new();
+    private byte[]? _spu2Ram;
     private int _nextFd = 3; // 0=stdin, 1=stdout, 2=stderr
+
+    public void AttachSpu2Ram(byte[]? spu2Ram) => _spu2Ram = spu2Ram;
 
     private sealed class OpenFileHandle : IDisposable
     {
@@ -367,8 +370,12 @@ public sealed unsafe class DvdVirtualFileSystem : IDisposable
         Span<byte> entry = new Span<byte>(ram + slotPhys, 260);
         entry.Slice(20, 40).Clear();
 
+        uint streamTblPhys = (0x00598080u + 0u * 12u) & 0x01FFFFFFu;
+        uint eeRingBuf = BinaryPrimitives.ReadUInt32LittleEndian(new ReadOnlySpan<byte>(ram + streamTblPhys + 4, 4));
+        uint streamMutex = BinaryPrimitives.ReadUInt32LittleEndian(new ReadOnlySpan<byte>(ram + streamTblPhys + 8, 4));
+
         BinaryPrimitives.WriteUInt32LittleEndian(entry[0..4], (uint)fileEntry.SizeBytes);
-        BinaryPrimitives.WriteUInt32LittleEndian(entry[4..8], 0xFFFFFFFFu);
+        BinaryPrimitives.WriteUInt32LittleEndian(entry[4..8], 0u);
         BinaryPrimitives.WriteUInt32LittleEndian(entry[8..12], 0xFFFFFFFFu);
         BinaryPrimitives.WriteUInt32LittleEndian(entry[12..16], 0xFFFFFFFFu);
         BinaryPrimitives.WriteUInt32LittleEndian(entry[16..20], 0xFFFFFFFFu);
@@ -381,6 +388,8 @@ public sealed unsafe class DvdVirtualFileSystem : IDisposable
         BinaryPrimitives.WriteUInt32LittleEndian(entry[76..80], 1u);
         BinaryPrimitives.WriteUInt32LittleEndian(entry[80..84], 0u);
         BinaryPrimitives.WriteUInt32LittleEndian(entry[84..88], 0u);
+        BinaryPrimitives.WriteUInt32LittleEndian(entry[88..92], eeRingBuf);
+        BinaryPrimitives.WriteUInt32LittleEndian(entry[92..96], streamMutex);
 
         entry.Slice(96, 64).Clear();
         byte[] pathBytes = Encoding.ASCII.GetBytes(guestPath);
@@ -402,12 +411,34 @@ public sealed unsafe class DvdVirtualFileSystem : IDisposable
         return (int)chosenSlot;
     }
 
-    public int ReadEaFileSysSlot(byte* ram, uint cFileSysAddr, uint readReqAddr)
+    private int ReadToSpu2Ram(int fd, byte[] spu2Ram, uint destAddr, int count)
+    {
+        if (count <= 0 || !_openHandles.TryGetValue(fd, out var handle))
+            return 0;
+
+        int offset = (int)(destAddr & 0x001FFFFFu);
+        if (offset >= spu2Ram.Length)
+            return 0;
+
+        int maxCount = Math.Min(count, spu2Ram.Length - offset);
+        int total = 0;
+        while (total < maxCount)
+        {
+            int read = handle.Stream.Read(spu2Ram.AsSpan(offset + total, maxCount - total));
+            if (read <= 0)
+                break;
+            total += read;
+        }
+        return total;
+    }
+
+    public int ReadEaFileSysSlot(byte* ram, uint cFileSysAddr, uint readReqAddr, byte[]? spu2Ram = null)
     {
         uint reqPhys = readReqAddr & 0x01FFFFFFu;
         ReadOnlySpan<byte> req = new ReadOnlySpan<byte>(ram + reqPhys, 40);
         uint slot = BinaryPrimitives.ReadUInt32LittleEndian(req[4..8]);
         byte reqFlags = req[8];
+        ushort reqDestFlags = BinaryPrimitives.ReadUInt16LittleEndian(req[10..12]);
         uint reqOffset = BinaryPrimitives.ReadUInt32LittleEndian(req[12..16]);
         uint destBuf = BinaryPrimitives.ReadUInt32LittleEndian(req[32..36]);
         int byteCount = (int)BinaryPrimitives.ReadUInt32LittleEndian(req[36..40]);
@@ -423,12 +454,22 @@ public sealed unsafe class DvdVirtualFileSystem : IDisposable
         if (BinaryPrimitives.ReadUInt32LittleEndian(entry[60..64]) == 0)
             return 0;
 
+        ushort entrySpace = BinaryPrimitives.ReadUInt16LittleEndian(entry[30..32]);
+        if ((reqFlags & 0x02) != 0)
+        {
+            entrySpace = (ushort)((entrySpace & ~0x003Fu) | (reqDestFlags & 0x003Fu));
+            BinaryPrimitives.WriteUInt16LittleEndian(entry[30..32], entrySpace);
+        }
+
         uint offset = (reqFlags & 0x08) != 0
             ? reqOffset
             : BinaryPrimitives.ReadUInt32LittleEndian(entry[32..36]);
 
         Seek(fd, offset, 0);
-        int bytesRead = ReadToRam(fd, ram, destBuf, byteCount);
+        byte[]? targetSpu2 = spu2Ram ?? _spu2Ram;
+        int bytesRead = (entrySpace & 0x3Fu) == 3 && targetSpu2 != null
+            ? ReadToSpu2Ram(fd, targetSpu2, destBuf, byteCount)
+            : ReadToRam(fd, ram, destBuf, byteCount);
         if (bytesRead < 0)
             bytesRead = 0;
 
@@ -462,6 +503,39 @@ public sealed unsafe class DvdVirtualFileSystem : IDisposable
         }
 
         return 1;
+    }
+
+    /// <summary>
+    /// Thread-safe positional read from either an open EA FileSys slot (created by OpenEaFileSysSlot)
+    /// or a raw open fd, without mutating FileStream.Position.
+    /// </summary>
+    public int ReadEaSlotAtOffset(uint slotOrFd, long offset, Span<byte> destination)
+    {
+        if (destination.IsEmpty || offset < 0)
+            return 0;
+
+        OpenFileHandle? handle = null;
+        if (_eaSlotToFd.TryGetValue(slotOrFd, out int fd))
+            _openHandles.TryGetValue(fd, out handle);
+        else
+            _openHandles.TryGetValue((int)slotOrFd, out handle);
+
+        if (handle == null)
+            return 0;
+
+        if (offset >= handle.Entry.SizeBytes)
+            return 0;
+
+        int maxAvail = (int)Math.Min((long)destination.Length, handle.Entry.SizeBytes - offset);
+        int totalRead = 0;
+        while (totalRead < maxAvail)
+        {
+            int r = RandomAccess.Read(handle.Stream.SafeFileHandle, destination.Slice(totalRead, maxAvail - totalRead), offset + totalRead);
+            if (r <= 0)
+                break;
+            totalRead += r;
+        }
+        return totalRead;
     }
 
     public void Dispose()

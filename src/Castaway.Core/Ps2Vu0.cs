@@ -1,5 +1,6 @@
 using System.Runtime.CompilerServices;
 using System.Runtime.Intrinsics;
+using System.Runtime.Intrinsics.X86;
 
 namespace Castaway.Core;
 
@@ -12,6 +13,29 @@ public static unsafe class Ps2Vu0
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public static Vector128<float> BlendMask(Vector128<float> oldVal, Vector128<float> newVal, uint destMask)
     {
+        if (Sse41.IsSupported)
+        {
+            return (destMask & 0xFu) switch
+            {
+                0x0u => oldVal,
+                0x1u => Sse41.Blend(oldVal, newVal, 0x8),
+                0x2u => Sse41.Blend(oldVal, newVal, 0x4),
+                0x3u => Sse41.Blend(oldVal, newVal, 0xC),
+                0x4u => Sse41.Blend(oldVal, newVal, 0x2),
+                0x5u => Sse41.Blend(oldVal, newVal, 0xA),
+                0x6u => Sse41.Blend(oldVal, newVal, 0x6),
+                0x7u => Sse41.Blend(oldVal, newVal, 0xE),
+                0x8u => Sse41.Blend(oldVal, newVal, 0x1),
+                0x9u => Sse41.Blend(oldVal, newVal, 0x9),
+                0xAu => Sse41.Blend(oldVal, newVal, 0x5),
+                0xBu => Sse41.Blend(oldVal, newVal, 0xD),
+                0xCu => Sse41.Blend(oldVal, newVal, 0x3),
+                0xDu => Sse41.Blend(oldVal, newVal, 0xB),
+                0xEu => Sse41.Blend(oldVal, newVal, 0x7),
+                _ => newVal,
+            };
+        }
+
         if (destMask == 0xFu) return newVal;
         if (destMask == 0u) return oldVal;
         Vector128<int> mask = Vector128.Create(
@@ -25,8 +49,13 @@ public static unsafe class Ps2Vu0
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public static Vector128<float> BroadcastBc(Vector128<float> v, uint bc)
     {
-        float lane = v.GetElement((int)(bc & 3u));
-        return Vector128.Create(lane);
+        return (bc & 3u) switch
+        {
+            0u => Vector128.Shuffle(v, Vector128<int>.Zero),
+            1u => Vector128.Shuffle(v, Vector128<int>.One),
+            2u => Vector128.Shuffle(v, Vector128.Create(2)),
+            _ => Vector128.Shuffle(v, Vector128.Create(3)),
+        };
     }
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
@@ -93,22 +122,31 @@ public static unsafe class Ps2Vu0
         }
     }
 
-    // Vector Max / Min (using PS2 float ordering)
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    private static Vector128<int> VecOrderedKey(Vector128<float> x)
+    {
+        Vector128<int> bits = x.AsInt32();
+        Vector128<int> mag = bits & Vector128.Create(0x7FFFFFFF);
+        Vector128<int> nonDenorm = ~Vector128.LessThan(mag, Vector128.Create(0x00800000));
+        mag &= nonDenorm;
+        Vector128<int> sign = Vector128.ShiftRightArithmetic(bits, 31);
+        return (mag ^ sign) - sign;
+    }
+
+    // Vector Max / Min (using PS2 float ordering: ToOrderedKey(a) >=/<= ToOrderedKey(b) ? a : b)
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public static Vector128<float> VecMax(Vector128<float> a, Vector128<float> b)
-        => Vector128.Create(
-            Ps2Float.Max(a.GetElement(0), b.GetElement(0)),
-            Ps2Float.Max(a.GetElement(1), b.GetElement(1)),
-            Ps2Float.Max(a.GetElement(2), b.GetElement(2)),
-            Ps2Float.Max(a.GetElement(3), b.GetElement(3)));
+    {
+        Vector128<float> pickB = Vector128.LessThan(VecOrderedKey(a), VecOrderedKey(b)).AsSingle();
+        return Vector128.ConditionalSelect(pickB, b, a);
+    }
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public static Vector128<float> VecMin(Vector128<float> a, Vector128<float> b)
-        => Vector128.Create(
-            Ps2Float.Min(a.GetElement(0), b.GetElement(0)),
-            Ps2Float.Min(a.GetElement(1), b.GetElement(1)),
-            Ps2Float.Min(a.GetElement(2), b.GetElement(2)),
-            Ps2Float.Min(a.GetElement(3), b.GetElement(3)));
+    {
+        Vector128<float> pickB = Vector128.LessThan(VecOrderedKey(b), VecOrderedKey(a)).AsSingle();
+        return Vector128.ConditionalSelect(pickB, b, a);
+    }
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public static void Vopmula(CpuContext* ctx, int vfs, int vft, uint destMask)

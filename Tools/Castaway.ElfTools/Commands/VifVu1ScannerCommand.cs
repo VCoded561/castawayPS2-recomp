@@ -18,16 +18,23 @@ public class Vu1ProgramManifestItem
 
 public static class VifVu1ScannerCommand
 {
+    private static bool _fullDisasm = false;
+
     public static int Run(string[] args)
     {
         string outFile = "vu1_programs.json";
         string? elfPath = null;
         int maxLines = 80;
+        _fullDisasm = false;
 
         for (int i = 0; i < args.Length; i++)
         {
             string arg = args[i];
-            if ((arg == "--out" || arg == "-o") && i + 1 < args.Length)
+            if (arg == "--full")
+            {
+                _fullDisasm = true;
+            }
+            else if ((arg == "--out" || arg == "-o") && i + 1 < args.Length)
             {
                 outFile = args[++i];
             }
@@ -165,7 +172,7 @@ public static class VifVu1ScannerCommand
             Crc32 = $"0x{crc:X8}"
         };
 
-        int sampleCount = Math.Min(6, insnCount);
+        int sampleCount = _fullDisasm ? insnCount : Math.Min(6, insnCount);
         for (int i = 0; i < sampleCount; i++)
         {
             uint lower = BinaryPrimitives.ReadUInt32LittleEndian(span.Slice(i * 8, 4));

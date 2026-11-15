@@ -272,8 +272,27 @@ public sealed unsafe class SifRpcRouter
         if (rpcNum == 1 && send.Length >= 4) // AllocIopHeap
         {
             uint bytes = BinaryPrimitives.ReadUInt32LittleEndian(send[0..4]);
-            ret = _nextIopHeapAddr;
-            _nextIopHeapAddr += (bytes + 63u) & ~63u;
+            uint aligned = (bytes + 63u) & ~63u;
+            if (_nextIopHeapAddr + aligned <= Spu2AudioService.IopRamSize)
+            {
+                ret = _nextIopHeapAddr;
+                _nextIopHeapAddr += aligned;
+            }
+            else
+            {
+                // Wrap into high temporary scratch area if exhausted cleanly; log if tracing.
+                ret = _nextIopHeapAddr < Spu2AudioService.IopRamSize ? _nextIopHeapAddr : 0u;
+            }
+
+            if (_audio.EnableTraceLogging)
+            {
+                Console.WriteLine($"[IOP_HEAP] Alloc({bytes} bytes, aligned={aligned}) -> 0x{ret:X8} (next=0x{_nextIopHeapAddr:X8})");
+            }
+        }
+        else if (rpcNum == 2 && _audio.EnableTraceLogging && send.Length >= 4)
+        {
+            uint freeAddr = BinaryPrimitives.ReadUInt32LittleEndian(send[0..4]);
+            Console.WriteLine($"[IOP_HEAP] Free(0x{freeAddr:X8})");
         }
 
         if (recv.Length >= 4)
@@ -409,35 +428,65 @@ public sealed unsafe class SifRpcRouter
 
             ReadOnlySpan<byte> entry = new ReadOnlySpan<byte>(ram + entryOff, 16);
             uint src = BinaryPrimitives.ReadUInt32LittleEndian(entry[0..4]);
+            uint dst = BinaryPrimitives.ReadUInt32LittleEndian(entry[4..8]);
             int size = BinaryPrimitives.ReadInt32LittleEndian(entry[8..12]);
+            uint attr = BinaryPrimitives.ReadUInt32LittleEndian(entry[12..16]);
 
-            if (src != 0 && size >= 16)
+            if (src == 0 || size <= 0)
+                continue;
+
+            uint srcPhys = src & 0x01FFFFFFu;
+            if (srcPhys + (uint)size > CpuContext.RamSize)
+                continue;
+
+            bool isSifCmdAttr = (attr & 0x44u) != 0 || dst == 0;
+            if (isSifCmdAttr && size >= 16)
             {
-                uint pktPhys = src & 0x01FFFFFFu;
-                if (pktPhys + (uint)size <= CpuContext.RamSize)
-                {
-                    ReadOnlySpan<byte> pkt = new ReadOnlySpan<byte>(ram + pktPhys, size);
-                    uint cid = BinaryPrimitives.ReadUInt32LittleEndian(pkt[8..12]);
+                ReadOnlySpan<byte> pkt = new ReadOnlySpan<byte>(ram + srcPhys, size);
+                uint cid = BinaryPrimitives.ReadUInt32LittleEndian(pkt[8..12]);
 
-                    if (cid == 0x80000009u && size >= 40) // SIF_CMDC_BIND
-                    {
-                        uint clientPtr = BinaryPrimitives.ReadUInt32LittleEndian(pkt[28..32]);
-                        uint sid = BinaryPrimitives.ReadUInt32LittleEndian(pkt[32..36]);
-                        BindRpc(ram, clientPtr, sid, 0);
-                    }
-                    else if (cid == 0x8000000Au && size >= 48) // SIF_CMDC_CALL
-                    {
-                        int sendSize = BinaryPrimitives.ReadInt32LittleEndian(pkt[16..20]);
-                        uint recvBuf = BinaryPrimitives.ReadUInt32LittleEndian(pkt[20..24]);
-                        int recvSize = BinaryPrimitives.ReadInt32LittleEndian(pkt[24..28]);
-                        uint clientPtr = BinaryPrimitives.ReadUInt32LittleEndian(pkt[32..36]);
-                        uint rpcNum = BinaryPrimitives.ReadUInt32LittleEndian(pkt[36..40]);
-                        uint sendBuf = i > 0
-                            ? BinaryPrimitives.ReadUInt32LittleEndian(new ReadOnlySpan<byte>(ram + phys, 4))
-                            : 0u;
-                        CallRpc(ctx, ram, clientPtr, rpcNum, 0, sendBuf, sendSize, recvBuf, recvSize, 0, 0);
-                    }
+                if (cid == 0x80000009u && size >= 40) // SIF_CMDC_BIND
+                {
+                    uint clientPtr = BinaryPrimitives.ReadUInt32LittleEndian(pkt[28..32]);
+                    uint sid = BinaryPrimitives.ReadUInt32LittleEndian(pkt[32..36]);
+                    BindRpc(ram, clientPtr, sid, 0);
+                    continue;
                 }
+                else if (cid == 0x8000000Au && size >= 48) // SIF_CMDC_CALL
+                {
+                    int sendSize = BinaryPrimitives.ReadInt32LittleEndian(pkt[16..20]);
+                    uint recvBuf = BinaryPrimitives.ReadUInt32LittleEndian(pkt[20..24]);
+                    int recvSize = BinaryPrimitives.ReadInt32LittleEndian(pkt[24..28]);
+                    uint clientPtr = BinaryPrimitives.ReadUInt32LittleEndian(pkt[32..36]);
+                    uint rpcNum = BinaryPrimitives.ReadUInt32LittleEndian(pkt[36..40]);
+                    uint sendBuf = i > 0
+                        ? BinaryPrimitives.ReadUInt32LittleEndian(new ReadOnlySpan<byte>(ram + phys + (i - 1) * 16, 4))
+                        : 0u;
+                    CallRpc(ctx, ram, clientPtr, rpcNum, 0, sendBuf, sendSize, recvBuf, recvSize, 0, 0);
+                    continue;
+                }
+            }
+
+            // Skip sendBuf entry paired with an immediately following SIF_CMDC_CALL packet
+            bool pairedWithRpcCall = false;
+            if (i + 1 < count && entryOff + 32 <= CpuContext.RamSize)
+            {
+                ReadOnlySpan<byte> nextEntry = new ReadOnlySpan<byte>(ram + entryOff + 16, 16);
+                uint nextSrc = BinaryPrimitives.ReadUInt32LittleEndian(nextEntry[0..4]);
+                int nextSize = BinaryPrimitives.ReadInt32LittleEndian(nextEntry[8..12]);
+                uint nextAttr = BinaryPrimitives.ReadUInt32LittleEndian(nextEntry[12..16]);
+                uint nextPhys = nextSrc & 0x01FFFFFFu;
+                if ((nextAttr & 0x44u) != 0 && nextSize >= 48 && nextPhys + 12 <= CpuContext.RamSize)
+                {
+                    uint nextCid = BinaryPrimitives.ReadUInt32LittleEndian(new ReadOnlySpan<byte>(ram + nextPhys + 8, 4));
+                    if (nextCid == 0x8000000Au)
+                        pairedWithRpcCall = true;
+                }
+            }
+
+            if (!pairedWithRpcCall && dst != 0)
+            {
+                _audio.WriteIopRam(dst, new ReadOnlySpan<byte>(ram + srcPhys, size));
             }
         }
 

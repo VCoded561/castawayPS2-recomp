@@ -1,7 +1,9 @@
 using System.Buffers.Binary;
 using System.Diagnostics;
 using System.Runtime.CompilerServices;
+using System.Runtime.InteropServices;
 using Castaway.Core;
+using Castaway.GsRenderer.Diagnostics;
 
 namespace Castaway.GsRenderer.Gs;
 
@@ -129,11 +131,61 @@ public sealed class GsProcessor
     private readonly byte[] _cachedClutTa1 = { 0xFF, 0xFF };
     private readonly bool[] _cachedClutAem = { false, false };
     private readonly bool[] _cachedClutIs8Bit = { false, false };
-    private int _vramTransferRevision;
-    private readonly int[] _cachedClutVramRevision = { -1, -1 };
+    private readonly bool[] _cachedClutValid = { false, false };
+
+    private readonly bool[] _lastDcValid = new bool[2];
+    private readonly GsDrawContext[] _lastDc = new GsDrawContext[2];
+    private readonly bool[] _lastDcGouraud = new bool[2];
+    private readonly GsPrimitiveBatch?[] _lastDcBatch = new GsPrimitiveBatch?[2];
+    private readonly GsRendererMode[] _lastDcMode = { (GsRendererMode)255, (GsRendererMode)255 };
+    private int _drawContextVersionCounter = 1;
+
+    private readonly record struct GsTexCacheKey(
+        int Tbp0, int Tbw, GsPsm Psm, int Tw, int Th,
+        int Cbp, GsPsm Cpsm, int Csa, byte Ta0, byte Ta1, bool Aem);
+
+    private readonly record struct GsSpriteWriteSignature(
+        ulong SrcHash64, int SrcTw, int SrcTh,
+        int ClipX1, int ClipY1,
+        int Fx0Bits, int Fy0Bits, int Fx1Bits, int Fy1Bits,
+        ushort U0, ushort V0, ushort U1, ushort V1,
+        int S0Bits, int T0Bits, int S1Bits, int T1Bits, int Q1Bits,
+        ulong Tex0Mask, ulong ClampReg, byte VR, byte VG, byte VB, byte VA, byte Flags);
+
+    private sealed class GsCachedTexEntry
+    {
+        public int StartBlock;
+        public int EndBlock;
+        public int ClutStartBlock;
+        public int ClutEndBlock;
+        public ulong Hash64;
+        public bool HasHash;
+        public bool SharedWithBatch;
+        public bool HasWriteSig;
+        public GsSpriteWriteSignature WriteSig;
+        public uint[] Pixels = Array.Empty<uint>();
+    }
+
+    private sealed class GsBakedSpriteEntry
+    {
+        public ulong DstHash64;
+        public uint[] Pixels = Array.Empty<uint>();
+    }
+
+    private readonly record struct DeferredSpriteVramWrite(
+        int FbpBlock, int FbwPixels, int Width, int Height, int StartBlock, int EndBlock, uint[] Pixels);
+
+    private const int MaxSpriteBakeCacheEntries = 1024;
+    private readonly Dictionary<GsTexCacheKey, GsCachedTexEntry> _decodedTexCache = new(256);
+    private readonly Dictionary<int, Stack<uint[]>> _texBufferPool = new(16);
+    private readonly Dictionary<GsSpriteWriteSignature, GsBakedSpriteEntry> _spriteBakeCache = new(256);
+    private readonly Queue<GsSpriteWriteSignature> _spriteBakeFifo = new(256);
+    private readonly Dictionary<int, DeferredSpriteVramWrite> _deferredVramBakes = new(8);
 
     // Diagnostics & Profiling
+    public Action? OnFinish { get; set; }
     public bool EnableProfiling { get; set; } = false;
+    public FrameProfileRecorder? FrameRecorder { get; set; }
     public long TotalGifTagsProcessed { get; private set; }
     public long TotalVerticesKicked { get; private set; }
     public long TotalPrimitivesDrawn { get; private set; }
@@ -159,14 +211,14 @@ public sealed class GsProcessor
         Frame[0] = 0x00000000000A0000ul;
         Xyoffset[0] = (2048ul << 4) | ((2048ul << 4) << 32);
         Scissor[0] = 0x01DF_0000_027F_0000ul;
-        Zbuf[0] = 0x00000001310000DCul;
+        Zbuf[0] = 0x00000000310000DCul;
         Test[0] = 0x0000000000050000ul;
 
         // Context 2 defaults (FBW=10 / 640px, PSMCT32, FBP=0)
         Frame[1] = 0x00000000000A0000ul;
         Xyoffset[1] = (2048ul << 4) | ((2048ul << 4) << 32);
         Scissor[1] = 0x01DF_0000_027F_0000ul;
-        Zbuf[1] = 0x00000001310000DCul;
+        Zbuf[1] = 0x00000000310000DCul;
         Test[1] = 0x0000000000050000ul;
     }
 
@@ -174,11 +226,90 @@ public sealed class GsProcessor
     public int ActiveContext => (int)((ActiveAttr >> 9) & 1ul);
     public GsPrimitiveType ActivePrimType => (GsPrimitiveType)(Prim & 0x7ul);
 
+    public GsSnapshotState CaptureState()
+    {
+        FlushAllDeferredSpriteVram();
+        var s = new GsSnapshotState
+        {
+            Vram = (byte[])Vram.Clone(),
+            Prim = Prim, Rgbaq = Rgbaq, St = St, Uv = Uv,
+            Prmodecont = Prmodecont, Prmode = Prmode, Texclut = Texclut, Scanmsk = Scanmsk,
+            Texa = Texa, Fogcol = Fogcol, Dthe = Dthe, Colclamp = Colclamp, Pabe = Pabe,
+            Bitbltbuf = Bitbltbuf, Trxpos = Trxpos, Trxreg = Trxreg, Trxdir = Trxdir,
+            Signal = Signal, Finish = Finish, Label = Label,
+            CurS = _curS, CurT = _curT, CurQ = _curQ,
+            CurU = _curU, CurV = _curV,
+            CurR = _curR, CurG = _curG, CurB = _curB, CurA = _curA, CurF = _curF,
+            VtxCount = _vtxCount,
+            ActiveCbp = _activeCbp, ActiveCpsm = _activeCpsm,
+            TrxBuffer = _trxBuffer.Count > 0 ? _trxBuffer.ToArray() : Array.Empty<byte>(),
+            TrxPixelX = _trxPixelX, TrxPixelY = _trxPixelY, TrxActive = _trxActive,
+            PendingImageBytes = _pendingImageBytes, PendingMode = _pendingMode,
+            PendingNreg = _pendingNreg, PendingRegIdx = _pendingRegIdx, PendingTotalRegs = _pendingTotalRegs,
+            PendingTagHi = _pendingTagHi, PendingEop = _pendingEop
+        };
+        Array.Copy(Tex0, s.Tex0, 2);
+        Array.Copy(Tex1, s.Tex1, 2);
+        Array.Copy(Tex2, s.Tex2, 2);
+        Array.Copy(Clamp, s.Clamp, 2);
+        Array.Copy(Xyoffset, s.Xyoffset, 2);
+        Array.Copy(Scissor, s.Scissor, 2);
+        Array.Copy(Alpha, s.Alpha, 2);
+        Array.Copy(Test, s.Test, 2);
+        Array.Copy(Fba, s.Fba, 2);
+        Array.Copy(Frame, s.Frame, 2);
+        Array.Copy(Zbuf, s.Zbuf, 2);
+        Array.Copy(_vtxQueue, s.VtxQueue, 3);
+        return s;
+    }
+
+    public void RestoreState(GsSnapshotState s)
+    {
+        Buffer.BlockCopy(s.Vram, 0, Vram, 0, Vram.Length);
+        Prim = s.Prim; Rgbaq = s.Rgbaq; St = s.St; Uv = s.Uv;
+        Prmodecont = s.Prmodecont; Prmode = s.Prmode; Texclut = s.Texclut; Scanmsk = s.Scanmsk;
+        Texa = s.Texa; Fogcol = s.Fogcol; Dthe = s.Dthe; Colclamp = s.Colclamp; Pabe = s.Pabe;
+        Array.Copy(s.Tex0, Tex0, 2);
+        Array.Copy(s.Tex1, Tex1, 2);
+        Array.Copy(s.Tex2, Tex2, 2);
+        Array.Copy(s.Clamp, Clamp, 2);
+        Array.Copy(s.Xyoffset, Xyoffset, 2);
+        Array.Copy(s.Scissor, Scissor, 2);
+        Array.Copy(s.Alpha, Alpha, 2);
+        Array.Copy(s.Test, Test, 2);
+        Array.Copy(s.Fba, Fba, 2);
+        Array.Copy(s.Frame, Frame, 2);
+        Array.Copy(s.Zbuf, Zbuf, 2);
+        Bitbltbuf = s.Bitbltbuf; Trxpos = s.Trxpos; Trxreg = s.Trxreg; Trxdir = s.Trxdir;
+        Signal = s.Signal; Finish = s.Finish; Label = s.Label;
+        _curS = s.CurS; _curT = s.CurT; _curQ = s.CurQ;
+        _curU = s.CurU; _curV = s.CurV;
+        _curR = s.CurR; _curG = s.CurG; _curB = s.CurB; _curA = s.CurA; _curF = s.CurF;
+        Array.Copy(s.VtxQueue, _vtxQueue, 3);
+        _vtxCount = s.VtxCount;
+        _activeCbp = s.ActiveCbp; _activeCpsm = s.ActiveCpsm;
+        _trxBuffer.Clear();
+        if (s.TrxBuffer.Length > 0) _trxBuffer.AddRange(s.TrxBuffer);
+        _trxPixelX = s.TrxPixelX; _trxPixelY = s.TrxPixelY; _trxActive = s.TrxActive;
+        _pendingImageBytes = s.PendingImageBytes; _pendingMode = s.PendingMode;
+        _pendingNreg = s.PendingNreg; _pendingRegIdx = s.PendingRegIdx; _pendingTotalRegs = s.PendingTotalRegs;
+        _pendingTagHi = s.PendingTagHi; _pendingEop = s.PendingEop;
+        Array.Fill(_lastDcValid, false);
+        Array.Fill(_cachedClutValid, false);
+        _decodedTexCache.Clear();
+        _texBufferPool.Clear();
+        _spriteBakeCache.Clear();
+        _spriteBakeFifo.Clear();
+        _deferredVramBakes.Clear();
+        VramDirty = true;
+    }
+
     /// <summary>
     /// Parses and executes a stream of 128-bit GIF packets (from Path 1 XGKICK, Path 2 VIF1 DIRECT, or Path 3 GIF DMA).
     /// </summary>
     public void SubmitGifPacket(ReadOnlySpan<byte> data, string source = "")
     {
+        FrameRecorder?.RecordGifPacket(source, data);
         long t0 = EnableProfiling ? Stopwatch.GetTimestamp() : 0;
         try
         {
@@ -204,12 +335,15 @@ public sealed class GsProcessor
         // 2. Consume any pending PACKED payload from a previous DMA tag
         if (_pendingMode == 0)
         {
+            int descPos = _pendingRegIdx % _pendingNreg;
+            ref byte dataBase = ref MemoryMarshal.GetReference(data);
             while (_pendingRegIdx < _pendingTotalRegs && offset + 16 <= totalBytes)
             {
-                int regDesc = (int)((_pendingTagHi >> ((_pendingRegIdx % _pendingNreg) * 4)) & 0xFul);
-                ExecutePackedDescriptor(regDesc, data.Slice(offset, 16));
+                int regDesc = (int)((_pendingTagHi >> (descPos * 4)) & 0xFul);
+                ExecutePackedDescriptor(regDesc, ref Unsafe.Add(ref dataBase, offset));
                 offset += 16;
                 _pendingRegIdx++;
+                if (++descPos == _pendingNreg) descPos = 0;
             }
 
             if (_pendingRegIdx < _pendingTotalRegs)
@@ -223,21 +357,24 @@ public sealed class GsProcessor
         // 3. Consume any pending REGLIST payload from a previous DMA tag
         else if (_pendingMode == 1)
         {
+            int descPos = _pendingRegIdx % _pendingNreg;
             while (_pendingRegIdx < _pendingTotalRegs && offset + 16 <= totalBytes)
             {
                 ulong val0 = BinaryPrimitives.ReadUInt64LittleEndian(data.Slice(offset, 8));
                 ulong val1 = BinaryPrimitives.ReadUInt64LittleEndian(data.Slice(offset + 8, 8));
                 offset += 16;
 
-                int desc0 = (int)((_pendingTagHi >> ((_pendingRegIdx % _pendingNreg) * 4)) & 0xFul);
+                int desc0 = (int)((_pendingTagHi >> (descPos * 4)) & 0xFul);
                 WriteInternalRegister((byte)desc0, val0);
                 _pendingRegIdx++;
+                if (++descPos == _pendingNreg) descPos = 0;
 
                 if (_pendingRegIdx < _pendingTotalRegs)
                 {
-                    int desc1 = (int)((_pendingTagHi >> ((_pendingRegIdx % _pendingNreg) * 4)) & 0xFul);
+                    int desc1 = (int)((_pendingTagHi >> (descPos * 4)) & 0xFul);
                     WriteInternalRegister((byte)desc1, val1);
                     _pendingRegIdx++;
+                    if (++descPos == _pendingNreg) descPos = 0;
                 }
             }
 
@@ -284,12 +421,15 @@ public sealed class GsProcessor
                 {
                     int totalRegs = nloop * nreg;
                     int regIdx = 0;
+                    int descPos = 0;
+                    ref byte dataBase = ref MemoryMarshal.GetReference(data);
                     while (regIdx < totalRegs && offset + 16 <= totalBytes)
                     {
-                        int regDesc = (int)((tagHi >> ((regIdx % nreg) * 4)) & 0xFul);
-                        ExecutePackedDescriptor(regDesc, data.Slice(offset, 16));
+                        int regDesc = (int)((tagHi >> (descPos * 4)) & 0xFul);
+                        ExecutePackedDescriptor(regDesc, ref Unsafe.Add(ref dataBase, offset));
                         offset += 16;
                         regIdx++;
+                        if (++descPos == nreg) descPos = 0;
                     }
 
                     if (regIdx < totalRegs)
@@ -309,21 +449,24 @@ public sealed class GsProcessor
                 {
                     int totalRegs = nloop * nreg;
                     int regIdx = 0;
+                    int descPos = 0;
                     while (regIdx < totalRegs && offset + 16 <= totalBytes)
                     {
                         ulong val0 = BinaryPrimitives.ReadUInt64LittleEndian(data.Slice(offset, 8));
                         ulong val1 = BinaryPrimitives.ReadUInt64LittleEndian(data.Slice(offset + 8, 8));
                         offset += 16;
 
-                        int desc0 = (int)((tagHi >> ((regIdx % nreg) * 4)) & 0xFul);
+                        int desc0 = (int)((tagHi >> (descPos * 4)) & 0xFul);
                         WriteInternalRegister((byte)desc0, val0);
                         regIdx++;
+                        if (++descPos == nreg) descPos = 0;
 
                         if (regIdx < totalRegs)
                         {
-                            int desc1 = (int)((tagHi >> ((regIdx % nreg) * 4)) & 0xFul);
+                            int desc1 = (int)((tagHi >> (descPos * 4)) & 0xFul);
                             WriteInternalRegister((byte)desc1, val1);
                             regIdx++;
+                            if (++descPos == nreg) descPos = 0;
                         }
                     }
 
@@ -368,91 +511,81 @@ public sealed class GsProcessor
         }
     }
 
-    private void ExecutePackedDescriptor(int desc, ReadOnlySpan<byte> qword)
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    private void ExecutePackedDescriptor(int desc, ref byte qBase)
     {
-        ulong lo = BinaryPrimitives.ReadUInt64LittleEndian(qword.Slice(0, 8));
-        ulong hi = BinaryPrimitives.ReadUInt64LittleEndian(qword.Slice(8, 8));
-
         switch (desc)
         {
             case 0x0: // PRIM
-                WriteInternalRegister(0x00, lo & 0x7FFul);
+                WriteInternalRegister(0x00, Unsafe.ReadUnaligned<ulong>(ref qBase) & 0x7FFul);
                 break;
 
             case 0x1: // RGBAQ (R=bits 0..7, G=bits 32..39, B=bits 64..71, A=bits 96..103)
-                _curR = qword[0];
-                _curG = qword[4];
-                _curB = qword[8];
-                _curA = qword[12];
-                Rgbaq = (uint)_curR | ((ulong)_curG << 8) | ((ulong)_curB << 16) | ((ulong)_curA << 24)
-                      | ((ulong)BitConverter.SingleToUInt32Bits(_curQ) << 32);
+                _curR = qBase;
+                _curG = Unsafe.Add(ref qBase, 4);
+                _curB = Unsafe.Add(ref qBase, 8);
+                _curA = Unsafe.Add(ref qBase, 12);
                 break;
 
             case 0x2: // ST (S=word0, T=word1, Q=word2)
             {
-                uint sBits = BinaryPrimitives.ReadUInt32LittleEndian(qword.Slice(0, 4));
-                uint tBits = BinaryPrimitives.ReadUInt32LittleEndian(qword.Slice(4, 4));
-                uint qBits = BinaryPrimitives.ReadUInt32LittleEndian(qword.Slice(8, 4));
-                _curS = BitConverter.UInt32BitsToSingle(sBits);
-                _curT = BitConverter.UInt32BitsToSingle(tBits);
-                float rawQ = BitConverter.UInt32BitsToSingle(qBits);
+                _curS = Unsafe.ReadUnaligned<float>(ref qBase);
+                _curT = Unsafe.ReadUnaligned<float>(ref Unsafe.Add(ref qBase, 4));
+                float rawQ = Unsafe.ReadUnaligned<float>(ref Unsafe.Add(ref qBase, 8));
                 _curQ = float.IsNaN(rawQ) || float.IsInfinity(rawQ) || rawQ == 0.0f ? 1.0f : rawQ;
-                St = lo;
                 break;
             }
 
             case 0x3: // UV (U=bits 0..13, V=bits 32..45)
-                _curU = (ushort)(BinaryPrimitives.ReadUInt16LittleEndian(qword.Slice(0, 2)) & 0x3FFFu);
-                _curV = (ushort)(BinaryPrimitives.ReadUInt16LittleEndian(qword.Slice(4, 2)) & 0x3FFFu);
-                Uv = (ulong)_curU | ((ulong)_curV << 16);
+                _curU = (ushort)(Unsafe.ReadUnaligned<ushort>(ref qBase) & 0x3FFFu);
+                _curV = (ushort)(Unsafe.ReadUnaligned<ushort>(ref Unsafe.Add(ref qBase, 4)) & 0x3FFFu);
                 break;
 
             case 0x4: // XYZF2 (X=bits 0..15, Y=bits 32..47, Z=bits 68..91, F=bits 100..107, ADC=bit 111)
             {
-                ushort x = BinaryPrimitives.ReadUInt16LittleEndian(qword.Slice(0, 2));
-                ushort y = BinaryPrimitives.ReadUInt16LittleEndian(qword.Slice(4, 2));
+                ushort x = Unsafe.ReadUnaligned<ushort>(ref qBase);
+                ushort y = Unsafe.ReadUnaligned<ushort>(ref Unsafe.Add(ref qBase, 4));
+                ulong hi = Unsafe.ReadUnaligned<ulong>(ref Unsafe.Add(ref qBase, 8));
                 uint z = (uint)((hi >> 4) & 0xFFFFFFul);
-                byte f = (byte)((hi >> 36) & 0xFFul);
-                bool adc = ((hi >> 47) & 1ul) != 0;
-                _curF = f;
-                VertexKick(x, y, z, adc);
+                _curF = (byte)((hi >> 36) & 0xFFul);
+                VertexKick(x, y, z, ((hi >> 47) & 1ul) != 0);
                 break;
             }
 
             case 0x5: // XYZ2 (X=bits 0..15, Y=bits 32..47, Z=bits 64..95, ADC=bit 111)
             {
-                ushort x = BinaryPrimitives.ReadUInt16LittleEndian(qword.Slice(0, 2));
-                ushort y = BinaryPrimitives.ReadUInt16LittleEndian(qword.Slice(4, 2));
-                uint z = BinaryPrimitives.ReadUInt32LittleEndian(qword.Slice(8, 4));
-                bool adc = ((hi >> 47) & 1ul) != 0;
-                VertexKick(x, y, z, adc);
+                ushort x = Unsafe.ReadUnaligned<ushort>(ref qBase);
+                ushort y = Unsafe.ReadUnaligned<ushort>(ref Unsafe.Add(ref qBase, 4));
+                ulong hi = Unsafe.ReadUnaligned<ulong>(ref Unsafe.Add(ref qBase, 8));
+                VertexKick(x, y, (uint)hi, ((hi >> 47) & 1ul) != 0);
                 break;
             }
 
             case 0x6: // TEX0_1
-                WriteInternalRegister(0x06, lo);
+                WriteInternalRegister(0x06, Unsafe.ReadUnaligned<ulong>(ref qBase));
                 break;
 
             case 0x7: // TEX0_2
-                WriteInternalRegister(0x07, lo);
+                WriteInternalRegister(0x07, Unsafe.ReadUnaligned<ulong>(ref qBase));
                 break;
 
             case 0x8: // CLAMP_1
-                WriteInternalRegister(0x08, lo);
+                WriteInternalRegister(0x08, Unsafe.ReadUnaligned<ulong>(ref qBase));
                 break;
 
             case 0x9: // CLAMP_2
-                WriteInternalRegister(0x09, lo);
+                WriteInternalRegister(0x09, Unsafe.ReadUnaligned<ulong>(ref qBase));
                 break;
 
             case 0xA: // FOG (F=bits 100..107)
-                _curF = (byte)((hi >> 36) & 0xFFul);
+                _curF = (byte)((Unsafe.ReadUnaligned<ulong>(ref Unsafe.Add(ref qBase, 8)) >> 36) & 0xFFul);
                 break;
 
             case 0xC: // XYZF3 (Vertex kick without drawing)
             {
-                ushort x = BinaryPrimitives.ReadUInt16LittleEndian(qword.Slice(0, 2));
-                ushort y = BinaryPrimitives.ReadUInt16LittleEndian(qword.Slice(4, 2));
+                ushort x = Unsafe.ReadUnaligned<ushort>(ref qBase);
+                ushort y = Unsafe.ReadUnaligned<ushort>(ref Unsafe.Add(ref qBase, 4));
+                ulong hi = Unsafe.ReadUnaligned<ulong>(ref Unsafe.Add(ref qBase, 8));
                 uint z = (uint)((hi >> 4) & 0xFFFFFFul);
                 _curF = (byte)((hi >> 36) & 0xFFul);
                 VertexKick(x, y, z, disableDraw: true);
@@ -461,15 +594,15 @@ public sealed class GsProcessor
 
             case 0xD: // XYZ3 (Vertex kick without drawing)
             {
-                ushort x = BinaryPrimitives.ReadUInt16LittleEndian(qword.Slice(0, 2));
-                ushort y = BinaryPrimitives.ReadUInt16LittleEndian(qword.Slice(4, 2));
-                uint z = BinaryPrimitives.ReadUInt32LittleEndian(qword.Slice(8, 4));
+                ushort x = Unsafe.ReadUnaligned<ushort>(ref qBase);
+                ushort y = Unsafe.ReadUnaligned<ushort>(ref Unsafe.Add(ref qBase, 4));
+                uint z = Unsafe.ReadUnaligned<uint>(ref Unsafe.Add(ref qBase, 8));
                 VertexKick(x, y, z, disableDraw: true);
                 break;
             }
 
             case 0xE: // A+D (Data = lo 64 bits, Addr = byte 8)
-                WriteInternalRegister((byte)(hi & 0x7Ful), lo);
+                WriteInternalRegister((byte)(Unsafe.ReadUnaligned<ulong>(ref Unsafe.Add(ref qBase, 8)) & 0x7Ful), Unsafe.ReadUnaligned<ulong>(ref qBase));
                 break;
 
             case 0xF: // NOP
@@ -482,9 +615,17 @@ public sealed class GsProcessor
         switch (regAddr)
         {
             case 0x00: // PRIM
-                Prim = value & 0x7FFul;
+            {
+                ulong masked = value & 0x7FFul;
+                if (Prim != masked)
+                {
+                    Prim = masked;
+                    _lastDcValid[0] = false;
+                    _lastDcValid[1] = false;
+                }
                 _vtxCount = 0; // Writing PRIM resets the vertex queue
                 break;
+            }
 
             case 0x01: // RGBAQ
                 Rgbaq = value;
@@ -521,19 +662,28 @@ public sealed class GsProcessor
             case 0x07:
             {
                 int ctx = regAddr - 0x06;
-                Tex0[ctx] = value;
+                if (Tex0[ctx] != value)
+                {
+                    Tex0[ctx] = value;
+                    _lastDcValid[ctx] = false;
+                }
                 int cld = (int)((value >> 61) & 0x7ul);
                 int cbp = (int)((value >> 37) & 0x3FFFul);
                 var cpsm = (GsPsm)((value >> 51) & 0xFul);
                 if (cld != 0 || _activeCbp == 0)
                 {
-                    _activeCbp = cbp;
-                    _activeCpsm = cpsm;
+                    if (_activeCbp != cbp || _activeCpsm != cpsm)
+                    {
+                        _activeCbp = cbp;
+                        _activeCpsm = cpsm;
+                        _lastDcValid[0] = false;
+                        _lastDcValid[1] = false;
+                    }
                 }
                 break;
             }
-            case 0x08: Clamp[0] = value; break;
-            case 0x09: Clamp[1] = value; break;
+            case 0x08: if (Clamp[0] != value) { Clamp[0] = value; _lastDcValid[0] = false; } break;
+            case 0x09: if (Clamp[1] != value) { Clamp[1] = value; _lastDcValid[1] = false; } break;
             case 0x0A: _curF = (byte)(value >> 56); break;
 
             case 0x0C: // XYZF3
@@ -545,17 +695,22 @@ public sealed class GsProcessor
                 VertexKick((ushort)(value & 0xFFFFu), (ushort)((value >> 16) & 0xFFFFu), (uint)(value >> 32), disableDraw: true);
                 break;
 
-            case 0x14: Tex1[0] = value; break;
-            case 0x15: Tex1[1] = value; break;
+            case 0x14: if (Tex1[0] != value) { Tex1[0] = value; _lastDcValid[0] = false; } break;
+            case 0x15: if (Tex1[1] != value) { Tex1[1] = value; _lastDcValid[1] = false; } break;
             case 0x16: Tex2[0] = value; UpdateTex0FromTex2(0, value); break;
             case 0x17: Tex2[1] = value; UpdateTex0FromTex2(1, value); break;
             case 0x18: Xyoffset[0] = value; break;
             case 0x19: Xyoffset[1] = value; break;
-            case 0x1A: Prmodecont = value & 1ul; break;
-            case 0x1B: Prmode = value; break;
+            case 0x1A:
+            {
+                ulong masked = value & 1ul;
+                if (Prmodecont != masked) { Prmodecont = masked; _lastDcValid[0] = false; _lastDcValid[1] = false; }
+                break;
+            }
+            case 0x1B: if (Prmode != value) { Prmode = value; _lastDcValid[0] = false; _lastDcValid[1] = false; } break;
             case 0x1C: Texclut = value; break;
             case 0x22: Scanmsk = value; break;
-            case 0x3B: Texa = value; break;
+            case 0x3B: if (Texa != value) { Texa = value; _lastDcValid[0] = false; _lastDcValid[1] = false; } break;
             case 0x3D: Fogcol = value; break;
             case 0x3F: break; // TEXFLUSH
             case 0x40:
@@ -574,33 +729,48 @@ public sealed class GsProcessor
                 }
                 break;
             }
-            case 0x42: Alpha[0] = value; break;
-            case 0x43: Alpha[1] = value; break;
+            case 0x42: if (Alpha[0] != value) { Alpha[0] = value; _lastDcValid[0] = false; } break;
+            case 0x43: if (Alpha[1] != value) { Alpha[1] = value; _lastDcValid[1] = false; } break;
             case 0x45: Dthe = value; break;
-            case 0x46: Colclamp = value; break;
-            case 0x47: Test[0] = value; break;
-            case 0x48: Test[1] = value; break;
+            case 0x46: if (Colclamp != value) { Colclamp = value; _lastDcValid[0] = false; _lastDcValid[1] = false; } break;
+            case 0x47: if (Test[0] != value) { Test[0] = value; _lastDcValid[0] = false; } break;
+            case 0x48: if (Test[1] != value) { Test[1] = value; _lastDcValid[1] = false; } break;
             case 0x49: Pabe = value; break;
-            case 0x4A: Fba[0] = value; break;
-            case 0x4B: Fba[1] = value; break;
+            case 0x4A: if (Fba[0] != value) { Fba[0] = value; _lastDcValid[0] = false; } break;
+            case 0x4B: if (Fba[1] != value) { Fba[1] = value; _lastDcValid[1] = false; } break;
             case 0x4C:
             case 0x4D:
             {
                 int ctxIdx = regAddr - 0x4C;
                 ulong oldVal = Frame[ctxIdx];
-                Frame[ctxIdx] = value;
-                if (EnableDebugLogging && value != oldVal && TotalVramTransfers < 30)
+                if (oldVal != value)
+                {
+                    Frame[ctxIdx] = value;
+                    _lastDcValid[ctxIdx] = false;
+                }
+                if (EnableDebugLogging && value != oldVal)
                 {
                     int fbp = (int)(value & 0x1FFul);
-                    int fbw = (int)((value >> 16) & 0x3Ful);
-                    int psm = (int)((value >> 24) & 0x3Ful);
-                    uint fbmsk = (uint)(value >> 32);
-                    Console.WriteLine($"[GS FRAME_{ctxIdx+1}] value=0x{value:X16} (FBP=0x{fbp:X}/block 0x{fbp*32:X}, FBW={fbw*64}px, PSM=0x{psm:X2}/{(GsPsm)psm}, FBMSK=0x{fbmsk:X8}) from {_currentGifSource} | DMA PC=0x{RuntimeDispatcher.CurrentDmaPc:X8} RA=0x{RuntimeDispatcher.CurrentDmaRa:X8}");
+                    if (TotalVramTransfers < 30 || (fbp * 32 != 0 && fbp * 32 != 0xA00))
+                    {
+                        int fbw = (int)((value >> 16) & 0x3Ful);
+                        int psm = (int)((value >> 24) & 0x3Ful);
+                        uint fbmsk = (uint)(value >> 32);
+                        Console.WriteLine($"[GS FRAME_{ctxIdx+1}] f={CurrentFrame} value=0x{value:X16} (FBP=0x{fbp:X}/block 0x{fbp*32:X}, FBW={fbw*64}px, PSM=0x{psm:X2}/{(GsPsm)psm}, FBMSK=0x{fbmsk:X8}) from {_currentGifSource} | DMA PC=0x{RuntimeDispatcher.CurrentDmaPc:X8} RA=0x{RuntimeDispatcher.CurrentDmaRa:X8}");
+                    }
                 }
                 break;
             }
-            case 0x4E: Zbuf[0] = value; break;
-            case 0x4F: Zbuf[1] = value; break;
+            case 0x4E:
+                if (Zbuf[0] != value) { Zbuf[0] = value; _lastDcValid[0] = false; }
+                if (EnableDebugLogging)
+                    Console.WriteLine($"[GS ZBUF_1] f={CurrentFrame} val=0x{value:X16} ZBP=0x{((value & 0x1FFul)*32):X} PSM=0x{((value>>24)&0xFul):X} ZMSK={(value>>32)&1ul} from {_currentGifSource}");
+                break;
+            case 0x4F:
+                if (Zbuf[1] != value) { Zbuf[1] = value; _lastDcValid[1] = false; }
+                if (EnableDebugLogging)
+                    Console.WriteLine($"[GS ZBUF_2] f={CurrentFrame} val=0x{value:X16} ZBP=0x{((value & 0x1FFul)*32):X} PSM=0x{((value>>24)&0xFul):X} ZMSK={(value>>32)&1ul} from {_currentGifSource}");
+                break;
             case 0x50: Bitbltbuf = value; break;
             case 0x51: Trxpos = value; break;
             case 0x52: Trxreg = value; break;
@@ -616,7 +786,7 @@ public sealed class GsProcessor
                 break;
             }
             case 0x60: Signal = value; break;
-            case 0x61: Finish = value; break;
+            case 0x61: Finish = value; OnFinish?.Invoke(); break;
             case 0x62: Label = value; break;
         }
     }
@@ -625,15 +795,25 @@ public sealed class GsProcessor
     {
         // TEX2 updates PSM (bits 20..25) and CLUT fields (bits 37..63) of TEX0
         const ulong mask = (0x3Ful << 20) | (0x7FFFFFFul << 37);
-        Tex0[ctx] = (Tex0[ctx] & ~mask) | (tex2 & mask);
+        ulong next = (Tex0[ctx] & ~mask) | (tex2 & mask);
+        if (Tex0[ctx] != next)
+        {
+            Tex0[ctx] = next;
+            _lastDcValid[ctx] = false;
+        }
 
         int cld = (int)((tex2 >> 61) & 0x7ul);
         int cbp = (int)((tex2 >> 37) & 0x3FFFul);
         var cpsm = (GsPsm)((tex2 >> 51) & 0xFul);
         if (cld != 0 || _activeCbp == 0)
         {
-            _activeCbp = cbp;
-            _activeCpsm = cpsm;
+            if (_activeCbp != cbp || _activeCpsm != cpsm)
+            {
+                _activeCbp = cbp;
+                _activeCpsm = cpsm;
+                _lastDcValid[0] = false;
+                _lastDcValid[1] = false;
+            }
         }
     }
 
@@ -663,10 +843,23 @@ public sealed class GsProcessor
         {
             _trxActive = true;
             TotalVramTransfers++;
+            if (EnableDebugLogging)
+                Console.WriteLine($"[GS TRX HOST->VRAM] #{TotalVramTransfers} f={CurrentFrame} DBP=0x{dbp:X} DBW={dbw} DPSM={dpsm} POS=({dsax},{dsay}) SIZE=({rrw}x{rrh}) from {_currentGifSource}");
+        }
+        else if (dir == 1) // Local-to-Host
+        {
+            _trxActive = false;
+            FlushAllDeferredSpriteVram();
+            int ssax = (int)(Trxpos & 0x7FFul);
+            int ssay = (int)((Trxpos >> 16) & 0x7FFul);
+            PrepareVramToHostReadback(sbp, sbw, spsm, ssax, ssay, rrw, rrh);
+            Console.WriteLine($"[GS TRX VRAM->HOST] f={CurrentFrame} SBP=0x{sbp:X} SBW={sbw} SPSM={spsm} POS=({ssax},{ssay}) SIZE=({rrw}x{rrh}) bytes={_readbackLength} from {_currentGifSource}");
         }
         else if (dir == 2) // Local-to-Local
         {
             _trxActive = false;
+            if (EnableDebugLogging)
+                Console.WriteLine($"[GS TRX LOCAL->LOCAL] #{TotalVramTransfers} f={CurrentFrame} SBP=0x{sbp:X} DBP=0x{dbp:X} DBW={dbw} DPSM={dpsm} POS=({dsax},{dsay}) SIZE=({rrw}x{rrh}) from {_currentGifSource}");
             long t0 = EnableProfiling ? Stopwatch.GetTimestamp() : 0;
             ExecuteLocalToLocalTransfer();
             if (EnableProfiling) TotalVramTransferTicks += Stopwatch.GetTimestamp() - t0;
@@ -698,6 +891,12 @@ public sealed class GsProcessor
         if (rrw <= 0 || rrh <= 0)
             return;
 
+        if (_deferredVramBakes.Count > 0)
+        {
+            ComputeBlockRange(dbp, dbw, dpsm, Math.Max(1, dsax + rrw), Math.Max(1, dsay + rrh), out int h2lStart, out int h2lEnd);
+            FlushDeferredSpriteVramRange(h2lStart, h2lEnd);
+        }
+
         if (EnableDebugLogging && (TotalVramTransfers <= 15 || (TotalVramTransfers >= 180 && TotalVramTransfers <= 205)))
         {
             int nonZero = 0;
@@ -716,75 +915,61 @@ public sealed class GsProcessor
         {
             buf = data;
         }
-        int consumed = 0;
-
-        while (_trxPixelY < rrh)
+        int consumed;
+        if (dpsm is GsPsm.Psmct32 or GsPsm.Psmz32)
         {
-            int dstX = dsax + _trxPixelX;
-            int dstY = dsay + _trxPixelY;
+            consumed = GsSwizzle.WriteRect32(Vram, dbp, dbw, dsax, dsay, rrw, rrh, isZ: dpsm == GsPsm.Psmz32, buf, ref _trxPixelX, ref _trxPixelY);
+        }
+        else if (dpsm is GsPsm.Psmct16 or GsPsm.Psmct16S or GsPsm.Psmz16 or GsPsm.Psmz16S)
+        {
+            consumed = GsSwizzle.WriteRect16(
+                Vram, dbp, dbw, dsax, dsay, rrw, rrh,
+                is16S: dpsm is GsPsm.Psmct16S or GsPsm.Psmz16S,
+                isZ: dpsm is GsPsm.Psmz16 or GsPsm.Psmz16S,
+                buf, ref _trxPixelX, ref _trxPixelY);
+        }
+        else if (dpsm == GsPsm.Psmt8)
+        {
+            consumed = GsSwizzle.WriteRect8(Vram, dbp, dbw, dsax, dsay, rrw, rrh, buf, ref _trxPixelX, ref _trxPixelY);
+        }
+        else if (dpsm == GsPsm.Psmt4)
+        {
+            consumed = GsSwizzle.WriteRect4(Vram, dbp, dbw, dsax, dsay, rrw, rrh, buf, ref _trxPixelX, ref _trxPixelY);
+        }
+        else
+        {
+            consumed = 0;
+            while (_trxPixelY < rrh)
+            {
+                int dstX = dsax + _trxPixelX;
+                int dstY = dsay + _trxPixelY;
 
-            if (dpsm is GsPsm.Psmct32 or GsPsm.Psmz32)
-            {
-                if (consumed + 4 > buf.Length) break;
-                uint c32 = BinaryPrimitives.ReadUInt32LittleEndian(buf.Slice(consumed, 4));
-                GsSwizzle.WritePixel32(Vram, dbp, dbw, dstX, dstY, c32);
-                consumed += 4;
-                AdvanceTrxPixel(rrw, rrh, 1);
-            }
-            else if (dpsm is GsPsm.Psmct24 or GsPsm.Psmz24)
-            {
-                if (consumed + 3 > buf.Length) break;
-                uint c24 = (uint)(buf[consumed] | (buf[consumed + 1] << 8) | (buf[consumed + 2] << 16));
-                int addr = GsSwizzle.GetPixelByteAddress32(dbp, dbw, dstX, dstY);
-                uint old32 = BinaryPrimitives.ReadUInt32LittleEndian(Vram.AsSpan(addr, 4));
-                BinaryPrimitives.WriteUInt32LittleEndian(Vram.AsSpan(addr, 4), (old32 & 0xFF000000u) | c24);
-                consumed += 3;
-                AdvanceTrxPixel(rrw, rrh, 1);
-            }
-            else if (dpsm is GsPsm.Psmct16 or GsPsm.Psmct16S or GsPsm.Psmz16 or GsPsm.Psmz16S)
-            {
-                if (consumed + 2 > buf.Length) break;
-                ushort c16 = BinaryPrimitives.ReadUInt16LittleEndian(buf.Slice(consumed, 2));
-                GsSwizzle.WritePixel16(Vram, dbp, dbw, dstX, dstY, c16, is16S: dpsm is GsPsm.Psmct16S or GsPsm.Psmz16S, isZ: dpsm is GsPsm.Psmz16 or GsPsm.Psmz16S);
-                consumed += 2;
-                AdvanceTrxPixel(rrw, rrh, 1);
-            }
-            else if (dpsm == GsPsm.Psmt8)
-            {
-                if (consumed + 1 > buf.Length) break;
-                GsSwizzle.WriteTexel8(Vram, dbp, Math.Max(128, dbw), dstX, dstY, buf[consumed]);
-                consumed += 1;
-                AdvanceTrxPixel(rrw, rrh, 1);
-            }
-            else if (dpsm == GsPsm.Psmt8H)
-            {
-                if (consumed + 1 > buf.Length) break;
-                int addr = GsSwizzle.GetPixelByteAddress32(dbp, dbw, dstX, dstY);
-                Vram[addr + 3] = buf[consumed];
-                consumed += 1;
-                AdvanceTrxPixel(rrw, rrh, 1);
-            }
-            else if (dpsm == GsPsm.Psmt4)
-            {
-                if (consumed + 1 > buf.Length) break;
-                byte packed = buf[consumed++];
-                GsSwizzle.WriteTexel4(Vram, dbp, Math.Max(128, dbw), dstX, dstY, (byte)(packed & 0x0F));
-                AdvanceTrxPixel(rrw, rrh, 1);
-                if (_trxPixelY < rrh)
+                if (dpsm is GsPsm.Psmct24 or GsPsm.Psmz24)
                 {
-                    int dstX2 = dsax + _trxPixelX;
-                    int dstY2 = dsay + _trxPixelY;
-                    GsSwizzle.WriteTexel4(Vram, dbp, Math.Max(128, dbw), dstX2, dstY2, (byte)((packed >> 4) & 0x0F));
+                    if (consumed + 3 > buf.Length) break;
+                    uint c24 = (uint)(buf[consumed] | (buf[consumed + 1] << 8) | (buf[consumed + 2] << 16));
+                    int addr = GsSwizzle.GetPixelByteAddress32(dbp, dbw, dstX, dstY);
+                    uint old32 = BinaryPrimitives.ReadUInt32LittleEndian(Vram.AsSpan(addr, 4));
+                    BinaryPrimitives.WriteUInt32LittleEndian(Vram.AsSpan(addr, 4), (old32 & 0xFF000000u) | c24);
+                    consumed += 3;
                     AdvanceTrxPixel(rrw, rrh, 1);
                 }
-            }
-            else
-            {
-                if (consumed + 4 > buf.Length) break;
-                uint c32 = BinaryPrimitives.ReadUInt32LittleEndian(buf.Slice(consumed, 4));
-                GsSwizzle.WritePixel32(Vram, dbp, dbw, dstX, dstY, c32);
-                consumed += 4;
-                AdvanceTrxPixel(rrw, rrh, 1);
+                else if (dpsm == GsPsm.Psmt8H)
+                {
+                    if (consumed + 1 > buf.Length) break;
+                    int addr = GsSwizzle.GetPixelByteAddress32(dbp, dbw, dstX, dstY);
+                    Vram[addr + 3] = buf[consumed];
+                    consumed += 1;
+                    AdvanceTrxPixel(rrw, rrh, 1);
+                }
+                else
+                {
+                    if (consumed + 4 > buf.Length) break;
+                    uint c32 = BinaryPrimitives.ReadUInt32LittleEndian(buf.Slice(consumed, 4));
+                    GsSwizzle.WritePixel32(Vram, dbp, dbw, dstX, dstY, c32);
+                    consumed += 4;
+                    AdvanceTrxPixel(rrw, rrh, 1);
+                }
             }
         }
 
@@ -793,7 +978,7 @@ public sealed class GsProcessor
             if (usedTrxBuffer)
                 _trxBuffer.RemoveRange(0, consumed);
             VramDirty = true;
-            _vramTransferRevision++;
+            InvalidateDecodedTexturesAt(dbp, dbw, dpsm, Math.Max(1, dsax + rrw), Math.Max(1, dsay + rrh));
         }
 
         if (_trxPixelY >= rrh)
@@ -804,6 +989,12 @@ public sealed class GsProcessor
         else if (!usedTrxBuffer && consumed < data.Length)
         {
             _trxBuffer.AddRange(data.Slice(consumed));
+        }
+
+        if (FrameRecorder != null && consumed > 0)
+        {
+            long elapsed = t0 != 0 ? (Stopwatch.GetTimestamp() - t0) : 0;
+            FrameRecorder.RecordTransfer(new TrxBucketKey("HostToLocal", 0, dbp, dpsm, rrw, rrh), consumed, elapsed);
         }
         }
         finally
@@ -822,8 +1013,106 @@ public sealed class GsProcessor
         }
     }
 
+    private byte[] _readbackBuffer = Array.Empty<byte>();
+    private int _readbackPos;
+    private int _readbackLength;
+
+    public int ReadVramToHost(Span<byte> dest)
+    {
+        int avail = Math.Max(0, _readbackLength - _readbackPos);
+        int toCopy = Math.Min(dest.Length, avail);
+        if (toCopy > 0)
+        {
+            _readbackBuffer.AsSpan(_readbackPos, toCopy).CopyTo(dest);
+            _readbackPos += toCopy;
+        }
+        if (toCopy < dest.Length)
+        {
+            dest.Slice(toCopy).Clear();
+        }
+        return dest.Length;
+    }
+
+    private void PrepareVramToHostReadback(int sbp, int sbw, GsPsm spsm, int ssax, int ssay, int rrw, int rrh)
+    {
+        _readbackPos = 0;
+        _readbackLength = 0;
+        if (rrw <= 0 || rrh <= 0)
+            return;
+
+        int totalPixels = rrw * rrh;
+        int rawBytes = spsm switch
+        {
+            GsPsm.Psmct32 or GsPsm.Psmz32 => totalPixels * 4,
+            GsPsm.Psmct24 or GsPsm.Psmz24 => totalPixels * 3,
+            GsPsm.Psmct16 or GsPsm.Psmct16S or GsPsm.Psmz16 or GsPsm.Psmz16S => totalPixels * 2,
+            GsPsm.Psmt8 or GsPsm.Psmt8H => totalPixels,
+            GsPsm.Psmt4 or GsPsm.Psmt4HL or GsPsm.Psmt4HH => (totalPixels + 1) / 2,
+            _ => totalPixels * 4
+        };
+        int alignedBytes = (rawBytes + 15) & ~15;
+        if (_readbackBuffer.Length < alignedBytes)
+            _readbackBuffer = new byte[alignedBytes];
+        else
+            Array.Clear(_readbackBuffer, 0, alignedBytes);
+
+        int outIdx = 0;
+        for (int y = 0; y < rrh; y++)
+        {
+            int srcY = ssay + y;
+            for (int x = 0; x < rrw; x++)
+            {
+                int srcX = ssax + x;
+                if (spsm is GsPsm.Psmct32 or GsPsm.Psmz32)
+                {
+                    uint c32 = GsSwizzle.ReadPixel32(Vram, sbp, sbw, srcX, srcY);
+                    BinaryPrimitives.WriteUInt32LittleEndian(_readbackBuffer.AsSpan(outIdx, 4), c32);
+                    outIdx += 4;
+                }
+                else if (spsm is GsPsm.Psmct24 or GsPsm.Psmz24)
+                {
+                    uint c32 = GsSwizzle.ReadPixel32(Vram, sbp, sbw, srcX, srcY);
+                    _readbackBuffer[outIdx++] = (byte)(c32 & 0xFF);
+                    _readbackBuffer[outIdx++] = (byte)((c32 >> 8) & 0xFF);
+                    _readbackBuffer[outIdx++] = (byte)((c32 >> 16) & 0xFF);
+                }
+                else if (spsm is GsPsm.Psmct16 or GsPsm.Psmct16S or GsPsm.Psmz16 or GsPsm.Psmz16S)
+                {
+                    ushort c16 = GsSwizzle.ReadPixel16(Vram, sbp, sbw, srcX, srcY, is16S: spsm is GsPsm.Psmct16S or GsPsm.Psmz16S);
+                    BinaryPrimitives.WriteUInt16LittleEndian(_readbackBuffer.AsSpan(outIdx, 2), c16);
+                    outIdx += 2;
+                }
+                else if (spsm == GsPsm.Psmt8)
+                {
+                    _readbackBuffer[outIdx++] = GsSwizzle.ReadTexel8(Vram, sbp, Math.Max(128, sbw), srcX, srcY);
+                }
+                else if (spsm == GsPsm.Psmt8H)
+                {
+                    _readbackBuffer[outIdx++] = (byte)(GsSwizzle.ReadPixel32(Vram, sbp, sbw, srcX, srcY) >> 24);
+                }
+                else
+                {
+                    uint c32 = GsSwizzle.ReadPixel32(Vram, sbp, sbw, srcX, srcY);
+                    BinaryPrimitives.WriteUInt32LittleEndian(_readbackBuffer.AsSpan(outIdx, 4), c32);
+                    outIdx += 4;
+                }
+            }
+        }
+        _readbackLength = alignedBytes;
+        int nonZeroWords = 0;
+        for (int i = 0; i + 3 < _readbackLength; i += 4)
+        {
+            if (BinaryPrimitives.ReadUInt32LittleEndian(_readbackBuffer.AsSpan(i, 4)) != 0)
+                nonZeroWords++;
+        }
+        Console.WriteLine($"[GS READBACK READY] nonZeroWords={nonZeroWords}/{_readbackLength / 4} firstWord=0x{(_readbackLength >= 4 ? BinaryPrimitives.ReadUInt32LittleEndian(_readbackBuffer.AsSpan(0, 4)) : 0u):X8}");
+    }
+
     private void ExecuteLocalToLocalTransfer()
     {
+        FlushAllDeferredSpriteVram();
+        var rec = FrameRecorder;
+        long t0 = rec != null ? Stopwatch.GetTimestamp() : 0;
         int sbp = (int)(Bitbltbuf & 0x3FFFul);
         int sbw = Math.Max(1, (int)((Bitbltbuf >> 16) & 0x3Ful)) * 64;
         var spsm = (GsPsm)((Bitbltbuf >> 24) & 0x3Ful);
@@ -862,7 +1151,11 @@ public sealed class GsProcessor
             }
         }
         VramDirty = true;
-        _vramTransferRevision++;
+        InvalidateDecodedTexturesAt(dbp, dbw, dpsm, Math.Max(1, dsax + rrw), Math.Max(1, dsay + rrh));
+        if (rec != null)
+        {
+            rec.RecordTransfer(new TrxBucketKey("LocalToLocal", sbp, dbp, dpsm, rrw, rrh), rrw * rrh * 4L, Stopwatch.GetTimestamp() - t0);
+        }
     }
 
     private void VertexKick(ushort x, ushort y, uint z, bool disableDraw)
@@ -974,38 +1267,92 @@ public sealed class GsProcessor
                 break;
 
             case GsPrimitiveType.Sprite:
-                if (disableDraw)
-                {
-                    _vtxCount = 0;
-                    break;
-                }
                 _vtxQueue[_vtxCount++] = vtx;
                 if (_vtxCount == 2)
                 {
                     _vtxCount = 0;
-                    SubmitSprite(_vtxQueue[0], _vtxQueue[1]);
+                    if (!disableDraw)
+                        SubmitSprite(_vtxQueue[0], _vtxQueue[1]);
                 }
                 break;
         }
     }
 
+    public int CurrentFrame { get; set; }
+    public Action<int, int>? OnSpriteKicked { get; set; }
+    private static int _frame800Vu1TriCount = 0;
+    private static int _frame800OtherTriCount = 0;
+    private static int _frame800SpriteCount = 0;
+    private static int _frame800TotalPrims = 0;
+    public static int Frame800ZFailLogs = 0;
+    public static int Frame800ZPassLogs = 0;
+    public static int Frame800TotalZPass = 0;
+    public static int Frame800TotalZFail = 0;
+    public static int Frame800TotalZeroAlpha = 0;
+    public static int Frame800TotalColorWritten = 0;
+
     private void SubmitTriangle(in GsVertex v0, in GsVertex v1, in GsVertex v2)
+    {
+        if (CurrentFrame == 800)
+        {
+            int pId = Interlocked.Increment(ref _frame800TotalPrims);
+            int ctx = ActiveContext;
+            var (ofx, ofy, scx0, scy0, scx1, scy1) = GetViewportBounds(ctx);
+            bool isVu1 = _currentGifSource == "VU1_XGKICK";
+            int count = isVu1 ? Interlocked.Increment(ref _frame800Vu1TriCount) : Interlocked.Increment(ref _frame800OtherTriCount);
+            if (pId <= 60 || pId % 100 == 0)
+            {
+                ref readonly var dc = ref BuildDrawContext(ctx, false);
+                Console.WriteLine($"[F800 PRIM #{pId} TRI {(isVu1 ? "VU1" : "OTHER")} #{count}] ctx={ctx} FBP=0x{dc.FbpBlock:X} ZBP=0x{dc.ZbpBlock:X} ZPSM={dc.Zpsm} ZMSK={dc.Zmsk} TME={dc.Tme} FST={dc.Fst} ABE={dc.Abe} ALPHA=0x{Alpha[ctx]:X} TEST=0x{Test[ctx]:X} " +
+                    $"TEX0=0x{Tex0[ctx]:X16} (TBP0=0x{dc.Tbp0:X}, {dc.Tw}x{dc.Th}, PSM={dc.Psm}) " +
+                    $"v0=({(v0.X - ofx) / 16f:F1},{(v0.Y - ofy) / 16f:F1},z:{v0.Z},S:{v0.S:G6},T:{v0.T:G6},Q:{v0.Q:G6}) " +
+                    $"v1=({(v1.X - ofx) / 16f:F1},{(v1.Y - ofy) / 16f:F1},z:{v1.Z},S:{v1.S:G6},T:{v1.T:G6},Q:{v1.Q:G6}) " +
+                    $"v2=({(v2.X - ofx) / 16f:F1},{(v2.Y - ofy) / 16f:F1},z:{v2.Z},S:{v2.S:G6},T:{v2.T:G6},Q:{v2.Q:G6})");
+            }
+        }
+
+        SubmitTriangleClipped(in v0, in v1, in v2);
+    }
+
+    private void SubmitTriangleClipped(in GsVertex v0, in GsVertex v1, in GsVertex v2)
     {
         int ctx = ActiveContext;
         var (ofx, ofy, scx0, scy0, scx1, scy1) = GetViewportBounds(ctx);
 
-        float fx0 = (v0.X - ofx) / 16.0f;
-        float fy0 = (v0.Y - ofy) / 16.0f;
-        float fx1 = (v1.X - ofx) / 16.0f;
-        float fy1 = (v1.Y - ofy) / 16.0f;
-        float fx2 = (v2.X - ofx) / 16.0f;
-        float fy2 = (v2.Y - ofy) / 16.0f;
+        const float inv16 = 0.0625f;
+        const float inv128 = 0.0078125f;
+        float fx0 = (v0.X - ofx) * inv16;
+        float fy0 = (v0.Y - ofy) * inv16;
+        float fx1 = (v1.X - ofx) * inv16;
+        float fy1 = (v1.Y - ofy) * inv16;
+        float fx2 = (v2.X - ofx) * inv16;
+        float fy2 = (v2.Y - ofy) * inv16;
+
+        // PS2 GS hardware rasterizer drops primitives whose bounding box exceeds 2048x2048 pixels
+        float minFx = MathF.Min(fx0, MathF.Min(fx1, fx2));
+        float maxFx = MathF.Max(fx0, MathF.Max(fx1, fx2));
+        float minFy = MathF.Min(fy0, MathF.Min(fy1, fy2));
+        float maxFy = MathF.Max(fy0, MathF.Max(fy1, fy2));
+        if (maxFx - minFx >= 2048.0f || maxFy - minFy >= 2048.0f)
+            return;
 
         bool gouraud = ((ActiveAttr >> 3) & 1ul) != 0;
-        var dc = BuildDrawContext(ctx, gouraud);
-
         if (Mode == GsRendererMode.OpenGl && ActiveBatch != null)
         {
+            int fastFbp = (int)(Frame[ctx] & 0x1FFul) * 32;
+            if (fastFbp < 0x2000 && ((ActiveAttr >> 4) & 1ul) != 0)
+            {
+                int fastTbp0 = (int)(Tex0[ctx] & 0x3FFFul);
+                if (fastTbp0 == 0 || fastTbp0 == 0xA00)
+                    return;
+            }
+        }
+        ref readonly var dc = ref BuildDrawContext(ctx, gouraud);
+
+        if (Mode == GsRendererMode.OpenGl && ActiveBatch != null && dc.FbpBlock < 0x2000)
+        {
+            if (dc.Tme && (dc.Tbp0 == 0 || dc.Tbp0 == 0xA00))
+                return;
             TotalPrimitivesDrawn++;
             TotalTrianglesDrawn++;
             if (dc.Tme) TotalTexturedTriangles++; else TotalFlatTriangles++;
@@ -1028,23 +1375,23 @@ public sealed class GsProcessor
             var vtx0 = new GsGlVertex
             {
                 X = fx0, Y = fy0, Z = fz0, W = 1.0f,
-                R = r0 / 128.0f, G = grn0 / 128.0f, B = b0 / 128.0f, A = a0 / 128.0f,
+                R = r0 * inv128, G = grn0 * inv128, B = b0 * inv128, A = a0 * inv128,
                 S = v0.S, T = v0.T, Q = v0.Q,
-                U = v0.U / 16.0f, V = v0.V / 16.0f
+                U = v0.U * inv16, V = v0.V * inv16
             };
             var vtx1 = new GsGlVertex
             {
                 X = fx1, Y = fy1, Z = fz1, W = 1.0f,
-                R = r1 / 128.0f, G = grn1 / 128.0f, B = b1 / 128.0f, A = a1 / 128.0f,
+                R = r1 * inv128, G = grn1 * inv128, B = b1 * inv128, A = a1 * inv128,
                 S = v1.S, T = v1.T, Q = v1.Q,
-                U = v1.U / 16.0f, V = v1.V / 16.0f
+                U = v1.U * inv16, V = v1.V * inv16
             };
             var vtx2 = new GsGlVertex
             {
                 X = fx2, Y = fy2, Z = fz2, W = 1.0f,
-                R = v2.R / 128.0f, G = v2.G / 128.0f, B = v2.B / 128.0f, A = v2.A / 128.0f,
+                R = v2.R * inv128, G = v2.G * inv128, B = v2.B * inv128, A = v2.A * inv128,
                 S = v2.S, T = v2.T, Q = v2.Q,
-                U = v2.U / 16.0f, V = v2.V / 16.0f
+                U = v2.U * inv16, V = v2.V * inv16
             };
 
             ActiveBatch.AddTriangle(in dc, scx0, scy0, scx1, scy1, ofx, ofy, in vtx0, in vtx1, in vtx2);
@@ -1052,13 +1399,84 @@ public sealed class GsProcessor
         }
 
         RasterizeTriangle(v0, v1, v2);
+        InvalidateDecodedTexturesAt(dc.FbpBlock, dc.FbwPixels, dc.Fpsm, dc.FbwPixels, 512);
     }
 
     private void SubmitSprite(in GsVertex v0, in GsVertex v1)
     {
-        RasterizeSprite(v0, v1);
+        int ctx = ActiveContext;
+        if (CurrentFrame == 800)
+        {
+            int pId = Interlocked.Increment(ref _frame800TotalPrims);
+            var (ofx, ofy, scx0, scy0, scx1, scy1) = GetViewportBounds(ctx);
+            int count = Interlocked.Increment(ref _frame800SpriteCount);
+            ref readonly var dc = ref BuildDrawContext(ctx, false);
+            Console.WriteLine($"[F800 PRIM #{pId} SPRITE #{count}] src={_currentGifSource} ctx={ctx} FBP=0x{dc.FbpBlock:X} ZBP=0x{dc.ZbpBlock:X} ZPSM={dc.Zpsm} ZMSK={dc.Zmsk} TME={dc.Tme} FST={dc.Fst} ABE={dc.Abe} ALPHA=0x{Alpha[ctx]:X} TEST=0x{Test[ctx]:X} " +
+                $"TEX0=0x{Tex0[ctx]:X16} (TBP0=0x{dc.Tbp0:X}, {dc.Tw}x{dc.Th}, PSM={dc.Psm}) CLAMP=0x{Clamp[ctx]:X} " +
+                $"v0=({(v0.X - ofx) / 16f:F1},{(v0.Y - ofy) / 16f:F1},z:{v0.Z},S:{v0.S:G6},T:{v0.T:G6},Q:{v0.Q:G6}) " +
+                $"v1=({(v1.X - ofx) / 16f:F1},{(v1.Y - ofy) / 16f:F1},z:{v1.Z},S:{v1.S:G6},T:{v1.T:G6},Q:{v1.Q:G6})");
+            OnSpriteKicked?.Invoke(CurrentFrame, count);
+        }
+
+        ulong frameReg = Frame[ctx];
+        int fbpBlock = (int)(frameReg & 0x1FFul) * 32;
+        if (Mode == GsRendererMode.OpenGl && ActiveBatch != null && fbpBlock < 0x2000)
+        {
+            if (((ActiveAttr >> 4) & 1ul) != 0)
+            {
+                int fastTbp0 = (int)(Tex0[ctx] & 0x3FFFul);
+                if (fastTbp0 == 0 || fastTbp0 == 0xA00)
+                    return;
+            }
+
+            ref readonly var dc = ref BuildDrawContext(ctx, false);
+            if (dc.Tme && (dc.Tbp0 == 0 || dc.Tbp0 == 0xA00))
+                return;
+            var (ofx, ofy, scx0, scy0, scx1, scy1) = GetViewportBounds(ctx);
+            float fx0 = (v0.X - ofx) / 16.0f;
+            float fy0 = (v0.Y - ofy) / 16.0f;
+            float fx1 = (v1.X - ofx) / 16.0f;
+            float fy1 = (v1.Y - ofy) / 16.0f;
+            if (MathF.Abs(fx1 - fx0) < 2048.0f && MathF.Abs(fy1 - fy0) < 2048.0f)
+            {
+                TotalPrimitivesDrawn++;
+                TotalSpritesDrawn++;
+                float invZ = dc.Zpsm == GsPsm.Psmz24 ? (1.0f / 16777215.0f) : (1.0f / (float)uint.MaxValue);
+                float fz1 = Math.Clamp(v1.Z * invZ, 0.0f, 1.0f);
+                var glV0 = new GsGlVertex
+                {
+                    X = fx0, Y = fy0, Z = fz1, W = 1.0f,
+                    R = v1.R / 128.0f, G = v1.G / 128.0f, B = v1.B / 128.0f, A = v1.A / 128.0f,
+                    S = v0.S, T = v0.T, Q = v1.Q,
+                    U = v0.U / 16.0f, V = v0.V / 16.0f
+                };
+                var glV1 = new GsGlVertex
+                {
+                    X = fx1, Y = fy1, Z = fz1, W = 1.0f,
+                    R = v1.R / 128.0f, G = v1.G / 128.0f, B = v1.B / 128.0f, A = v1.A / 128.0f,
+                    S = v1.S, T = v1.T, Q = v1.Q,
+                    U = v1.U / 16.0f, V = v1.V / 16.0f
+                };
+                ActiveBatch.AddSprite(in dc, scx0, scy0, scx1, scy1, ofx, ofy, in glV0, in glV1);
+            }
+            return;
+        }
+
+        if (Mode == GsRendererMode.OpenGl && fbpBlock >= 0x3100 && fbpBlock < 0x32A0 && ((ActiveAttr >> 4) & 1ul) != 0)
+        {
+            return;
+        }
+
+        RasterizeSprite(v0, v1, out int maxWrittenX, out int maxWrittenY, out bool cacheUpdatedInPlace);
+        if (!cacheUpdatedInPlace && maxWrittenX >= 0 && maxWrittenY >= 0)
+        {
+            int fbwPixels = Math.Max(1, (int)((frameReg >> 16) & 0x3Ful)) * 64;
+            var fpsm = (GsPsm)((frameReg >> 24) & 0x3Ful);
+            InvalidateDecodedTexturesAt(fbpBlock, fbwPixels, fpsm, maxWrittenX + 1, maxWrittenY + 1);
+        }
     }
 
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
     private (int OffsetX, int OffsetY, int Scx0, int Scy0, int Scx1, int Scy1) GetViewportBounds(int ctx)
     {
         ulong xyoff = Xyoffset[ctx];
@@ -1075,8 +1493,16 @@ public sealed class GsProcessor
     }
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    private GsDrawContext BuildDrawContext(int ctx, bool gouraud)
+    private ref readonly GsDrawContext BuildDrawContext(int ctx, bool gouraud)
     {
+        if (_lastDcValid[ctx]
+            && _lastDcGouraud[ctx] == gouraud
+            && _lastDcMode[ctx] == Mode
+            && ReferenceEquals(_lastDcBatch[ctx], ActiveBatch))
+        {
+            return ref _lastDc[ctx];
+        }
+
         ulong attr = ActiveAttr;
         ulong frameReg = Frame[ctx];
         ulong zbufReg = Zbuf[ctx];
@@ -1117,7 +1543,7 @@ public sealed class GsProcessor
             bool aem = ((Texa >> 15) & 1ul) != 0;
             bool is8Bit = psm is GsPsm.Psmt8 or GsPsm.Psmt8H;
 
-            bool clutDirty = _cachedClutVramRevision[ctx] != _vramTransferRevision
+            bool clutDirty = !_cachedClutValid[ctx]
                 || _cachedClutCbp[ctx] != cbp
                 || _cachedClutCpsm[ctx] != cpsm
                 || _cachedClutCsa[ctx] != csa
@@ -1128,6 +1554,8 @@ public sealed class GsProcessor
 
             if (clutDirty)
             {
+                if (_deferredVramBakes.Count > 0)
+                    FlushDeferredSpriteVramRange(cbp, cbp + 3);
                 uint[] cache = _clutCache[ctx];
                 if (is8Bit)
                 {
@@ -1144,7 +1572,7 @@ public sealed class GsProcessor
                     }
                 }
 
-                _cachedClutVramRevision[ctx] = _vramTransferRevision;
+                _cachedClutValid[ctx] = true;
                 _cachedClutCbp[ctx] = cbp;
                 _cachedClutCpsm[ctx] = cpsm;
                 _cachedClutCsa[ctx] = csa;
@@ -1157,7 +1585,7 @@ public sealed class GsProcessor
             clutTable = _clutCache[ctx];
         }
 
-        return new GsDrawContext
+        var dc = new GsDrawContext
         {
             Context = ctx,
             Gouraud = gouraud,
@@ -1215,8 +1643,360 @@ public sealed class GsProcessor
             Fba = (Fba[ctx] & 1ul) != 0,
 
             CanEarlyZ = canEarlyZ,
-            ClutTable = clutTable
+            ClutTable = clutTable,
+            DecodedTexture = null,
+            DecodedTextureHash64 = 0,
+            TexIndex = -1
         };
+
+        if (tme && dc.Tw <= 1024 && dc.Th <= 1024)
+        {
+            bool needBatchTex = Mode == GsRendererMode.OpenGl && ActiveBatch != null && dc.FbpBlock < 0x2000;
+            var entry = GetOrDecodeTexture(in dc, needHash: true);
+            dc.DecodedTexture = entry.Pixels;
+            dc.DecodedTextureHash64 = entry.Hash64;
+            if (needBatchTex)
+            {
+                entry.SharedWithBatch = true;
+                dc.TexIndex = ActiveBatch!.RegisterTexture(dc.Tw, dc.Th, entry.Hash64, entry.Pixels);
+            }
+        }
+
+        int ver = (_drawContextVersionCounter + 1) & 0x7FFFFFFF;
+        if (ver == 0) ver = 1;
+        _drawContextVersionCounter = ver;
+        dc.StateVersion = ver;
+        _lastDcValid[ctx] = true;
+        _lastDc[ctx] = dc;
+        _lastDcGouraud[ctx] = gouraud;
+        _lastDcMode[ctx] = Mode;
+        _lastDcBatch[ctx] = ActiveBatch;
+
+        return ref _lastDc[ctx];
+    }
+
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    private static bool IsPalettedPsm(GsPsm psm)
+        => psm is GsPsm.Psmt8 or GsPsm.Psmt8H or GsPsm.Psmt4 or GsPsm.Psmt4HL or GsPsm.Psmt4HH;
+
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    private static bool BlocksOverlap(int aStart, int aEnd, int bStart, int bEnd)
+        => aStart <= bEnd && bStart <= aEnd;
+
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    private static void ComputeBlockRange(int baseBlock, int bwPixels, GsPsm psm, int width, int height, out int startBlock, out int endBlock)
+    {
+        startBlock = baseBlock;
+        int w = Math.Max(1, width);
+        int h = Math.Max(1, height);
+        int pagesPerRow, pageCol, pageRow;
+        switch (psm)
+        {
+            case GsPsm.Psmt4:
+                pagesPerRow = Math.Max(1, Math.Max(128, bwPixels) >> 7);
+                pageCol = (w - 1) >> 7;
+                pageRow = (h - 1) >> 7;
+                break;
+            case GsPsm.Psmt8:
+                pagesPerRow = Math.Max(1, Math.Max(128, bwPixels) >> 7);
+                pageCol = (w - 1) >> 7;
+                pageRow = (h - 1) >> 6;
+                break;
+            case GsPsm.Psmct16:
+            case GsPsm.Psmct16S:
+            case GsPsm.Psmz16:
+            case GsPsm.Psmz16S:
+                pagesPerRow = Math.Max(1, bwPixels >> 6);
+                pageCol = (w - 1) >> 6;
+                pageRow = (h - 1) >> 6;
+                break;
+            default:
+                pagesPerRow = Math.Max(1, bwPixels >> 6);
+                pageCol = (w - 1) >> 6;
+                pageRow = (h - 1) >> 5;
+                break;
+        }
+        int lastPageIdx = pageRow * pagesPerRow + pageCol;
+        endBlock = baseBlock + lastPageIdx * 32 + 31;
+    }
+
+    private void InvalidateDecodedTexturesAt(int fbpBlock, int fbwPixels, GsPsm fpsm, int width, int height)
+    {
+        if (fbpBlock == 0 || fbpBlock == 0xA00)
+            return;
+
+        ComputeBlockRange(fbpBlock, fbwPixels, fpsm, width, height, out int startBlock, out int endBlock);
+
+        if (_cachedClutValid[0] && BlocksOverlap(_cachedClutCbp[0], _cachedClutCbp[0] + 3, startBlock, endBlock))
+            _cachedClutValid[0] = false;
+        if (_cachedClutValid[1] && BlocksOverlap(_cachedClutCbp[1], _cachedClutCbp[1] + 3, startBlock, endBlock))
+            _cachedClutValid[1] = false;
+
+        for (int i = 0; i < 2; i++)
+        {
+            if (!_lastDcValid[i])
+                continue;
+            ref readonly var ldc = ref _lastDc[i];
+            if (!ldc.Tme)
+                continue;
+            ComputeBlockRange(ldc.Tbp0, ldc.Tbw, ldc.Psm, ldc.Tw, ldc.Th, out int ts, out int te);
+            if (BlocksOverlap(ts, te, startBlock, endBlock) ||
+                (IsPalettedPsm(ldc.Psm) && BlocksOverlap(ldc.Cbp, ldc.Cbp + 3, startBlock, endBlock)))
+            {
+                _lastDcValid[i] = false;
+                _lastDc[i].DecodedTexture = null;
+            }
+        }
+
+        if (_decodedTexCache.Count == 0)
+            return;
+
+        List<GsTexCacheKey>? toRemove = null;
+        foreach (var kv in _decodedTexCache)
+        {
+            var e = kv.Value;
+            if (BlocksOverlap(e.StartBlock, e.EndBlock, startBlock, endBlock) ||
+                (e.ClutEndBlock >= e.ClutStartBlock && BlocksOverlap(e.ClutStartBlock, e.ClutEndBlock, startBlock, endBlock)))
+            {
+                toRemove ??= new List<GsTexCacheKey>();
+                toRemove.Add(kv.Key);
+            }
+        }
+        if (toRemove != null)
+        {
+            foreach (var k in toRemove)
+            {
+                if (_decodedTexCache.Remove(k, out var removed) && !removed.SharedWithBatch && removed.Pixels.Length > 0)
+                {
+                    ReturnTexBuffer(removed.Pixels);
+                }
+            }
+        }
+    }
+
+    private uint[] RentTexBuffer(int length)
+    {
+        if (_texBufferPool.TryGetValue(length, out var stack) && stack.Count > 0)
+            return stack.Pop();
+        return new uint[length];
+    }
+
+    private void ReturnTexBuffer(uint[] buf)
+    {
+        if (!_texBufferPool.TryGetValue(buf.Length, out var stack))
+        {
+            if (_texBufferPool.Count >= 32)
+                return;
+            stack = new Stack<uint[]>(8);
+            _texBufferPool[buf.Length] = stack;
+        }
+        if (stack.Count < 8)
+            stack.Push(buf);
+    }
+
+    private GsCachedTexEntry GetOrDecodeTexture(in GsDrawContext dc, bool needHash)
+    {
+        var psm = dc.Psm;
+        bool paletted = IsPalettedPsm(psm);
+        var key = new GsTexCacheKey(
+            dc.Tbp0, dc.Tbw, psm, dc.Tw, dc.Th,
+            paletted ? dc.Cbp : 0,
+            paletted ? dc.Cpsm : GsPsm.Psmct32,
+            paletted ? dc.Csa : 0,
+            psm == GsPsm.Psmct32 ? (byte)0 : dc.Ta0,
+            (psm == GsPsm.Psmct32 || psm == GsPsm.Psmct24) ? (byte)0 : dc.Ta1,
+            psm == GsPsm.Psmct32 ? false : dc.Aem);
+
+        if (_decodedTexCache.TryGetValue(key, out var entry))
+        {
+            if (needHash && !entry.HasHash)
+            {
+                entry.Hash64 = ComputePixelsHash64(entry.Pixels, dc.Tw * dc.Th);
+                entry.HasHash = true;
+            }
+            return entry;
+        }
+
+        if (_decodedTexCache.Count >= 1024)
+            _decodedTexCache.Clear();
+
+        int w = dc.Tw;
+        int h = dc.Th;
+        int len = w * h;
+        ComputeBlockRange(dc.Tbp0, dc.Tbw, psm, w, h, out int startBlock, out int endBlock);
+        if (_deferredVramBakes.Count > 0)
+        {
+            FlushDeferredSpriteVramRange(startBlock, endBlock);
+        }
+        var pixels = RentTexBuffer(len);
+
+        if (psm == GsPsm.Psmct32)
+        {
+            DecodePsmct32Fast(Vram, dc.Tbp0, dc.Tbw, w, h, pixels);
+        }
+        else if (psm == GsPsm.Psmt8 && dc.ClutTable != null)
+        {
+            DecodePsmt8Fast(Vram, dc.Tbp0, dc.Tbw, w, h, pixels, dc.ClutTable);
+        }
+        else if (psm == GsPsm.Psmt4 && dc.ClutTable != null)
+        {
+            DecodePsmt4Fast(Vram, dc.Tbp0, dc.Tbw, w, h, pixels, dc.ClutTable);
+        }
+        else if (psm is GsPsm.Psmct16 or GsPsm.Psmct16S)
+        {
+            DecodePsmct16Fast(Vram, dc.Tbp0, dc.Tbw, w, h, pixels, psm == GsPsm.Psmct16S, dc.Ta0, dc.Ta1, dc.Aem);
+        }
+        else
+        {
+            for (int ty = 0; ty < h; ty++)
+            {
+                int row = ty * w;
+                for (int tx = 0; tx < w; tx++)
+                {
+                    pixels[row + tx] = ReadSingleTexelFromVram(in dc, tx, ty);
+                }
+            }
+        }
+
+        ulong hash = needHash ? ComputePixelsHash64(pixels, len) : 0ul;
+        entry = new GsCachedTexEntry
+        {
+            StartBlock = startBlock,
+            EndBlock = endBlock,
+            ClutStartBlock = paletted ? dc.Cbp : 0,
+            ClutEndBlock = paletted ? dc.Cbp + 3 : -1,
+            Hash64 = hash,
+            HasHash = needHash,
+            Pixels = pixels
+        };
+        _decodedTexCache[key] = entry;
+        return entry;
+    }
+
+    private static unsafe ulong ComputePixelsHash64(uint[] pixels, int count)
+    {
+        ulong hash = 14695981039346656037ul;
+        fixed (uint* p = pixels)
+        {
+            for (int i = 0; i < count; i++)
+            {
+                hash ^= p[i];
+                hash *= 1099511628211ul;
+            }
+        }
+        return hash;
+    }
+
+    private static unsafe void DecodePsmct32Fast(byte[] vram, int tbp0, int tbw, int w, int h, uint[] pixels)
+    {
+        int pagesPerRow = Math.Max(1, tbw >> 6);
+        int baseBytes = tbp0 * 256;
+        ref ushort offTbl = ref MemoryMarshal.GetReference(GsSwizzle.OffsetTable32Span);
+
+        fixed (byte* vramPtr = vram)
+        fixed (uint* dstPtr = pixels)
+        {
+            for (int ty = 0; ty < h; ty++)
+            {
+                int pageRowBase = baseBytes + (ty >> 5) * pagesPerRow * 8192;
+                int offRowBase = (ty & 31) << 6;
+                uint* rowDst = dstPtr + ty * w;
+
+                for (int tx = 0; tx < w; tx++)
+                {
+                    int pageAddr = pageRowBase + ((tx >> 6) << 13);
+                    int byteAddr = (pageAddr + Unsafe.Add(ref offTbl, offRowBase + (tx & 63))) & GsSwizzle.VramByteMask;
+                    rowDst[tx] = *(uint*)(vramPtr + byteAddr);
+                }
+            }
+        }
+    }
+
+    private static unsafe void DecodePsmt8Fast(byte[] vram, int tbp0, int tbw, int w, int h, uint[] pixels, uint[] clutTable)
+    {
+        int perRow = Math.Max(1, Math.Max(128, tbw) >> 7);
+        int baseBytes = tbp0 * 256;
+        ref ushort offTbl = ref MemoryMarshal.GetReference(GsSwizzle.OffsetTable8Span);
+
+        fixed (byte* vramPtr = vram)
+        fixed (uint* dstPtr = pixels)
+        fixed (uint* clutPtr = clutTable)
+        {
+            for (int ty = 0; ty < h; ty++)
+            {
+                int pageRowBase = baseBytes + (ty >> 6) * perRow * 8192;
+                int offRowBase = (ty & 63) << 7;
+                uint* rowDst = dstPtr + ty * w;
+
+                for (int tx = 0; tx < w; tx++)
+                {
+                    int pageAddr = pageRowBase + (tx >> 7) * 8192;
+                    int addr = (pageAddr + Unsafe.Add(ref offTbl, offRowBase + (tx & 127))) & GsSwizzle.VramByteMask;
+                    rowDst[tx] = clutPtr[vramPtr[addr]];
+                }
+            }
+        }
+    }
+
+    private static unsafe void DecodePsmt4Fast(byte[] vram, int tbp0, int tbw, int w, int h, uint[] pixels, uint[] clutTable)
+    {
+        int perRow = Math.Max(1, Math.Max(128, tbw) >> 7);
+        int baseBytes = tbp0 * 256;
+        ref ushort offTbl = ref MemoryMarshal.GetReference(GsSwizzle.OffsetTable4Span);
+
+        fixed (byte* vramPtr = vram)
+        fixed (uint* dstPtr = pixels)
+        fixed (uint* clutPtr = clutTable)
+        {
+            for (int ty = 0; ty < h; ty++)
+            {
+                int pageRowBase = baseBytes + (ty >> 7) * perRow * 8192;
+                int offRowBase = (ty & 127) << 7;
+                uint* rowDst = dstPtr + ty * w;
+
+                for (int tx = 0; tx < w; tx++)
+                {
+                    int pageAddr = pageRowBase + (tx >> 7) * 8192;
+                    int nibAddr = (pageAddr << 1) + Unsafe.Add(ref offTbl, offRowBase + (tx & 127));
+                    byte b = vramPtr[(nibAddr >> 1) & GsSwizzle.VramByteMask];
+                    int idx = (b >> ((nibAddr & 1) << 2)) & 0x0F;
+                    rowDst[tx] = clutPtr[idx];
+                }
+            }
+        }
+    }
+
+    private static unsafe void DecodePsmct16Fast(byte[] vram, int tbp0, int tbw, int w, int h, uint[] pixels, bool is16S, byte ta0, byte ta1, bool aem)
+    {
+        int pagesPerRow = Math.Max(1, tbw >> 6);
+        ref byte blockTbl = ref MemoryMarshal.GetReference(is16S ? GsSwizzle.BlockTable16S : GsSwizzle.BlockTable16);
+        ref byte hwTbl = ref MemoryMarshal.GetReference(GsSwizzle.ColumnHalfwordTable16);
+
+        fixed (byte* vramPtr = vram)
+        fixed (uint* dstPtr = pixels)
+        {
+            for (int ty = 0; ty < h; ty++)
+            {
+                int pageRowBase = tbp0 + (ty >> 6) * pagesPerRow * 32;
+                int byOff = ((ty & 63) >> 3) << 2;
+                int pyOff = (ty & 7) << 4;
+                uint* rowDst = dstPtr + ty * w;
+
+                for (int tx = 0; tx < w; tx++)
+                {
+                    int blockInPage = Unsafe.Add(ref blockTbl, byOff + ((tx & 63) >> 4));
+                    int blockIdx = (pageRowBase + ((tx >> 6) << 5) + blockInPage) & 0x3FFF;
+                    int hwInBlock = Unsafe.Add(ref hwTbl, pyOff + (tx & 15));
+                    int byteAddr = (((blockIdx << 7) + hwInBlock) << 1) & GsSwizzle.VramByteMask;
+                    ushort c16 = *(ushort*)(vramPtr + byteAddr);
+                    uint r = (uint)((c16 & 0x001F) << 3);
+                    uint g = (uint)(((c16 >> 5) & 0x001F) << 3);
+                    uint b = (uint)(((c16 >> 10) & 0x001F) << 3);
+                    uint a = (c16 & 0x8000) != 0 ? ta1 : ((aem && (c16 & 0x7FFF) == 0) ? 0u : ta0);
+                    rowDst[tx] = r | (g << 8) | (b << 16) | (a << 24);
+                }
+            }
+        }
     }
 
     private void RasterizePoint(in GsVertex v0)
@@ -1230,8 +2010,8 @@ public sealed class GsProcessor
         if (px < scx0 || px > scx1 || py < scy0 || py > scy1)
             return;
 
-        var dc = BuildDrawContext(ctx, gouraud: false);
-        ShadeAndWritePixel(ref dc, px, py, v0.Z, v0.R, v0.G, v0.B, v0.A, v0.S, v0.T, v0.Q, v0.U, v0.V);
+        ref readonly var dc = ref BuildDrawContext(ctx, gouraud: false);
+        ShadeAndWritePixel(in dc, px, py, v0.Z, v0.R, v0.G, v0.B, v0.A, v0.S, v0.T, v0.Q, v0.U, v0.V);
     }
 
     private void RasterizeLine(in GsVertex v0, in GsVertex v1)
@@ -1250,8 +2030,10 @@ public sealed class GsProcessor
         int dy = Math.Abs(y1 - y0);
         int steps = Math.Max(1, Math.Max(dx, dy));
 
-        var dc = BuildDrawContext(ctx, gouraud);
+        ref readonly var dc = ref BuildDrawContext(ctx, gouraud);
         if (dc.Tme) TotalTexturedTriangles++; else TotalFlatTriangles++;
+        if (_deferredVramBakes.Count > 0)
+            FlushAllDeferredSpriteVram();
 
         for (int i = 0; i <= steps; i++)
         {
@@ -1273,15 +2055,19 @@ public sealed class GsProcessor
             float tCoord = v0.T + (v1.T - v0.T) * t;
             float qCoord = v0.Q + (v1.Q - v0.Q) * t;
 
-            ShadeAndWritePixel(ref dc, px, py, z, r, g, b, a, sCoord, tCoord, qCoord, u, v);
+            ShadeAndWritePixel(in dc, px, py, z, r, g, b, a, sCoord, tCoord, qCoord, u, v);
         }
     }
 
-    private void RasterizeSprite(in GsVertex v0, in GsVertex v1)
+    private void RasterizeSprite(in GsVertex v0, in GsVertex v1, out int maxWrittenX, out int maxWrittenY, out bool cacheUpdatedInPlace)
     {
+        maxWrittenX = -1;
+        maxWrittenY = -1;
+        cacheUpdatedInPlace = false;
         TotalPrimitivesDrawn++;
         TotalSpritesDrawn++;
-        long t0 = EnableProfiling ? Stopwatch.GetTimestamp() : 0;
+        var rec = FrameRecorder;
+        long t0 = (EnableProfiling || rec != null) ? Stopwatch.GetTimestamp() : 0;
         try
         {
         int ctx = ActiveContext;
@@ -1292,10 +2078,12 @@ public sealed class GsProcessor
         float fx1 = (v1.X - ofx) / 16.0f;
         float fy1 = (v1.Y - ofy) / 16.0f;
 
-        float minFx = MathF.Min(fx0, fx1);
-        float maxFx = MathF.Max(fx0, fx1);
-        float minFy = MathF.Min(fy0, fy1);
-        float maxFy = MathF.Max(fy0, fy1);
+        bool flipX = fx1 < fx0;
+        bool flipY = fy1 < fy0;
+        float minFx = flipX ? fx1 : fx0;
+        float maxFx = flipX ? fx0 : fx1;
+        float minFy = flipY ? fy1 : fy0;
+        float maxFy = flipY ? fy0 : fy1;
 
         // On PS2 GS, XYOFFSET already subtracts the 0.5 pixel center offset (e.g. OFX=1728.5, OFY=1824.5),
         // so integer pixel coordinates (px, py) inside [minFx, maxFx) are rasterized.
@@ -1320,6 +2108,9 @@ public sealed class GsProcessor
         if (clipX0 > clipX1 || clipY0 > clipY1)
             return;
 
+        maxWrittenX = clipX1;
+        maxWrittenY = clipY1;
+
         if (EnableDebugLogging && scx0 <= scx1 && scy0 <= scy1 && (TotalPrimitivesDrawn <= 70 || (TotalPrimitivesDrawn >= 301 && _uiTriLogs < 35)))
         {
             if (TotalPrimitivesDrawn >= 301) _uiTriLogs++;
@@ -1341,6 +2132,8 @@ public sealed class GsProcessor
 
         if (!spriteTme && !spriteAbe && !spriteAte && !spriteDate && (!spriteZte || spriteZtst == 1))
         {
+            if (_deferredVramBakes.Count > 0)
+                FlushAllDeferredSpriteVram();
             ulong frameReg = Frame[ctx];
             int fbpBlock = (int)(frameReg & 0x1FFul) * 32;
             int fbwPixels = Math.Max(1, (int)((frameReg >> 16) & 0x3Ful)) * 64;
@@ -1367,46 +2160,131 @@ public sealed class GsProcessor
             TotalPixelsWritten += count;
             VramDirty = true;
 
-            for (int py = clipY0; py <= clipY1; py++)
-            {
-                for (int px = clipX0; px <= clipX1; px++)
+            if (count >= 32768 && clipY1 > clipY0)//changed from 4096 to 32768 for testing optimization
                 {
-                    if (writeDepth)
-                        WriteDepthPixel(zbpBlock, fbwPixels, zpsm, px, py, testZ);
+                Parallel.For(clipY0, clipY1 + 1, py =>
+                {
+                    for (int px = clipX0; px <= clipX1; px++)
+                    {
+                        if (writeDepth)
+                            WriteDepthPixel(zbpBlock, fbwPixels, zpsm, px, py, testZ);
 
-                    if (fbmsk == 0)
-                    {
-                        WriteFramePixel(fbpBlock, fbwPixels, fpsm, px, py, newColor);
+                        if (fbmsk == 0)
+                        {
+                            WriteFramePixel(fbpBlock, fbwPixels, fpsm, px, py, newColor);
+                        }
+                        else if (fbmsk != 0xFFFFFFFFu)
+                        {
+                            uint dstColor = ReadFramePixel(fbpBlock, fbwPixels, fpsm, px, py);
+                            WriteFramePixel(fbpBlock, fbwPixels, fpsm, px, py, (dstColor & fbmsk) | (newColor & ~fbmsk));
+                        }
                     }
-                    else if (fbmsk != 0xFFFFFFFFu)
+                });
+            }
+            else
+            {
+                for (int py = clipY0; py <= clipY1; py++)
+                {
+                    for (int px = clipX0; px <= clipX1; px++)
                     {
-                        uint dstColor = ReadFramePixel(fbpBlock, fbwPixels, fpsm, px, py);
-                        WriteFramePixel(fbpBlock, fbwPixels, fpsm, px, py, (dstColor & fbmsk) | (newColor & ~fbmsk));
+                        if (writeDepth)
+                            WriteDepthPixel(zbpBlock, fbwPixels, zpsm, px, py, testZ);
+
+                        if (fbmsk == 0)
+                        {
+                            WriteFramePixel(fbpBlock, fbwPixels, fpsm, px, py, newColor);
+                        }
+                        else if (fbmsk != 0xFFFFFFFFu)
+                        {
+                            uint dstColor = ReadFramePixel(fbpBlock, fbwPixels, fpsm, px, py);
+                            WriteFramePixel(fbpBlock, fbwPixels, fpsm, px, py, (dstColor & fbmsk) | (newColor & ~fbmsk));
+                        }
                     }
                 }
+            }
+            if (rec != null)
+            {
+                rec.RecordSoftSprite(
+                    new SoftSprBucketKey("ClearFast", fbpBlock, fbwPixels, fpsm, 0, 0, 0, 0, 0, 0, 0, 0, spriteAte, 0, 0, 0, spriteAbe, Alpha[ctx], spriteZte, spriteZtst, !writeDepth, spriteDate, (Fba[ctx] & 1ul) != 0, fbmsk, false, false),
+                    clipX0, clipY0, clipX1, clipY1, count, Stopwatch.GetTimestamp() - t0);
             }
             return;
         }
 
-        var dc = BuildDrawContext(ctx, gouraud: false);
+        ref readonly var dc = ref BuildDrawContext(ctx, gouraud: false);
         float spanX = Math.Max(1e-4f, maxFx - minFx);
         float spanY = Math.Max(1e-4f, maxFy - minFy);
+        int sprPixels = (clipX1 - clipX0 + 1) * (clipY1 - clipY0 + 1);
 
-        for (int py = clipY0; py <= clipY1; py++)
+        if (!dc.Ate && !dc.Date && !dc.Abe && (!dc.Zte || dc.Ztst == 1) && (!dc.Zte || dc.Zmsk)
+            && dc.Fbmsk == 0 && dc.Tme && (dc.Tfx == 0 || dc.Tfx == 1)
+            && dc.Fpsm == GsPsm.Psmct32 && dc.DecodedTexture != null)
         {
-            float ty = Math.Clamp((py - minFy) / spanY, 0.0f, 1.0f);
-            ushort vTex = (ushort)(v0.V + (v1.V - v0.V) * ty);
-            float tCoord = v0.T + (v1.T - v0.T) * ty;
-
-            for (int px = clipX0; px <= clipX1; px++)
+            RasterizeTexturedSpriteFast(
+                in dc, in v0, in v1,
+                clipX0, clipX1, clipY0, clipY1,
+                fx0, fy0, fx1, fy1,
+                minFx, maxFx, minFy, maxFy, spanX, spanY, flipX, flipY,
+                out cacheUpdatedInPlace);
+            if (rec != null)
             {
-                float tx = Math.Clamp((px - minFx) / spanX, 0.0f, 1.0f);
-                ushort uTex = (ushort)(v0.U + (v1.U - v0.U) * tx);
-                float sCoord = v0.S + (v1.S - v0.S) * tx;
-
-                // Sprites always use flat color and Z from the second vertex (v1)
-                ShadeAndWritePixel(ref dc, px, py, v1.Z, v1.R, v1.G, v1.B, v1.A, sCoord, tCoord, v1.Q, uTex, vTex);
+                rec.RecordSoftSprite(
+                    new SoftSprBucketKey("TexFast", dc.FbpBlock, dc.FbwPixels, dc.Fpsm, dc.Tbp0, dc.Tw, dc.Th, dc.Psm, dc.Cbp, dc.Cpsm, dc.Tfx, dc.Tcc, dc.Ate, dc.Atst, dc.Aref, dc.Afail, dc.Abe, Alpha[ctx], dc.Zte, dc.Ztst, dc.Zmsk, dc.Date, dc.Fba, dc.Fbmsk, true, dc.LinearFilter),
+                    clipX0, clipY0, clipX1, clipY1, sprPixels, Stopwatch.GetTimestamp() - t0);
             }
+            return;
+        }
+
+        if (_deferredVramBakes.Count > 0)
+            FlushAllDeferredSpriteVram();
+
+        if (sprPixels >= 32768 && clipY1 > clipY0)//changed from 4096 to 32768 for testing optimization
+            {
+            var lv0 = v0;
+            var lv1 = v1;
+            var ldc = dc;
+            Parallel.For(clipY0, clipY1 + 1, py =>
+            {
+                var rowDc = ldc;
+                float ty = Math.Clamp((flipY ? (maxFy - py) : (py - minFy)) / spanY, 0.0f, 1.0f);
+                ushort vTex = (ushort)(lv0.V + (lv1.V - lv0.V) * ty);
+                float tCoord = lv0.T + (lv1.T - lv0.T) * ty;
+
+                for (int px = clipX0; px <= clipX1; px++)
+                {
+                    float tx = Math.Clamp((flipX ? (maxFx - px) : (px - minFx)) / spanX, 0.0f, 1.0f);
+                    ushort uTex = (ushort)(lv0.U + (lv1.U - lv0.U) * tx);
+                    float sCoord = lv0.S + (lv1.S - lv0.S) * tx;
+
+                    ShadeAndWritePixel(in rowDc, px, py, lv1.Z, lv1.R, lv1.G, lv1.B, lv1.A, sCoord, tCoord, lv1.Q, uTex, vTex);
+                }
+            });
+        }
+        else
+        {
+            for (int py = clipY0; py <= clipY1; py++)
+            {
+                float ty = Math.Clamp((flipY ? (maxFy - py) : (py - minFy)) / spanY, 0.0f, 1.0f);
+                ushort vTex = (ushort)(v0.V + (v1.V - v0.V) * ty);
+                float tCoord = v0.T + (v1.T - v0.T) * ty;
+
+                for (int px = clipX0; px <= clipX1; px++)
+                {
+                    float tx = Math.Clamp((flipX ? (maxFx - px) : (px - minFx)) / spanX, 0.0f, 1.0f);
+                    ushort uTex = (ushort)(v0.U + (v1.U - v0.U) * tx);
+                    float sCoord = v0.S + (v1.S - v0.S) * tx;
+
+                    // Sprites always use flat color and Z from the second vertex (v1)
+                    ShadeAndWritePixel(in dc, px, py, v1.Z, v1.R, v1.G, v1.B, v1.A, sCoord, tCoord, v1.Q, uTex, vTex);
+                }
+            }
+        }
+
+        if (rec != null)
+        {
+            rec.RecordSoftSprite(
+                new SoftSprBucketKey("SlowShade", dc.FbpBlock, dc.FbwPixels, dc.Fpsm, dc.Tbp0, dc.Tw, dc.Th, dc.Psm, dc.Cbp, dc.Cpsm, dc.Tfx, dc.Tcc, dc.Ate, dc.Atst, dc.Aref, dc.Afail, dc.Abe, Alpha[ctx], dc.Zte, dc.Ztst, dc.Zmsk, dc.Date, dc.Fba, dc.Fbmsk, dc.DecodedTexture != null, dc.LinearFilter),
+                clipX0, clipY0, clipX1, clipY1, sprPixels, Stopwatch.GetTimestamp() - t0);
         }
         }
         finally
@@ -1416,11 +2294,469 @@ public sealed class GsProcessor
         }
     }
 
+    private unsafe void RasterizeTexturedSpriteFast(
+        in GsDrawContext dc,
+        in GsVertex v0,
+        in GsVertex v1,
+        int clipX0, int clipX1, int clipY0, int clipY1,
+        float fx0, float fy0, float fx1, float fy1,
+        float minFx, float maxFx, float minFy, float maxFy,
+        float spanX, float spanY,
+        bool flipX, bool flipY,
+        out bool cacheUpdatedInPlace)
+    {
+        cacheUpdatedInPlace = false;
+        int width = clipX1 - clipX0 + 1;
+        int height = clipY1 - clipY0 + 1;
+        int count = width * height;
+        TotalPixelsShaded += count;
+        TotalTexturedPixels += count;
+        TotalPixelsWritten += count;
+
+        uint[] srcPixels = dc.DecodedTexture!;
+        ulong srcHash64 = dc.DecodedTextureHash64;
+        int ctx = dc.Context;
+        int fbpBlock = dc.FbpBlock;
+        int fbwPixels = dc.FbwPixels;
+        int pagesPerRow = Math.Max(1, fbwPixels >> 6);
+        int tw = dc.Tw, th = dc.Th;
+        int wms = dc.Wms, wmt = dc.Wmt;
+        uint minu = dc.MinU, maxu = dc.MaxU, minv = dc.MinV, maxv = dc.MaxV;
+        bool linear = dc.LinearFilter, fst = dc.Fst, decal = dc.Tfx == 1, tcc = dc.Tcc != 0, fba = dc.Fba;
+        byte vR = v1.R, vG = v1.G, vB = v1.B, vA = v1.A;
+
+        bool canCacheDst = clipX0 == 0 && clipY0 == 0 && fbpBlock != 0 && fbpBlock != 0xA00
+            && width <= 1024 && height <= 1024
+            && (width & (width - 1)) == 0 && (height & (height - 1)) == 0;
+        GsTexCacheKey dstKey = default;
+        GsSpriteWriteSignature sig = default;
+        uint[]? dstPixels = null;
+        if (canCacheDst)
+        {
+            dstKey = new GsTexCacheKey(fbpBlock, fbwPixels, GsPsm.Psmct32, width, height, 0, GsPsm.Psmct32, 0, 0, 0, false);
+            byte sigFlags = (byte)((linear ? 1 : 0) | (fst ? 2 : 0) | (decal ? 4 : 0) | (tcc ? 8 : 0) | (fba ? 16 : 0));
+            sig = new GsSpriteWriteSignature(
+                srcHash64, tw, th,
+                clipX1, clipY1,
+                BitConverter.SingleToInt32Bits(fx0),
+                BitConverter.SingleToInt32Bits(fy0),
+                BitConverter.SingleToInt32Bits(fx1),
+                BitConverter.SingleToInt32Bits(fy1),
+                v0.U, v0.V, v1.U, v1.V,
+                BitConverter.SingleToInt32Bits(v0.S),
+                BitConverter.SingleToInt32Bits(v0.T),
+                BitConverter.SingleToInt32Bits(v1.S),
+                BitConverter.SingleToInt32Bits(v1.T),
+                BitConverter.SingleToInt32Bits(v1.Q),
+                Tex0[ctx] & 0x3FFFFFFFFFul,
+                Clamp[ctx],
+                vR, vG, vB, vA,
+                sigFlags);
+        if (_decodedTexCache.TryGetValue(dstKey, out var existingDst) && existingDst.HasWriteSig && existingDst.WriteSig == sig)
+            {
+                cacheUpdatedInPlace = true;
+                return;
+            }
+
+            if (_spriteBakeCache.TryGetValue(sig, out var baked))
+            {
+                ComputeBlockRange(fbpBlock, fbwPixels, GsPsm.Psmct32, width, height, out int hitStartBlock, out int hitEndBlock);
+                InvalidateDecodedTexturesAt(fbpBlock, fbwPixels, GsPsm.Psmct32, width, height);
+                if (!_decodedTexCache.ContainsKey(dstKey) && _decodedTexCache.Count >= 1024)
+                    _decodedTexCache.Clear();
+                _decodedTexCache[dstKey] = new GsCachedTexEntry
+                {
+                    StartBlock = hitStartBlock,
+                    EndBlock = hitEndBlock,
+                    ClutStartBlock = 0,
+                    ClutEndBlock = -1,
+                    Hash64 = baked.DstHash64,
+                    HasHash = true,
+                    SharedWithBatch = true,
+                    HasWriteSig = true,
+                    WriteSig = sig,
+                    Pixels = baked.Pixels
+                };
+                VramDirty = true;
+                if (Mode == GsRendererMode.OpenGl)
+                {
+                    _deferredVramBakes[fbpBlock] = new DeferredSpriteVramWrite(
+                        fbpBlock, fbwPixels, width, height, hitStartBlock, hitEndBlock, baked.Pixels);
+                }
+                else
+                {
+                    WriteSwizzled32Pixels(Vram, fbpBlock, fbwPixels, width, height, baked.Pixels);
+                }
+                cacheUpdatedInPlace = true;
+                return;
+            }
+
+            // Rent destination buffer BEFORE invalidating so a self-overlapping srcPixels buffer cannot be returned and re-rented.
+            dstPixels = RentTexBuffer(count);
+            _deferredVramBakes.Remove(fbpBlock);
+            InvalidateDecodedTexturesAt(fbpBlock, fbwPixels, GsPsm.Psmct32, width, height);
+        }
+        else if (_deferredVramBakes.Count > 0)
+        {
+            ComputeBlockRange(fbpBlock, fbwPixels, GsPsm.Psmct32, Math.Max(1, clipX1 + 1), Math.Max(1, clipY1 + 1), out int sBlk, out int eBlk);
+            FlushDeferredSpriteVramRange(sBlk, eBlk);
+        }
+
+        VramDirty = true;
+
+        bool directCopy = decal || (vR == 128 && vG == 128 && vB == 128 && (!tcc || vA == 128));
+        uint alphaMask = fba ? 0x80000000u : 0u;
+        uint fixedAlpha = (uint)vA << 24;
+
+        float invQ = (!fst && v1.Q != 0.0f) ? (1.0f / v1.Q) : 1.0f;
+        float invSpanX = 1.0f / spanX;
+        float invSpanY = 1.0f / spanY;
+        float dv = v1.V - v0.V, dt = v1.T - v0.T;
+        float du = v1.U - v0.U, ds = v1.S - v0.S;
+
+        Span<int> xPageByteOff = width <= 2048 ? stackalloc int[width] : new int[width];
+        Span<byte> xPx63 = width <= 2048 ? stackalloc byte[width] : new byte[width];
+        for (int dx = 0; dx < width; dx++)
+        {
+            int px = clipX0 + dx;
+            xPageByteOff[dx] = (px >> 6) << 13;
+            xPx63[dx] = (byte)(px & 63);
+        }
+
+        ref ushort offTbl = ref MemoryMarshal.GetReference(GsSwizzle.OffsetTable32Span);
+        int baseBytes = fbpBlock * 256;
+
+        fixed (byte* vramPtr = Vram)
+        fixed (uint* srcPtr = srcPixels)
+        fixed (uint* dstPtr = dstPixels)
+        {
+            if (linear)
+            {
+                Span<int> xTx0 = width <= 2048 ? stackalloc int[width] : new int[width];
+                Span<int> xTx1 = width <= 2048 ? stackalloc int[width] : new int[width];
+                Span<uint> xUf = width <= 2048 ? stackalloc uint[width] : new uint[width];
+                bool allZeroUf = true;
+
+                for (int dx = 0; dx < width; dx++)
+                {
+                    int px = clipX0 + dx;
+                    float tx = Math.Clamp((flipX ? (maxFx - px) : (px - minFx)) * invSpanX, 0.0f, 1.0f);
+                    float fU = fst
+                        ? (((ushort)(v0.U + du * tx)) / 16.0f) - 0.5f
+                        : (v0.S + ds * tx) * invQ * tw - 0.5f;
+                    int tx0 = (int)MathF.Floor(fU);
+                    float fracU = fU - tx0;
+                    int tx0w = ApplyWrapMode(tx0, tw, wms, minu, maxu);
+                    xTx0[dx] = tx0w;
+                    if (fracU == 0.0f)
+                    {
+                        xTx1[dx] = tx0w;
+                        xUf[dx] = 0;
+                    }
+                    else
+                    {
+                        xTx1[dx] = ApplyWrapMode(tx0 + 1, tw, wms, minu, maxu);
+                        uint uf = (uint)(fracU * 256.0f);
+                        xUf[dx] = uf;
+                        if (uf != 0) allZeroUf = false;
+                    }
+                }
+
+                for (int py = clipY0; py <= clipY1; py++)
+                {
+                    float ty = Math.Clamp((flipY ? (maxFy - py) : (py - minFy)) * invSpanY, 0.0f, 1.0f);
+                    int pageRowBaseBytes = baseBytes + (py >> 5) * pagesPerRow * 8192;
+                    int offRowBase = (py & 31) << 6;
+                    uint* dstRow = dstPtr != null ? (dstPtr + (py - clipY0) * width) : null;
+
+                    float fV = fst
+                        ? (((ushort)(v0.V + dv * ty)) / 16.0f) - 0.5f
+                        : (v0.T + dt * ty) * invQ * th - 0.5f;
+                    int ty0 = (int)MathF.Floor(fV);
+                    float fracV = fV - ty0;
+                    uint vf = (uint)(fracV * 256.0f);
+                    uint invVf = 256u - vf;
+                    int ty0w = ApplyWrapMode(ty0, th, wmt, minv, maxv);
+                    int ty1w = vf == 0 ? ty0w : ApplyWrapMode(ty0 + 1, th, wmt, minv, maxv);
+                    uint* row0 = srcPtr + ty0w * tw;
+                    uint* row1 = srcPtr + ty1w * tw;
+
+                    if (vf == 0 && allZeroUf)
+                    {
+                        for (int dx = 0; dx < width; dx++)
+                        {
+                            uint texColor = row0[xTx0[dx]];
+                            uint outColor;
+                            if (directCopy)
+                            {
+                                outColor = tcc ? texColor : ((texColor & 0x00FFFFFFu) | fixedAlpha);
+                            }
+                            else
+                            {
+                                uint tr = Math.Min(255u, ((texColor & 0xFFu) * vR) >> 7);
+                                uint tg = Math.Min(255u, (((texColor >> 8) & 0xFFu) * vG) >> 7);
+                                uint tb = Math.Min(255u, (((texColor >> 16) & 0xFFu) * vB) >> 7);
+                                uint ta = tcc ? Math.Min(255u, (((texColor >> 24) & 0xFFu) * vA) >> 7) : vA;
+                                outColor = tr | (tg << 8) | (tb << 16) | (ta << 24);
+                            }
+                            outColor |= alphaMask;
+
+                            int byteAddr = (pageRowBaseBytes + xPageByteOff[dx] + Unsafe.Add(ref offTbl, offRowBase + xPx63[dx])) & GsSwizzle.VramByteMask;
+                            *(uint*)(vramPtr + byteAddr) = outColor;
+                            if (dstRow != null) dstRow[dx] = outColor;
+                        }
+                    }
+                    else
+                    {
+                        for (int dx = 0; dx < width; dx++)
+                        {
+                            uint uf = xUf[dx];
+                            int tx0w = xTx0[dx];
+                            uint texColor;
+                            if (uf == 0 && vf == 0)
+                            {
+                                texColor = row0[tx0w];
+                            }
+                            else
+                            {
+                                int tx1w = xTx1[dx];
+                                uint c00 = row0[tx0w];
+                                uint c10 = row0[tx1w];
+                                uint c01 = row1[tx0w];
+                                uint c11 = row1[tx1w];
+
+                                uint invUf = 256u - uf;
+                                ulong w00 = (ulong)(invUf * invVf);
+                                ulong w10 = (ulong)(uf * invVf);
+                                ulong w01 = (ulong)(invUf * vf);
+                                ulong w11 = (ulong)(uf * vf);
+
+                                ulong rb = ((c00 & 0xFFul) | ((ulong)(c00 & 0xFF0000u) << 16)) * w00
+                                         + ((c10 & 0xFFul) | ((ulong)(c10 & 0xFF0000u) << 16)) * w10
+                                         + ((c01 & 0xFFul) | ((ulong)(c01 & 0xFF0000u) << 16)) * w01
+                                         + ((c11 & 0xFFul) | ((ulong)(c11 & 0xFF0000u) << 16)) * w11;
+                                ulong ga = (((c00 >> 8) & 0xFFul) | ((ulong)(c00 & 0xFF000000u) << 8)) * w00
+                                         + (((c10 >> 8) & 0xFFul) | ((ulong)(c10 & 0xFF000000u) << 8)) * w10
+                                         + (((c01 >> 8) & 0xFFul) | ((ulong)(c01 & 0xFF000000u) << 8)) * w01
+                                         + (((c11 >> 8) & 0xFFul) | ((ulong)(c11 & 0xFF000000u) << 8)) * w11;
+
+                                texColor = (uint)(((rb >> 16) & 0xFFul)
+                                    | ((ga >> 8) & 0xFF00ul)
+                                    | ((rb >> 32) & 0xFF0000ul)
+                                    | ((ga >> 24) & 0xFF000000ul));
+                            }
+
+                            uint outColor;
+                            if (directCopy)
+                            {
+                                outColor = tcc ? texColor : ((texColor & 0x00FFFFFFu) | fixedAlpha);
+                            }
+                            else
+                            {
+                                uint tr = Math.Min(255u, ((texColor & 0xFFu) * vR) >> 7);
+                                uint tg = Math.Min(255u, (((texColor >> 8) & 0xFFu) * vG) >> 7);
+                                uint tb = Math.Min(255u, (((texColor >> 16) & 0xFFu) * vB) >> 7);
+                                uint ta = tcc ? Math.Min(255u, (((texColor >> 24) & 0xFFu) * vA) >> 7) : vA;
+                                outColor = tr | (tg << 8) | (tb << 16) | (ta << 24);
+                            }
+                            outColor |= alphaMask;
+
+                            int byteAddr = (pageRowBaseBytes + xPageByteOff[dx] + Unsafe.Add(ref offTbl, offRowBase + xPx63[dx])) & GsSwizzle.VramByteMask;
+                            *(uint*)(vramPtr + byteAddr) = outColor;
+                            if (dstRow != null) dstRow[dx] = outColor;
+                        }
+                    }
+                }
+            }
+            else
+            {
+                Span<int> xIu = width <= 2048 ? stackalloc int[width] : new int[width];
+                for (int dx = 0; dx < width; dx++)
+                {
+                    int px = clipX0 + dx;
+                    float tx = Math.Clamp((flipX ? (maxFx - px) : (px - minFx)) * invSpanX, 0.0f, 1.0f);
+                    int iU = fst
+                        ? (((ushort)(v0.U + du * tx)) >> 4)
+                        : (int)MathF.Floor((v0.S + ds * tx) * invQ * tw);
+                    xIu[dx] = ApplyWrapMode(iU, tw, wms, minu, maxu);
+                }
+
+                for (int py = clipY0; py <= clipY1; py++)
+                {
+                    float ty = Math.Clamp((flipY ? (maxFy - py) : (py - minFy)) * invSpanY, 0.0f, 1.0f);
+                    int pageRowBaseBytes = baseBytes + (py >> 5) * pagesPerRow * 8192;
+                    int offRowBase = (py & 31) << 6;
+                    uint* dstRow = dstPtr != null ? (dstPtr + (py - clipY0) * width) : null;
+
+                    int iV = fst
+                        ? (((ushort)(v0.V + dv * ty)) >> 4)
+                        : (int)MathF.Floor((v0.T + dt * ty) * invQ * th);
+                    iV = ApplyWrapMode(iV, th, wmt, minv, maxv);
+                    uint* row0 = srcPtr + iV * tw;
+
+                    for (int dx = 0; dx < width; dx++)
+                    {
+                        uint texColor = row0[xIu[dx]];
+                        uint outColor;
+                        if (directCopy)
+                        {
+                            outColor = tcc ? texColor : ((texColor & 0x00FFFFFFu) | fixedAlpha);
+                        }
+                        else
+                        {
+                            uint tr = Math.Min(255u, ((texColor & 0xFFu) * vR) >> 7);
+                            uint tg = Math.Min(255u, (((texColor >> 8) & 0xFFu) * vG) >> 7);
+                            uint tb = Math.Min(255u, (((texColor >> 16) & 0xFFu) * vB) >> 7);
+                            uint ta = tcc ? Math.Min(255u, (((texColor >> 24) & 0xFFu) * vA) >> 7) : vA;
+                            outColor = tr | (tg << 8) | (tb << 16) | (ta << 24);
+                        }
+                        outColor |= alphaMask;
+
+                        int byteAddr = (pageRowBaseBytes + xPageByteOff[dx] + Unsafe.Add(ref offTbl, offRowBase + xPx63[dx])) & GsSwizzle.VramByteMask;
+                        *(uint*)(vramPtr + byteAddr) = outColor;
+                        if (dstRow != null) dstRow[dx] = outColor;
+                    }
+                }
+            }
+        }
+
+        if (canCacheDst && dstPixels != null)
+        {
+            ulong dstHash = ComputeSigHash64(in sig);
+            ComputeBlockRange(fbpBlock, fbwPixels, GsPsm.Psmct32, width, height, out int startBlock, out int endBlock);
+            if (!_spriteBakeCache.ContainsKey(sig))
+            {
+                if (_spriteBakeCache.Count >= MaxSpriteBakeCacheEntries && _spriteBakeFifo.Count > 0)
+                {
+                    var oldest = _spriteBakeFifo.Dequeue();
+                    _spriteBakeCache.Remove(oldest);
+                }
+                _spriteBakeCache[sig] = new GsBakedSpriteEntry
+                {
+                    DstHash64 = dstHash,
+                    Pixels = dstPixels
+                };
+                _spriteBakeFifo.Enqueue(sig);
+            }
+            if (!_decodedTexCache.ContainsKey(dstKey) && _decodedTexCache.Count >= 1024)
+                _decodedTexCache.Clear();
+            _decodedTexCache[dstKey] = new GsCachedTexEntry
+            {
+                StartBlock = startBlock,
+                EndBlock = endBlock,
+                ClutStartBlock = 0,
+                ClutEndBlock = -1,
+                Hash64 = dstHash,
+                HasHash = true,
+                SharedWithBatch = true,
+                HasWriteSig = true,
+                WriteSig = sig,
+                Pixels = dstPixels
+            };
+            cacheUpdatedInPlace = true;
+        }
+    }
+
+    private void FlushAllDeferredSpriteVram()
+    {
+        if (_deferredVramBakes.Count == 0)
+            return;
+        foreach (var kv in _deferredVramBakes)
+        {
+            var d = kv.Value;
+            WriteSwizzled32Pixels(Vram, d.FbpBlock, d.FbwPixels, d.Width, d.Height, d.Pixels);
+        }
+        _deferredVramBakes.Clear();
+    }
+
+    private void FlushDeferredSpriteVramRange(int startBlock, int endBlock)
+    {
+        if (_deferredVramBakes.Count == 0)
+            return;
+        List<int>? flushed = null;
+        foreach (var kv in _deferredVramBakes)
+        {
+            var d = kv.Value;
+            if (BlocksOverlap(d.StartBlock, d.EndBlock, startBlock, endBlock))
+            {
+                WriteSwizzled32Pixels(Vram, d.FbpBlock, d.FbwPixels, d.Width, d.Height, d.Pixels);
+                flushed ??= new List<int>(2);
+                flushed.Add(kv.Key);
+            }
+        }
+        if (flushed != null)
+        {
+            foreach (int k in flushed)
+                _deferredVramBakes.Remove(k);
+        }
+    }
+
+    private static unsafe void WriteSwizzled32Pixels(byte[] vram, int fbpBlock, int fbwPixels, int width, int height, uint[] pixels)
+    {
+        int pagesPerRow = Math.Max(1, fbwPixels >> 6);
+        int baseBytes = fbpBlock * 256;
+        Span<int> xPageByteOff = width <= 2048 ? stackalloc int[width] : new int[width];
+        Span<byte> xPx63 = width <= 2048 ? stackalloc byte[width] : new byte[width];
+        for (int dx = 0; dx < width; dx++)
+        {
+            xPageByteOff[dx] = (dx >> 6) << 13;
+            xPx63[dx] = (byte)(dx & 63);
+        }
+
+        ref ushort offTbl = ref MemoryMarshal.GetReference(GsSwizzle.OffsetTable32Span);
+        fixed (byte* vramPtr = vram)
+        fixed (uint* srcPtr = pixels)
+        {
+            for (int py = 0; py < height; py++)
+            {
+                int pageRowBaseBytes = baseBytes + (py >> 5) * pagesPerRow * 8192;
+                int offRowBase = (py & 31) << 6;
+                uint* srcRow = srcPtr + py * width;
+                for (int dx = 0; dx < width; dx++)
+                {
+                    int byteAddr = (pageRowBaseBytes + xPageByteOff[dx] + Unsafe.Add(ref offTbl, offRowBase + xPx63[dx])) & GsSwizzle.VramByteMask;
+                    *(uint*)(vramPtr + byteAddr) = srcRow[dx];
+                }
+            }
+        }
+    }
+
+    private static ulong ComputeSigHash64(in GsSpriteWriteSignature sig)
+    {
+        ulong h = 14695981039346656037ul;
+        const ulong prime = 1099511628211ul;
+        h ^= 0x5350525349473634ul; h *= prime;
+        h ^= sig.SrcHash64; h *= prime;
+        h ^= (uint)sig.SrcTw; h *= prime;
+        h ^= (uint)sig.SrcTh; h *= prime;
+        h ^= (uint)sig.ClipX1; h *= prime;
+        h ^= (uint)sig.ClipY1; h *= prime;
+        h ^= (uint)sig.Fx0Bits; h *= prime;
+        h ^= (uint)sig.Fy0Bits; h *= prime;
+        h ^= (uint)sig.Fx1Bits; h *= prime;
+        h ^= (uint)sig.Fy1Bits; h *= prime;
+        h ^= sig.U0; h *= prime;
+        h ^= sig.V0; h *= prime;
+        h ^= sig.U1; h *= prime;
+        h ^= sig.V1; h *= prime;
+        h ^= (uint)sig.S0Bits; h *= prime;
+        h ^= (uint)sig.T0Bits; h *= prime;
+        h ^= (uint)sig.S1Bits; h *= prime;
+        h ^= (uint)sig.T1Bits; h *= prime;
+        h ^= (uint)sig.Q1Bits; h *= prime;
+        h ^= sig.Tex0Mask; h *= prime;
+        h ^= sig.ClampReg; h *= prime;
+        h ^= (uint)(sig.VR | (sig.VG << 8) | (sig.VB << 16) | (sig.VA << 24)); h *= prime;
+        h ^= sig.Flags; h *= prime;
+        return h;
+    }
+
     private void RasterizeTriangle(in GsVertex v0, in GsVertex v1, in GsVertex v2)
     {
         TotalPrimitivesDrawn++;
         TotalTrianglesDrawn++;
-        long t0 = EnableProfiling ? Stopwatch.GetTimestamp() : 0;
+        var rec = FrameRecorder;
+        long t0 = (EnableProfiling || rec != null) ? Stopwatch.GetTimestamp() : 0;
         try
         {
         int ctx = ActiveContext;
@@ -1440,8 +2776,10 @@ public sealed class GsProcessor
 
         float invArea = 1.0f / area;
 
-        var dc = BuildDrawContext(ctx, gouraud);
+        ref readonly var dc = ref BuildDrawContext(ctx, gouraud);
         if (dc.Tme) TotalTexturedTriangles++; else TotalFlatTriangles++;
+        if (_deferredVramBakes.Count > 0)
+            FlushAllDeferredSpriteVram();
 
         int minX = Math.Max(0, Math.Max(scx0, (int)MathF.Floor(MathF.Min(x0, MathF.Min(x1, x2)))));
         int maxX = Math.Min(dc.FbwPixels - 1, Math.Min(scx1, (int)MathF.Ceiling(MathF.Max(x0, MathF.Max(x1, x2)))));
@@ -1510,7 +2848,78 @@ public sealed class GsProcessor
         }
 
         float startX = minX + 0.5f;
-
+        int bboxPixels = (maxX - minX + 1) * (maxY - minY + 1);
+        if (bboxPixels >= 4096 && maxY > minY)
+        {
+            var ldc = dc;
+            var lv0 = v0;
+            var lv1 = v1;
+            var lv2 = v2;
+            Parallel.For(minY, maxY + 1, py =>
+            {
+                float sampleY = py + 0.5f;
+                float w0 = EdgeFunc(x1, y1, x2, y2, startX, sampleY) * invArea;
+                float w1 = EdgeFunc(x2, y2, x0, y0, startX, sampleY) * invArea;
+                float w2 = 1.0f - w0 - w1;
+                double curZ = (double)w0 * lv0.Z + (double)w1 * lv1.Z + (double)w2 * lv2.Z;
+                float curR = 0f, curG = 0f, curB = 0f, curA = 0f;
+                if (gouraud)
+                {
+                    curR = w0 * lv0.R + w1 * lv1.R + w2 * lv2.R;
+                    curG = w0 * lv0.G + w1 * lv1.G + w2 * lv2.G;
+                    curB = w0 * lv0.B + w1 * lv1.B + w2 * lv2.B;
+                    curA = w0 * lv0.A + w1 * lv1.A + w2 * lv2.A;
+                }
+                float curU = 0f, curV = 0f, curS = 0f, curT = 0f, curQ = 1f;
+                if (tme)
+                {
+                    if (fst)
+                    {
+                        curU = w0 * lv0.U + w1 * lv1.U + w2 * lv2.U;
+                        curV = w0 * lv0.V + w1 * lv1.V + w2 * lv2.V;
+                    }
+                    else
+                    {
+                        curS = w0 * lv0.S + w1 * lv1.S + w2 * lv2.S;
+                        curT = w0 * lv0.T + w1 * lv1.T + w2 * lv2.T;
+                        curQ = w0 * lv0.Q + w1 * lv1.Q + w2 * lv2.Q;
+                    }
+                }
+                var rowDc = ldc;
+                for (int px = minX; px <= maxX; px++)
+                {
+                    w2 = 1.0f - w0 - w1;
+                    if (w0 >= -1e-4f && w1 >= -1e-4f && w2 >= -1e-4f)
+                    {
+                        byte r = gouraud ? (byte)Math.Clamp((int)(curR + 0.5f), 0, 255) : flatR;
+                        byte g = gouraud ? (byte)Math.Clamp((int)(curG + 0.5f), 0, 255) : flatG;
+                        byte b = gouraud ? (byte)Math.Clamp((int)(curB + 0.5f), 0, 255) : flatB;
+                        byte a = gouraud ? (byte)Math.Clamp((int)(curA + 0.5f), 0, 255) : flatA;
+                        uint z = curZ <= 0.0 ? 0u : (curZ >= uint.MaxValue ? uint.MaxValue : (uint)(curZ + 0.5));
+                        ushort u = 0, v = 0;
+                        float s = 0f, t = 0f, q = 1f;
+                        if (tme)
+                        {
+                            if (fst)
+                            {
+                                u = curU <= 0f ? (ushort)0 : (ushort)Math.Min(65535, (int)(curU + 0.5f));
+                                v = curV <= 0f ? (ushort)0 : (ushort)Math.Min(65535, (int)(curV + 0.5f));
+                            }
+                            else { s = curS; t = curT; q = curQ; }
+                        }
+                        ShadeAndWritePixel(in rowDc, px, py, z, r, g, b, a, s, t, q, u, v);
+                    }
+                    w0 += dw0Dx; w1 += dw1Dx; curZ += dzDx;
+                    if (gouraud) { curR += drDx; curG += dgDx; curB += dbDx; curA += daDx; }
+                    if (tme)
+                    {
+                        if (fst) { curU += duDx; curV += dvDx; }
+                        else { curS += dsDx; curT += dtDx; curQ += dqDx; }
+                    }
+                }
+            });
+        }
+        else
         for (int py = minY; py <= maxY; py++)
         {
             float sampleY = py + 0.5f;
@@ -1586,7 +2995,7 @@ public sealed class GsProcessor
                         }
                     }
 
-                    ShadeAndWritePixel(ref dc, px, py, z, r, g, b, a, s, t, q, u, v);
+                    ShadeAndWritePixel(in dc, px, py, z, r, g, b, a, s, t, q, u, v);
                 }
 
                 w0 += dw0Dx;
@@ -1615,6 +3024,10 @@ public sealed class GsProcessor
                 }
             }
         }
+        if (rec != null)
+        {
+            rec.RecordSoftTriangle(new SoftTriBucketKey(dc.FbpBlock, dc.Fpsm, dc.Tbp0, dc.Tme, dc.Abe, dc.Ate, dc.Zte), Stopwatch.GetTimestamp() - t0);
+        }
         }
         finally
         {
@@ -1628,7 +3041,7 @@ public sealed class GsProcessor
         => (bx - ax) * (py - ay) - (by - ay) * (px - ax);
 
     private void ShadeAndWritePixel(
-        ref GsDrawContext dc,
+        in GsDrawContext dc,
         int px,
         int py,
         uint z,
@@ -1690,6 +3103,7 @@ public sealed class GsProcessor
             };
 
             bool zPass;
+            uint curZ = 0;
             if (ztst == 1)
             {
                 zPass = true; // ALWAYS
@@ -1700,7 +3114,7 @@ public sealed class GsProcessor
             }
             else
             {
-                uint curZ = ReadDepthPixel(zbpBlock, fbwPixels, zpsm, px, py);
+                curZ = ReadDepthPixel(zbpBlock, fbwPixels, zpsm, px, py);
                 zPass = ztst switch
                 {
                     2 => testZ >= curZ, // GEQUAL
@@ -1711,8 +3125,25 @@ public sealed class GsProcessor
 
             if (!zPass)
             {
+                if (CurrentFrame == 800)
+                {
+                    Interlocked.Increment(ref Frame800TotalZFail);
+                    if ((px == 50 && py == 350) || (px == 550 && py == 100) || (px == 320 && py == 240))
+                    {
+                        Console.WriteLine($"[F800 EARLY-ZFAIL ({px},{py})] pId={_frame800TotalPrims} src={_currentGifSource} testZ=0x{testZ:X} curZ=0x{curZ:X} ztst={ztst} TBP0=0x{dc.Tbp0:X}");
+                    }
+                    else if (Interlocked.Increment(ref Frame800ZFailLogs) <= 25)
+                    {
+                        Console.WriteLine($"[F800 EARLY-Z FAIL] src={_currentGifSource} px={px} py={py} testZ=0x{testZ:X8} ({testZ}) curZ=0x{curZ:X8} ({curZ}) ztst={ztst} zbpBlock=0x{zbpBlock:X} zpsm={zpsm} zmsk={zmsk}");
+                    }
+                }
                 TotalPixelsZFailed++;
                 return;
+            }
+
+            if (CurrentFrame == 800)
+            {
+                Interlocked.Increment(ref Frame800TotalZPass);
             }
 
             zTested = true;
@@ -1725,7 +3156,7 @@ public sealed class GsProcessor
 
         if (tme)
         {
-            uint texColor = SampleTexture(ref dc, s, t, q, u, v);
+            uint texColor = SampleTexture(in dc, s, t, q, u, v);
             byte tR = (byte)(texColor & 0xFFu);
             byte tG = (byte)((texColor >> 8) & 0xFFu);
             byte tB = (byte)((texColor >> 16) & 0xFFu);
@@ -1820,6 +3251,7 @@ public sealed class GsProcessor
             };
 
             bool zPass;
+            uint curZ = 0;
             if (ztst == 1)
             {
                 zPass = true; // ALWAYS — no need to read existing depth pixel
@@ -1830,7 +3262,7 @@ public sealed class GsProcessor
             }
             else
             {
-                uint curZ = ReadDepthPixel(zbpBlock, fbwPixels, zpsm, px, py);
+                curZ = ReadDepthPixel(zbpBlock, fbwPixels, zpsm, px, py);
                 zPass = ztst switch
                 {
                     2 => testZ >= curZ, // GEQUAL
@@ -1841,8 +3273,25 @@ public sealed class GsProcessor
 
             if (!zPass)
             {
+                if (CurrentFrame == 800)
+                {
+                    Interlocked.Increment(ref Frame800TotalZFail);
+                    if ((px == 50 && py == 350) || (px == 550 && py == 100) || (px == 320 && py == 240))
+                    {
+                        Console.WriteLine($"[F800 LATE-ZFAIL ({px},{py})] pId={_frame800TotalPrims} src={_currentGifSource} testZ=0x{testZ:X} curZ=0x{curZ:X} ztst={ztst} TBP0=0x{dc.Tbp0:X}");
+                    }
+                    else if (Interlocked.Increment(ref Frame800ZFailLogs) <= 25)
+                    {
+                        Console.WriteLine($"[F800 LATE-Z FAIL] src={_currentGifSource} px={px} py={py} testZ=0x{testZ:X8} ({testZ}) curZ=0x{curZ:X8} ({curZ}) ztst={ztst} zbpBlock=0x{zbpBlock:X} zpsm={zpsm} zmsk={zmsk}");
+                    }
+                }
                 TotalPixelsZFailed++;
                 return;
+            }
+
+            if (CurrentFrame == 800)
+            {
+                Interlocked.Increment(ref Frame800TotalZPass);
             }
         }
 
@@ -1918,6 +3367,19 @@ public sealed class GsProcessor
 
         // Apply FBMSK (1 bits preserve old destination bits, 0 bits write newColor bits)
         uint maskedColor = (dstColor & fbmsk) | (newColor & ~fbmsk);
+        if (CurrentFrame == 800)
+        {
+            Interlocked.Increment(ref Frame800TotalColorWritten);
+            if (abe && fragA == 0) Interlocked.Increment(ref Frame800TotalZeroAlpha);
+            if ((px == 50 && py == 350) || (px == 550 && py == 100) || (px == 320 && py == 240))
+            {
+                Console.WriteLine($"[F800 PIXEL ({px},{py})] pId={_frame800TotalPrims} src={_currentGifSource} zPass={zTested} fragRGBA=0x{fragR:X2}{fragG:X2}{fragB:X2}{fragA:X2} dst=0x{dstColor:X8} masked=0x{maskedColor:X8} FBP=0x{fbpBlock:X} ABE={abe} testZ={testZ} TBP0=0x{dc.Tbp0:X} psm={dc.Psm}");
+            }
+            else if (Interlocked.Increment(ref Frame800ZPassLogs) <= 25)
+            {
+                Console.WriteLine($"[F800 WRITE PIXEL] src={_currentGifSource} px={px} py={py} vRGBA=0x{vR:X2}{vG:X2}{vB:X2}{vA:X2} fragRGBA=0x{fragR:X2}{fragG:X2}{fragB:X2}{fragA:X2} dst=0x{dstColor:X8} masked=0x{maskedColor:X8} FBP=0x{fbpBlock:X} ABE={abe} testZ={testZ} TBP0=0x{dc.Tbp0:X}");
+            }
+        }
         if (EnableDebugLogging && ((TotalPrimitivesDrawn <= 70 && ((px == 0 && py == 0) || (px == 320 && py == 224))) ||
             (TotalPrimitivesDrawn >= 301 && _uiShadeLogs < 25 && vA > 0 && (maskedColor & 0x00FFFFFFu) != 0)))
         {
@@ -1937,7 +3399,15 @@ public sealed class GsProcessor
         _ => 0
     };
 
-    private uint ReadSingleTexel(ref GsDrawContext dc, int tx, int ty)
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    private uint ReadSingleTexel(in GsDrawContext dc, int tx, int ty)
+    {
+        if (dc.DecodedTexture != null)
+            return dc.DecodedTexture[ty * dc.Tw + tx];
+        return ReadSingleTexelFromVram(in dc, tx, ty);
+    }
+
+    private uint ReadSingleTexelFromVram(in GsDrawContext dc, int tx, int ty)
     {
         int tbp0 = dc.Tbp0;
         int tbw = dc.Tbw;
@@ -2010,7 +3480,7 @@ public sealed class GsProcessor
         }
     }
 
-    private uint SampleTexture(ref GsDrawContext dc, float s, float t, float q, ushort u, ushort v)
+    private uint SampleTexture(in GsDrawContext dc, float s, float t, float q, ushort u, ushort v)
     {
         int tw = dc.Tw;
         int th = dc.Th;
@@ -2051,16 +3521,16 @@ public sealed class GsProcessor
             tx0 = ApplyWrapMode(tx0, tw, wms, minu, maxu);
             ty0 = ApplyWrapMode(ty0, th, wmt, minv, maxv);
 
-            uint c00 = ReadSingleTexel(ref dc, tx0, ty0);
+            uint c00 = ReadSingleTexel(in dc, tx0, ty0);
             if (fracU == 0.0f && fracV == 0.0f)
                 return c00;
 
             tx1 = ApplyWrapMode(tx1, tw, wms, minu, maxu);
             ty1 = ApplyWrapMode(ty1, th, wmt, minv, maxv);
 
-            uint c10 = ReadSingleTexel(ref dc, tx1, ty0);
-            uint c01 = ReadSingleTexel(ref dc, tx0, ty1);
-            uint c11 = ReadSingleTexel(ref dc, tx1, ty1);
+            uint c10 = ReadSingleTexel(in dc, tx1, ty0);
+            uint c01 = ReadSingleTexel(in dc, tx0, ty1);
+            uint c11 = ReadSingleTexel(in dc, tx1, ty1);
 
             uint uf = (uint)(fracU * 256.0f);
             uint vf = (uint)(fracV * 256.0f);
@@ -2096,7 +3566,7 @@ public sealed class GsProcessor
         tx = ApplyWrapMode(tx, tw, wms, minu, maxu);
         ty = ApplyWrapMode(ty, th, wmt, minv, maxv);
 
-        return ReadSingleTexel(ref dc, tx, ty);
+        return ReadSingleTexel(in dc, tx, ty);
     }
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
@@ -2144,7 +3614,7 @@ public sealed class GsProcessor
     {
         if (zpsm is GsPsm.Psmz16 or GsPsm.Psmz16S)
             return GsSwizzle.ReadPixel16(Vram, zbpBlock, fbwPixels, x, y, is16S: zpsm == GsPsm.Psmz16S, isZ: true);
-        uint z32 = GsSwizzle.ReadPixel32(Vram, zbpBlock, fbwPixels, x, y);
+        uint z32 = GsSwizzle.ReadPixel32(Vram, zbpBlock, fbwPixels, x, y, isZ: true);
         return zpsm == GsPsm.Psmz24 ? (z32 & 0x00FFFFFFu) : z32;
     }
 
@@ -2156,13 +3626,35 @@ public sealed class GsProcessor
         }
         else if (zpsm == GsPsm.Psmz24)
         {
-            int addr = GsSwizzle.GetPixelByteAddress32(zbpBlock, fbwPixels, x, y);
+            int addr = GsSwizzle.GetPixelByteAddress32(zbpBlock, fbwPixels, x, y, isZ: true);
             uint old = BinaryPrimitives.ReadUInt32LittleEndian(Vram.AsSpan(addr, 4));
             BinaryPrimitives.WriteUInt32LittleEndian(Vram.AsSpan(addr, 4), (old & 0xFF000000u) | (z & 0x00FFFFFFu));
         }
         else
         {
-            GsSwizzle.WritePixel32(Vram, zbpBlock, fbwPixels, x, y, z);
+            GsSwizzle.WritePixel32(Vram, zbpBlock, fbwPixels, x, y, z, isZ: true);
+        }
+    }
+
+    public void ClearDepthBuffer(int zbpBlock, int fbwPixels, int width, int height, GsPsm zpsm, uint clearZ)
+    {
+        for (int y = 0; y < height; y++)
+        {
+            for (int x = 0; x < width; x++)
+            {
+                WriteDepthPixel(zbpBlock, fbwPixels, zpsm, x, y, clearZ);
+            }
+        }
+    }
+
+    public void ClearFrameBuffer(int fbpBlock, int fbwPixels, int width, int height, GsPsm fpsm, uint clearColor)
+    {
+        for (int y = 0; y < height; y++)
+        {
+            for (int x = 0; x < width; x++)
+            {
+                WriteFramePixel(fbpBlock, fbwPixels, fpsm, x, y, clearColor);
+            }
         }
     }
 

@@ -4,6 +4,7 @@ using System.Runtime.CompilerServices;
 using System.Runtime.Intrinsics;
 using System.Text;
 using Castaway.Core;
+using Castaway.GsRenderer.Diagnostics;
 
 namespace Castaway.GsRenderer.Vu1;
 
@@ -23,13 +24,27 @@ public sealed class Vu1CompiledProgram
 public sealed class Vu1Recompiler
 {
     private readonly Dictionary<(ushort StartAddr, uint Crc32), Vu1CompiledProgram> _cache = new();
+    private readonly bool[] _seenSlots = new bool[2048];
+    private int _seenSlotCount;
+    private readonly Vu1DecodedExecutor _decodedExecutor = new();
+    private static readonly bool VerifyAot = Environment.GetEnvironmentVariable("CASTAWAY_VERIFY_VU1_AOT") == "1";
+    private uint _regionMask;
+    private uint _dirtyRegionMask = 0xFFFFFFFFu;
 
-    public int CachedProgramCount => _cache.Count;
+    public int CachedProgramCount => _seenSlotCount > _cache.Count ? _seenSlotCount : _cache.Count;
     public IReadOnlyDictionary<(ushort StartAddr, uint Crc32), Vu1CompiledProgram> Cache => _cache;
+    public FrameProfileRecorder? FrameRecorder { get; set; }
 
     public void InvalidateMicroMemHash()
     {
-        // No-op: Microprograms execute directly from Vu1State.MicroMem with zero compilation or CRC overhead.
+        _decodedExecutor.Invalidate();
+        _dirtyRegionMask = 0xFFFFFFFFu;
+    }
+
+    public void InvalidateMicroMemRange(int startByte, int length)
+    {
+        _decodedExecutor.Invalidate();
+        _dirtyRegionMask |= Vu1AotPrograms.GetDirtyRegionMaskForRange(startByte, length);
     }
 
     public Vu1CompiledProgram GetOrCompile(Vu1State vu, ushort startByteAddr)
@@ -40,6 +55,12 @@ public sealed class Vu1Recompiler
         {
             existing = CompileProgram(vu.MicroMem, startByteAddr, 0u);
             _cache[key] = existing;
+            int slot = startByteAddr >> 3;
+            if (!_seenSlots[slot])
+            {
+                _seenSlots[slot] = true;
+                _seenSlotCount++;
+            }
         }
         return existing;
     }
@@ -48,22 +69,106 @@ public sealed class Vu1Recompiler
     {
         startByteAddr = (ushort)(startByteAddr & 0x3FF8);
         vu.CurrentProgramStart = startByteAddr;
-        var key = (startByteAddr, 0u);
-        if (!_cache.ContainsKey(key))
+        int slot = startByteAddr >> 3;
+        if (!_seenSlots[slot])
         {
-            _cache[key] = new Vu1CompiledProgram
-            {
-                StartByteAddr = startByteAddr,
-                Crc32Hash = 0u,
-                CompiledBundleCount = CountBundles(vu.MicroMem, startByteAddr),
-                EmittedCSharpSource = $"// Program: Vu1Prog_{startByteAddr:X4}_00000000\n",
-                ExecuteDelegate = s => ExecuteDirect(s, startByteAddr)
-            };
+            _seenSlots[slot] = true;
+            _seenSlotCount++;
         }
+        if (_dirtyRegionMask != 0u)
+        {
+            _regionMask = Vu1AotPrograms.IdentifyLoadedRegions(vu.MicroMem, _regionMask, _dirtyRegionMask);
+            _dirtyRegionMask = 0u;
+        }
+        var rec = FrameRecorder;
+        long instrBefore = rec != null ? vu.TotalInstructionsExecuted : 0;
+        long xgBefore = rec != null ? vu.TotalXgKicksExecuted : 0;
         long t0 = Stopwatch.GetTimestamp();
-        ExecuteDirect(vu, startByteAddr);
-        vu.TotalExecutionTicks += Stopwatch.GetTimestamp() - t0;
+        if (VerifyAot)
+        {
+            ExecuteWithVerification(vu, startByteAddr);
+        }
+        else if (!Vu1AotPrograms.TryExecute(vu, startByteAddr, _regionMask))
+        {
+            _decodedExecutor.Execute(vu, startByteAddr);
+        }
+        long elapsed = Stopwatch.GetTimestamp() - t0;
+        vu.TotalExecutionTicks += elapsed;
         vu.TotalProgramsExecuted++;
+        rec?.RecordVu1Call(startByteAddr, elapsed, vu.TotalInstructionsExecuted - instrBefore, vu.TotalXgKicksExecuted - xgBefore);
+    }
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private void ExecuteWithVerification(Vu1State vu, ushort startByteAddr)
+    {
+        var savedVf = (Vector128<float>[])vu.VF.Clone();
+        var savedVi = (ushort[])vu.VI.Clone();
+        var savedData = (byte[])vu.DataMem.Clone();
+        var savedAcc = vu.ACC;
+        float savedQ = vu.Q, savedP = vu.P, savedI = vu.I;
+        uint savedR = vu.R, savedClip = vu.ClipFlags;
+        ushort savedMac = vu.MacFlags, savedSt = vu.StatusFlags, savedTpc = vu.Tpc;
+        long savedInstr = vu.TotalInstructionsExecuted;
+        var origXg = vu.OnXgKick;
+        var aotKicks = new List<byte[]>();
+        vu.OnXgKick = span => aotKicks.Add(span.ToArray());
+
+        bool ranAot = Vu1AotPrograms.TryExecute(vu, startByteAddr, _regionMask);
+        if (!ranAot)
+        {
+            vu.OnXgKick = origXg;
+            Console.WriteLine($"[VU1 AOT MISS] 0x{startByteAddr:X4} mask=0x{_regionMask:X}");
+            _decodedExecutor.Execute(vu, startByteAddr);
+            return;
+        }
+
+        var aotVf = (Vector128<float>[])vu.VF.Clone();
+        var aotVi = (ushort[])vu.VI.Clone();
+        var aotData = (byte[])vu.DataMem.Clone();
+        var aotAcc = vu.ACC;
+        float aotQ = vu.Q, aotP = vu.P, aotI = vu.I;
+        uint aotR = vu.R, aotClip = vu.ClipFlags;
+        ushort aotMac = vu.MacFlags, aotSt = vu.StatusFlags, aotTpc = vu.Tpc;
+        long aotInstr = vu.TotalInstructionsExecuted;
+
+        Array.Copy(savedVf, vu.VF, 32);
+        Array.Copy(savedVi, vu.VI, 16);
+        Array.Copy(savedData, vu.DataMem, savedData.Length);
+        vu.ACC = savedAcc;
+        vu.Q = savedQ; vu.P = savedP; vu.I = savedI;
+        vu.R = savedR; vu.ClipFlags = savedClip;
+        vu.MacFlags = savedMac; vu.StatusFlags = savedSt; vu.Tpc = savedTpc;
+        vu.TotalInstructionsExecuted = savedInstr;
+
+        var decKicks = new List<byte[]>();
+        vu.OnXgKick = span => { decKicks.Add(span.ToArray()); origXg?.Invoke(span); };
+        _decodedExecutor.Execute(vu, startByteAddr);
+        vu.OnXgKick = origXg;
+
+        bool vfMatch = true;
+        int badVf = -1;
+        for (int i = 0; i < 32; i++) if (!aotVf[i].Equals(vu.VF[i])) { vfMatch = false; badVf = i; break; }
+        bool viMatch = true;
+        for (int i = 0; i < 16; i++) if (aotVi[i] != vu.VI[i]) { viMatch = false; break; }
+        bool dataMatch = aotData.AsSpan().SequenceEqual(vu.DataMem);
+        bool kickMatch = aotKicks.Count == decKicks.Count;
+        for (int i = 0; i < aotKicks.Count && kickMatch; i++)
+            if (!aotKicks[i].AsSpan().SequenceEqual(decKicks[i])) { kickMatch = false; break; }
+
+        bool match = aotInstr == vu.TotalInstructionsExecuted &&
+                     aotTpc == vu.Tpc &&
+                     aotQ.Equals(vu.Q) && aotP.Equals(vu.P) && aotI.Equals(vu.I) &&
+                     aotR == vu.R && aotClip == vu.ClipFlags && aotAcc.Equals(vu.ACC) &&
+                     aotMac == vu.MacFlags && aotSt == vu.StatusFlags &&
+                     vfMatch && viMatch && dataMatch && kickMatch;
+        if (!match)
+        {
+            throw new InvalidOperationException(
+                $"[VU1 AOT MISMATCH] entry=0x{startByteAddr:X4} aotInstr={aotInstr} decInstr={vu.TotalInstructionsExecuted} " +
+                $"aotTpc=0x{aotTpc:X4} decTpc=0x{vu.Tpc:X4} aotKicks={aotKicks.Count} decKicks={decKicks.Count} " +
+                $"accEq={aotAcc.Equals(vu.ACC)} vfEq={vfMatch}(bad={badVf}) viEq={viMatch} dataEq={dataMatch} kickEq={kickMatch} " +
+                $"mac={aotMac:X4}/{vu.MacFlags:X4} st={aotSt:X4}/{vu.StatusFlags:X4} q={aotQ}/{vu.Q} p={aotP}/{vu.P} i={aotI}/{vu.I} clip={aotClip:X}/{vu.ClipFlags:X}");
+        }
     }
 
     public static Vu1CompiledProgram CompileProgram(ReadOnlySpan<byte> microMem, ushort startByteAddr, uint crc32Hash)

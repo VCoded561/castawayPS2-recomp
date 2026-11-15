@@ -78,10 +78,17 @@ public static class VramDumper
             for (int x = 0; x < width; x++)
             {
                 uint pixel;
-                if (psm is GsPsm.Psmct16 or GsPsm.Psmct16S)
+                bool isZ = psm is GsPsm.Psmz32 or GsPsm.Psmz24 or GsPsm.Psmz16 or GsPsm.Psmz16S;
+                if (psm is GsPsm.Psmct16 or GsPsm.Psmct16S or GsPsm.Psmz16 or GsPsm.Psmz16S)
                 {
-                    ushort c16 = GsSwizzle.ReadPixel16(vram, fbpBlock, fbwPixels, x, y, is16S: psm == GsPsm.Psmct16S);
-                    pixel = GsSwizzle.Expand16To32(c16);
+                    ushort c16 = GsSwizzle.ReadPixel16(vram, fbpBlock, fbwPixels, x, y, is16S: psm is GsPsm.Psmct16S or GsPsm.Psmz16S, isZ: isZ);
+                    pixel = isZ ? ((uint)(c16 >> 8) * 0x010101u) : GsSwizzle.Expand16To32(c16);
+                }
+                else if (isZ)
+                {
+                    uint zVal = GsSwizzle.ReadPixel32(vram, fbpBlock, fbwPixels, x, y, isZ: true);
+                    byte gray = (byte)((zVal >> 16) & 0xFFu);
+                    pixel = (uint)(gray | (gray << 8) | (gray << 16) | 0xFF000000u);
                 }
                 else
                 {

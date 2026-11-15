@@ -1,6 +1,8 @@
 using System.Buffers.Binary;
 using System.Runtime.CompilerServices;
+using System.Runtime.InteropServices;
 using System.Runtime.Intrinsics;
+using System.Runtime.Intrinsics.X86;
 using Castaway.Core;
 
 namespace Castaway.GsRenderer.Vu1;
@@ -136,27 +138,17 @@ public sealed class Vu1State
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public void QueueQ(float val, int latency)
     {
-        if (HasPendingQ)
-        {
-            Q = PendingQ;
-            CurrentCycle = Math.Max(CurrentCycle, PendingQReadyCycle);
-        }
+        Q = val;
         PendingQ = val;
-        PendingQReadyCycle = CurrentCycle + latency;
-        HasPendingQ = true;
+        HasPendingQ = false;
     }
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public void QueueP(float val, int latency)
     {
-        if (HasPendingP)
-        {
-            P = PendingP;
-            CurrentCycle = Math.Max(CurrentCycle, PendingPReadyCycle);
-        }
+        P = val;
         PendingP = val;
-        PendingPReadyCycle = CurrentCycle + latency;
-        HasPendingP = true;
+        HasPendingP = false;
     }
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
@@ -231,33 +223,30 @@ public sealed class Vu1State
     }
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    public void WriteAccNoFlags(Vector128<float> newVal, uint destMask)
+        => ACC = Ps2Vu0.BlendMask(ACC, newVal, destMask);
+
+    private static readonly Vector128<uint> ExpMaskVec = Vector128.Create(Ps2Float.ExpMask);
+    private static readonly Vector128<uint> SignMaskVec = Vector128.Create(Ps2Float.SignMask);
+    private static readonly byte[] NibbleReverse = { 0, 8, 4, 12, 2, 10, 6, 14, 1, 9, 5, 13, 3, 11, 7, 15 };
+
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public void UpdateMacAndStatusFlags(Vector128<float> res, uint destMask)
     {
-        ushort mac = 0;
-        for (int lane = 0; lane < 4; lane++)
-        {
-            uint laneBit = (uint)(1 << (3 - lane));
-            if ((destMask & laneBit) == 0)
-                continue;
+        Vector128<uint> rBits = res.AsUInt32();
+        Vector128<uint> exp = rBits & ExpMaskVec;
+        Vector128<uint> isZero = Vector128.Equals(exp, Vector128<uint>.Zero);
+        Vector128<uint> sign = Vector128.AndNot(rBits, isZero) & SignMaskVec;
 
-            uint bits = res.AsUInt32().GetElement(lane);
-            uint exp = bits & Ps2Float.ExpMask;
-            uint mag = bits & Ps2Float.MagMask;
+        uint zeroBits = NibbleReverse[isZero.AsSingle().ExtractMostSignificantBits()] & destMask;
+        uint signBits = NibbleReverse[sign.AsSingle().ExtractMostSignificantBits()] & destMask;
 
-            // Zero flag (bits 0..3: W=bit 0, Z=bit 1, Y=bit 2, X=bit 3)
-            if (mag == 0u || exp == 0u)
-                mac |= (ushort)laneBit;
-
-            // Sign flag (bits 4..7)
-            if ((bits & Ps2Float.SignMask) != 0 && exp != 0u)
-                mac |= (ushort)(laneBit << 4);
-        }
-
+        ushort mac = (ushort)(zeroBits | (signBits << 4));
         MacFlags = mac;
 
         ushort st = (ushort)(StatusFlags & 0xFC0u); // Keep sticky flags
-        if ((mac & 0x000Fu) != 0) st |= 0x041; // Z / ZS
-        if ((mac & 0x00F0u) != 0) st |= 0x082; // S / SS
+        if (zeroBits != 0) st |= 0x041; // Z / ZS
+        if (signBits != 0) st |= 0x082; // S / SS
         StatusFlags = st;
     }
 
@@ -265,16 +254,15 @@ public sealed class Vu1State
     public Vector128<float> LoadQuadword(int qwordAddr)
     {
         int byteAddr = (qwordAddr & 0x3FF) << 4;
-        return Unsafe.ReadUnaligned<Vector128<float>>(ref DataMem[byteAddr]);
+        return Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref MemoryMarshal.GetArrayDataReference(DataMem), byteAddr));
     }
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public void StoreQuadword(int qwordAddr, Vector128<float> val, uint destMask)
     {
         int byteAddr = (qwordAddr & 0x3FF) << 4;
-        var oldVal = Unsafe.ReadUnaligned<Vector128<float>>(ref DataMem[byteAddr]);
-        var merged = Ps2Vu0.BlendMask(oldVal, val, destMask);
-        Unsafe.WriteUnaligned(ref DataMem[byteAddr], merged);
+        ref Vector128<float> dst = ref Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref MemoryMarshal.GetArrayDataReference(DataMem), byteAddr));
+        dst = destMask == 0xFu ? val : Ps2Vu0.BlendMask(dst, val, destMask);
     }
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
@@ -282,39 +270,41 @@ public sealed class Vu1State
     {
         int byteAddr = (qwordAddr & 0x3FF) << 4;
         int lane = (destMask & 8u) != 0 ? 0 : (destMask & 4u) != 0 ? 1 : (destMask & 2u) != 0 ? 2 : 3;
-        uint word = BinaryPrimitives.ReadUInt32LittleEndian(DataMem.AsSpan(byteAddr + lane * 4, 4));
-        return (ushort)word;
+        return Unsafe.ReadUnaligned<ushort>(ref Unsafe.Add(ref MemoryMarshal.GetArrayDataReference(DataMem), byteAddr + (lane << 2)));
     }
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public void StoreInt16(int qwordAddr, ushort val, uint destMask)
     {
         int byteAddr = (qwordAddr & 0x3FF) << 4;
+        ref byte dm = ref Unsafe.Add(ref MemoryMarshal.GetArrayDataReference(DataMem), byteAddr);
         uint word = val;
-        for (int lane = 0; lane < 4; lane++)
-        {
-            if ((destMask & (1u << (3 - lane))) != 0)
-            {
-                BinaryPrimitives.WriteUInt32LittleEndian(DataMem.AsSpan(byteAddr + lane * 4, 4), word);
-            }
-        }
+        if ((destMask & 8u) != 0) Unsafe.WriteUnaligned(ref dm, word);
+        if ((destMask & 4u) != 0) Unsafe.WriteUnaligned(ref Unsafe.Add(ref dm, 4), word);
+        if ((destMask & 2u) != 0) Unsafe.WriteUnaligned(ref Unsafe.Add(ref dm, 8), word);
+        if ((destMask & 1u) != 0) Unsafe.WriteUnaligned(ref Unsafe.Add(ref dm, 12), word);
     }
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public void ExecClip(Vector128<float> fs, Vector128<float> ft)
     {
-        var s = fs.AsInt32();
-        var t = ft.AsInt32();
-        int value = t.GetElement(3);
-        value = (value & 0x7F800000) != 0 ? (value & 0x7FFFFFFF) : 0x007FFFFF;
+        var su = fs.AsUInt32();
+        uint rawW = ft.AsUInt32().GetElement(3);
+        int value = (rawW & 0x7F800000u) != 0u ? (int)(rawW & 0x7FFFFFFFu) : 0;
 
+        uint r0 = su.GetElement(0);
+        uint r1 = su.GetElement(1);
+        uint r2 = su.GetElement(2);
+        int s0 = (r0 & 0x7F800000u) != 0u ? unchecked((int)r0) : 0;
+        int s1 = (r1 & 0x7F800000u) != 0u ? unchecked((int)r1) : 0;
+        int s2 = (r2 & 0x7F800000u) != 0u ? unchecked((int)r2) : 0;
         uint flags = 0u;
-        if ((s.GetElement(0) ^ 0) > value) flags |= 0x01u;
-        if (unchecked((int)((uint)s.GetElement(0) ^ 0x80000000u)) > value) flags |= 0x02u;
-        if ((s.GetElement(1) ^ 0) > value) flags |= 0x04u;
-        if (unchecked((int)((uint)s.GetElement(1) ^ 0x80000000u)) > value) flags |= 0x08u;
-        if ((s.GetElement(2) ^ 0) > value) flags |= 0x10u;
-        if (unchecked((int)((uint)s.GetElement(2) ^ 0x80000000u)) > value) flags |= 0x20u;
+        if (s0 > value) flags |= 0x01u;
+        if (unchecked((int)((uint)s0 ^ 0x80000000u)) > value) flags |= 0x02u;
+        if (s1 > value) flags |= 0x04u;
+        if (unchecked((int)((uint)s1 ^ 0x80000000u)) > value) flags |= 0x08u;
+        if (s2 > value) flags |= 0x10u;
+        if (unchecked((int)((uint)s2 ^ 0x80000000u)) > value) flags |= 0x20u;
 
         ClipFlags = ((ClipFlags << 6) | flags) & 0x00FFFFFFu;
     }
@@ -322,24 +312,31 @@ public sealed class Vu1State
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public static Vector128<float> ExecItof(Vector128<float> fs, int shift)
     {
-        var s = fs.AsInt32();
-        float scale = shift == 0 ? 1.0f : (1.0f / (1 << shift));
-        return Vector128.Create(
-            s.GetElement(0) * scale,
-            s.GetElement(1) * scale,
-            s.GetElement(2) * scale,
-            s.GetElement(3) * scale);
+        Vector128<float> f = Vector128.ConvertToSingle(fs.AsInt32());
+        return shift == 0 ? f : (f * Vector128.Create(1.0f / (1 << shift)));
     }
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public static Vector128<float> ExecFtoi(Vector128<float> fs, int shift)
     {
-        float scale = shift == 0 ? 1.0f : (float)(1 << shift);
+        Vector128<float> scaled = shift == 0 ? fs : (fs * Vector128.Create((float)(1 << shift)));
+        if (Sse2.IsSupported)
+        {
+            Vector128<int> ints = Sse2.ConvertToVector128Int32WithTruncation(scaled);
+            if (!Vector128.EqualsAny(ints, Vector128.Create(int.MinValue)))
+                return ints.AsSingle();
+        }
+        return ExecFtoiSlow(scaled);
+    }
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private static Vector128<float> ExecFtoiSlow(Vector128<float> scaled)
+    {
         return Vector128.Create(
-            Ps2Float.CvtWS(fs.GetElement(0) * scale),
-            Ps2Float.CvtWS(fs.GetElement(1) * scale),
-            Ps2Float.CvtWS(fs.GetElement(2) * scale),
-            Ps2Float.CvtWS(fs.GetElement(3) * scale)).AsSingle();
+            Ps2Float.CvtWS(scaled.GetElement(0)),
+            Ps2Float.CvtWS(scaled.GetElement(1)),
+            Ps2Float.CvtWS(scaled.GetElement(2)),
+            Ps2Float.CvtWS(scaled.GetElement(3))).AsSingle();
     }
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
@@ -348,23 +345,39 @@ public sealed class Vu1State
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public static Vector128<float> ExecMr32(Vector128<float> fs)
-        => Vector128.Create(fs.GetElement(1), fs.GetElement(2), fs.GetElement(3), fs.GetElement(0));
+        => Vector128.Shuffle(fs, Vector128.Create(1, 2, 3, 0));
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    public void ExecOpmula(Vector128<float> fs, Vector128<float> ft)
+    public void ExecOpmula(Vector128<float> fs, Vector128<float> ft, bool updateFlags = true)
     {
-        var fsYzx = Vector128.Create(fs.GetElement(1), fs.GetElement(2), fs.GetElement(0), fs.GetElement(3));
-        var ftZxy = Vector128.Create(ft.GetElement(2), ft.GetElement(0), ft.GetElement(1), ft.GetElement(3));
-        WriteAcc(Ps2Float.VecMul(fsYzx, ftZxy), 0xEu);
+        var fsYzx = Vector128.Shuffle(fs, Vector128.Create(1, 2, 0, 3));
+        var ftZxy = Vector128.Shuffle(ft, Vector128.Create(2, 0, 1, 3));
+        var prod = Ps2Float.VecMul(fsYzx, ftZxy);
+        if (updateFlags) WriteAcc(prod, 0xEu);
+        else WriteAccNoFlags(prod, 0xEu);
+    }
+
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    public void ExecOpmula(ref Vector128<float> acc, Vector128<float> fs, Vector128<float> ft, bool updateFlags = true)
+    {
+        var fsYzx = Vector128.Shuffle(fs, Vector128.Create(1, 2, 0, 3));
+        var ftZxy = Vector128.Shuffle(ft, Vector128.Create(2, 0, 1, 3));
+        var prod = Ps2Float.VecMul(fsYzx, ftZxy);
+        if (updateFlags) UpdateMacAndStatusFlags(prod, 0xEu);
+        acc = Ps2Vu0.BlendMask(acc, prod, 0xEu);
     }
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public Vector128<float> ExecOpmsub(Vector128<float> fs, Vector128<float> ft)
+        => ExecOpmsub(ACC, fs, ft);
+
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    public static Vector128<float> ExecOpmsub(Vector128<float> acc, Vector128<float> fs, Vector128<float> ft)
     {
-        var fsYzx = Vector128.Create(fs.GetElement(1), fs.GetElement(2), fs.GetElement(0), fs.GetElement(3));
-        var ftZxy = Vector128.Create(ft.GetElement(2), ft.GetElement(0), ft.GetElement(1), ft.GetElement(3));
+        var fsYzx = Vector128.Shuffle(fs, Vector128.Create(1, 2, 0, 3));
+        var ftZxy = Vector128.Shuffle(ft, Vector128.Create(2, 0, 1, 3));
         var prod = Ps2Float.VecMul(fsYzx, ftZxy);
-        return Ps2Float.VecSub(ACC, prod);
+        return Ps2Float.VecSub(acc, prod);
     }
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
@@ -408,12 +421,13 @@ public sealed class Vu1State
         int curQword = startQword;
         int totalQwords = 0;
         const int maxQwords = 1024;
+        ref byte dmBase = ref MemoryMarshal.GetArrayDataReference(DataMem);
 
         // Calculate total quadwords in the GIF packet chain up to EOP
         while (totalQwords < maxQwords)
         {
             int tagByteOff = (curQword & 0x3FF) << 4;
-            ulong tagLo = BinaryPrimitives.ReadUInt64LittleEndian(DataMem.AsSpan(tagByteOff, 8));
+            ulong tagLo = Unsafe.ReadUnaligned<ulong>(ref Unsafe.Add(ref dmBase, tagByteOff));
 
             int nloop = (int)(tagLo & 0x7FFFul);
             bool eop = ((tagLo >> 15) & 1ul) != 0;

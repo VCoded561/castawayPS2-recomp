@@ -59,7 +59,9 @@ public sealed unsafe class DmaController
 
     // Pluggable hardware consumers for Phase 4 (Castaway.GsRenderer) & SIF
     public Action<ReadOnlySpan<byte>>? OnVif0Data { get; set; }
+    public delegate int Vif1ReadHandler(Span<byte> dest);
     public Action<ReadOnlySpan<byte>>? OnVif1Data { get; set; }
+    public Vif1ReadHandler? OnVif1ReadData { get; set; }
     public Action<ReadOnlySpan<byte>>? OnGifData { get; set; }
     public Action<ReadOnlySpan<byte>>? OnSif1Data { get; set; }
 
@@ -197,6 +199,21 @@ public sealed unsafe class DmaController
             return;
         }
 
+        if (ch.ChannelId == DmaChannelId.Vif1 && (ch.Chcr & 1u) == 0 && OnVif1ReadData != null)
+        {
+            uint byteCount = qwc * QuadwordBytes;
+            uint addr = ch.Madr & Ps2Memory.RamMask;
+            if (addr + byteCount <= Ps2Memory.RamMask + 1u)
+            {
+                OnVif1ReadData(new Span<byte>(ram + addr, (int)byteCount));
+                Console.WriteLine($"[DMA VIF1 READ] MADR=0x{ch.Madr:X8} QWC={qwc} bytes={byteCount}");
+            }
+            ch.Madr += byteCount;
+            ch.Qwc = 0;
+            TotalQuadwordsTransferred += qwc;
+            return;
+        }
+
         ch.Madr = TransferBlockToPeripheral(ctx, ram, ch.ChannelId, ch.Madr, qwc);
         ch.Qwc = 0;
     }
@@ -278,10 +295,43 @@ public sealed unsafe class DmaController
             // Update CHCR upper 16 bits with tag bits 16..31
             ch.Chcr = (ch.Chcr & 0x0000FFFFu) | (uint)(tagLo & 0xFFFF0000ul);
 
-            // If TTE is set on VIF0/VIF1, forward the upper 8 bytes of the 128-bit tag (or full 16-byte tag)
+            // If TTE is set on VIF0/VIF1, forward the upper 8 bytes of the 128-bit tag.
+            // For inline-payload tags (CNT/NEXT/CALL/RET/END) with qwc > 0, coalesce tagSpan[8..16]
+            // and the immediately following payload into a single contiguous span so VIF skips staging.
+            bool isInlinePayloadTag = tagId is DmaSourceTagId.Cnt
+                or DmaSourceTagId.Next
+                or DmaSourceTagId.Call
+                or DmaSourceTagId.Ret
+                or DmaSourceTagId.End;
+
+            bool coalescedTtePayload = false;
             if (tte && (ch.ChannelId == DmaChannelId.Vif0 || ch.ChannelId == DmaChannelId.Vif1))
             {
-                DispatchToPeripheral(ch.ChannelId, tagSpan[8..16]);
+                if (isInlinePayloadTag && qwc > 0)
+                {
+                    int payloadBytes = checked((int)(qwc * QuadwordBytes));
+                    ReadOnlySpan<byte> combined = GetDmaPointerSpan(ctx, ram, ch.Tadr, QuadwordBytes + payloadBytes);
+                    if (combined.Length == QuadwordBytes + payloadBytes)
+                    {
+                        uint payloadAddr = ch.Tadr + QuadwordBytes;
+                        RuntimeDispatcher.CurrentDmaPc = ctx != null ? ctx->PC : 0;
+                        RuntimeDispatcher.CurrentDmaRa = ctx != null ? ctx->GetU32(31) : 0;
+                        RuntimeDispatcher.CurrentDmaAddr = payloadAddr;
+
+                        DispatchToPeripheral(ch.ChannelId, combined.Slice(8));
+                        TotalQuadwordsTransferred += qwc;
+                        ch.Madr = payloadAddr + (uint)payloadBytes;
+                        coalescedTtePayload = true;
+                    }
+                    else
+                    {
+                        DispatchToPeripheral(ch.ChannelId, tagSpan[8..16]);
+                    }
+                }
+                else
+                {
+                    DispatchToPeripheral(ch.ChannelId, tagSpan[8..16]);
+                }
             }
 
             switch (tagId)
@@ -295,16 +345,22 @@ public sealed unsafe class DmaController
                     break;
 
                 case DmaSourceTagId.Cnt: // 1: Transfer QWC following tag, next tag at end of data
-                    ch.Madr = ch.Tadr + QuadwordBytes;
-                    if (qwc > 0)
-                        ch.Madr = TransferPayloadForChannel(ctx, ram, ch, ch.Madr, qwc);
+                    if (!coalescedTtePayload)
+                    {
+                        ch.Madr = ch.Tadr + QuadwordBytes;
+                        if (qwc > 0)
+                            ch.Madr = TransferPayloadForChannel(ctx, ram, ch, ch.Madr, qwc);
+                    }
                     ch.Tadr = ch.Madr;
                     break;
 
                 case DmaSourceTagId.Next: // 2: Transfer QWC following tag, next tag = ADDR
-                    ch.Madr = ch.Tadr + QuadwordBytes;
-                    if (qwc > 0)
-                        ch.Madr = TransferPayloadForChannel(ctx, ram, ch, ch.Madr, qwc);
+                    if (!coalescedTtePayload)
+                    {
+                        ch.Madr = ch.Tadr + QuadwordBytes;
+                        if (qwc > 0)
+                            ch.Madr = TransferPayloadForChannel(ctx, ram, ch, ch.Madr, qwc);
+                    }
                     ch.Tadr = addr;
                     break;
 
@@ -318,9 +374,12 @@ public sealed unsafe class DmaController
 
                 case DmaSourceTagId.Call: // 5: Transfer QWC following tag, push next addr to ASR0/ASR1, TADR = ADDR
                 {
-                    ch.Madr = ch.Tadr + QuadwordBytes;
-                    if (qwc > 0)
-                        ch.Madr = TransferPayloadForChannel(ctx, ram, ch, ch.Madr, qwc);
+                    if (!coalescedTtePayload)
+                    {
+                        ch.Madr = ch.Tadr + QuadwordBytes;
+                        if (qwc > 0)
+                            ch.Madr = TransferPayloadForChannel(ctx, ram, ch, ch.Madr, qwc);
+                    }
 
                     uint returnTadr = ch.Madr;
                     if (asp == 0)
@@ -339,9 +398,12 @@ public sealed unsafe class DmaController
 
                 case DmaSourceTagId.Ret: // 6: Transfer QWC following tag, pop TADR from ASR1/ASR0 (or end if stack empty)
                 {
-                    ch.Madr = ch.Tadr + QuadwordBytes;
-                    if (qwc > 0)
-                        ch.Madr = TransferPayloadForChannel(ctx, ram, ch, ch.Madr, qwc);
+                    if (!coalescedTtePayload)
+                    {
+                        ch.Madr = ch.Tadr + QuadwordBytes;
+                        if (qwc > 0)
+                            ch.Madr = TransferPayloadForChannel(ctx, ram, ch, ch.Madr, qwc);
+                    }
 
                     if (asp == 2)
                     {
@@ -362,9 +424,12 @@ public sealed unsafe class DmaController
                 }
 
                 case DmaSourceTagId.End: // 7: Transfer QWC following tag, then end
-                    ch.Madr = ch.Tadr + QuadwordBytes;
-                    if (qwc > 0)
-                        ch.Madr = TransferPayloadForChannel(ctx, ram, ch, ch.Madr, qwc);
+                    if (!coalescedTtePayload)
+                    {
+                        ch.Madr = ch.Tadr + QuadwordBytes;
+                        if (qwc > 0)
+                            ch.Madr = TransferPayloadForChannel(ctx, ram, ch, ch.Madr, qwc);
+                    }
                     ch.Tadr = ch.Madr;
                     endChain = true;
                     break;

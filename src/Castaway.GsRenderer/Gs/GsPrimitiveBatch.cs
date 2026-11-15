@@ -81,7 +81,11 @@ public struct GsDrawContext
     public bool Fba;
 
     public bool CanEarlyZ;
+    public int StateVersion;
     public uint[]? ClutTable;
+    public uint[]? DecodedTexture;
+    public ulong DecodedTextureHash64;
+    public int TexIndex;
 
     public readonly bool StateEquals(in GsDrawContext o)
     {
@@ -101,6 +105,8 @@ public struct GsDrawContext
             && Atst == o.Atst
             && Aref == o.Aref
             && Afail == o.Afail
+            && Date == o.Date
+            && Datm == o.Datm
             && Zte == o.Zte
             && Ztst == o.Ztst
             && Tbp0 == o.Tbp0
@@ -113,12 +119,33 @@ public struct GsDrawContext
             && Cbp == o.Cbp
             && Cpsm == o.Cpsm
             && Csa == o.Csa
+            && Wms == o.Wms
+            && Wmt == o.Wmt
+            && MinU == o.MinU
+            && MaxU == o.MaxU
+            && MinV == o.MinV
+            && MaxV == o.MaxV
+            && Ta0 == o.Ta0
+            && Ta1 == o.Ta1
+            && Aem == o.Aem
+            && LinearFilter == o.LinearFilter
             && SpecA == o.SpecA
             && SpecB == o.SpecB
             && SpecC == o.SpecC
             && SpecD == o.SpecD
-            && Fix == o.Fix;
+            && Fix == o.Fix
+            && Colclamp == o.Colclamp
+            && Fba == o.Fba
+            && TexIndex == o.TexIndex;
     }
+}
+
+public struct GsBatchTexture
+{
+    public int Width;
+    public int Height;
+    public ulong Hash64;
+    public uint[] Pixels;
 }
 
 /// <summary>
@@ -147,6 +174,8 @@ public sealed class GsPrimitiveBatch
     public GsGlVertex[] Vertices { get; } = new GsGlVertex[MaxVertices];
     public GsGlDrawCall[] DrawCalls { get; } = new GsGlDrawCall[MaxDrawCalls];
     public uint[] ClutPool { get; } = new uint[1024 * 256];
+    public List<GsBatchTexture> Textures { get; } = new(256);
+    private readonly Dictionary<(ulong Hash64, int Width, int Height), int> _frameTexDedup = new(256);
     public int ClutPoolCount { get; set; }
     public int VertexCount { get; set; }
     public int DrawCallCount { get; set; }
@@ -156,6 +185,29 @@ public sealed class GsPrimitiveBatch
         VertexCount = 0;
         DrawCallCount = 0;
         ClutPoolCount = 0;
+        Textures.Clear();
+        _frameTexDedup.Clear();
+    }
+
+    public int RegisterTexture(int width, int height, ulong hash64, uint[] srcPixels)
+    {
+        var dedupKey = (hash64, width, height);
+        if (_frameTexDedup.TryGetValue(dedupKey, out int existingIdx))
+            return existingIdx;
+
+        int idx = Textures.Count;
+        // Share immutable/versioned array reference from GsProcessor's cache (copy only if needed?
+        // Actually GsProcessor allocates a fresh uint[] when a texture's VRAM revision changes,
+        // so existing uint[] arrays are never mutated in-place!).
+        Textures.Add(new GsBatchTexture
+        {
+            Width = width,
+            Height = height,
+            Hash64 = hash64,
+            Pixels = srcPixels
+        });
+        _frameTexDedup[dedupKey] = idx;
+        return idx;
     }
 
     public void AddTriangle(
@@ -179,7 +231,8 @@ public sealed class GsPrimitiveBatch
                 lastCall.Scx0 == scx0 && lastCall.Scy0 == scy0 &&
                 lastCall.Scx1 == scx1 && lastCall.Scy1 == scy1 &&
                 lastCall.Ofx == ofx && lastCall.Ofy == ofy &&
-                lastCall.DrawContext.StateEquals(in dc))
+                ((lastCall.DrawContext.StateVersion != 0 && lastCall.DrawContext.StateVersion == dc.StateVersion) ||
+                 lastCall.DrawContext.StateEquals(in dc)))
             {
                 lastCall.VertexCount += 3;
                 return;
@@ -241,7 +294,8 @@ public sealed class GsPrimitiveBatch
                 lastCall.Scx0 == scx0 && lastCall.Scy0 == scy0 &&
                 lastCall.Scx1 == scx1 && lastCall.Scy1 == scy1 &&
                 lastCall.Ofx == ofx && lastCall.Ofy == ofy &&
-                lastCall.DrawContext.StateEquals(in dc))
+                ((lastCall.DrawContext.StateVersion != 0 && lastCall.DrawContext.StateVersion == dc.StateVersion) ||
+                 lastCall.DrawContext.StateEquals(in dc)))
             {
                 lastCall.VertexCount += 6;
                 return;

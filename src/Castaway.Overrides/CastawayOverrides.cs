@@ -28,6 +28,7 @@ public sealed unsafe class CastawayOverrides
     public const uint RwCameraSetViewWindowAddr = 0x001B6A30u;
 
     public OverrideOptions Options { get; }
+    public Action? OnSnapshotRequested { get; set; }
     private GsGraphicsPipeline? _graphics;
     private Vector2 _lastMousePos;
     private bool _hasLastMousePos;
@@ -150,6 +151,10 @@ public sealed unsafe class CastawayOverrides
                 _ => 30
             };
             Console.WriteLine($"\n[Castaway.Overrides] >>> Target FPS toggled to: {(Options.TargetFps == 0 ? "Uncapped" : $"{Options.TargetFps} FPS")} <<<\n");
+        }
+        else if (key == Key.F11)
+        {
+            OnSnapshotRequested?.Invoke();
         }
     }
 

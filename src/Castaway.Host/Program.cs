@@ -5,6 +5,7 @@ using Castaway.ElfTools.Commands;
 using Castaway.ElfTools.Elf;
 using Castaway.Generated;
 using Castaway.GsRenderer;
+using Castaway.GsRenderer.Diagnostics;
 using Castaway.GsRenderer.Vu1;
 using Castaway.GsRenderer.Gs;
 using Castaway.GsRenderer.OpenGl;
@@ -26,9 +27,12 @@ public static unsafe class Program
         int maxTraceRecords = 500_000;
         int maxFrames = 0; // 0 = unlimited
         int autoStartFrame = 0;
+        int snapshotFrame = 0;
         bool headless = false;
         bool dumpVram = false;
+        bool debugHooks = false;
         bool fpsExplicitlySet = false;
+        bool? realTimeTimersOverride = null;
         var overrideOpts = new OverrideOptions();
 
         for (int i = 0; i < args.Length; i++)
@@ -58,8 +62,17 @@ public static unsafe class Program
                 case "--auto-start-frame" when i + 1 < args.Length && int.TryParse(args[++i], out int asf):
                     autoStartFrame = asf;
                     break;
+                case "--snapshot-frame" when i + 1 < args.Length && int.TryParse(args[++i], out int sf):
+                    snapshotFrame = sf;
+                    break;
                 case "--dump-vram":
                     dumpVram = true;
+                    break;
+                case "--debug-gs":
+                    GsProcessor.EnableDebugLogging = true;
+                    break;
+                case "--debug-hooks":
+                    debugHooks = true;
                     break;
                 case "--scale" when i + 1 < args.Length && int.TryParse(args[++i], out int sc):
                     overrideOpts.ResolutionScale = Math.Clamp(sc, 1, 8);
@@ -83,6 +96,12 @@ public static unsafe class Program
                     else if (int.TryParse(fpsStr, out int targetFps))
                         overrideOpts.TargetFps = Math.Max(0, targetFps);
                     break;
+                case "--real-time-timers":
+                    realTimeTimersOverride = true;
+                    break;
+                case "--fixed-timers":
+                    realTimeTimersOverride = false;
+                    break;
             }
         }
 
@@ -91,6 +110,8 @@ public static unsafe class Program
             overrideOpts.TargetFps = 0;
             overrideOpts.RendererMode = GsRendererMode.Software;
         }
+
+        bool useRealTimeTimers = realTimeTimersOverride ?? (!headless && string.IsNullOrEmpty(traceBinaryPath));
 
         elfPath ??= Ps2ElfReader.FindDefaultElfPath();
         if (!File.Exists(elfPath))
@@ -103,11 +124,11 @@ public static unsafe class Program
 
         Console.WriteLine($"[Castaway.Host] ELF: {elfPath}");
         Console.WriteLine($"[Castaway.Host] DVD Root: {dvdPath}");
-        Console.WriteLine($"[Castaway.Host] Mode: {(headless ? "Headless" : $"OpenGL 4.6 Windowed ({overrideOpts.ResolutionScale}x scale)")} | Renderer: {overrideOpts.RendererMode} | Target FPS: {(overrideOpts.TargetFps == 0 ? "Uncapped" : $"{overrideOpts.TargetFps} FPS (PS2 Locked)")}");
+        Console.WriteLine($"[Castaway.Host] Mode: {(headless ? "Headless" : $"OpenGL 4.6 Windowed ({overrideOpts.ResolutionScale}x scale)")} | Renderer: {overrideOpts.RendererMode} | Target FPS: {(overrideOpts.TargetFps == 0 ? "Uncapped" : $"{overrideOpts.TargetFps} FPS (PS2 Locked)")} | Timers: {(useRealTimeTimers ? "Real-Time (576kHz wall-clock, <=66.67ms)" : "Fixed 60Hz (9600 ticks/frame)")}");
 
         if (headless)
         {
-            return RunExecution(elfPath, dvdPath, traceBinaryPath, maxTraceRecords, maxFrames, autoStartFrame, overrideOpts, dumpVram, window: null, gl: null, input: null);
+            return RunExecution(elfPath, dvdPath, traceBinaryPath, maxTraceRecords, maxFrames, autoStartFrame, snapshotFrame, overrideOpts, dumpVram, debugHooks, useRealTimeTimers, window: null, gl: null, input: null);
         }
 
         int winW = 640 * Math.Clamp(overrideOpts.ResolutionScale, 1, 4);
@@ -134,7 +155,7 @@ public static unsafe class Program
 
         try
         {
-            exitCode = RunExecution(elfPath, dvdPath, traceBinaryPath, maxTraceRecords, maxFrames, autoStartFrame, overrideOpts, dumpVram, window, gl, input);
+            exitCode = RunExecution(elfPath, dvdPath, traceBinaryPath, maxTraceRecords, maxFrames, autoStartFrame, snapshotFrame, overrideOpts, dumpVram, debugHooks, useRealTimeTimers, window, gl, input);
         }
         finally
         {
@@ -153,8 +174,11 @@ public static unsafe class Program
         int maxTraceRecords,
         int maxFrames,
         int autoStartFrame,
+        int snapshotFrame,
         OverrideOptions overrideOpts,
         bool dumpVram,
+        bool debugHooks,
+        bool useRealTimeTimers,
         IWindow? window,
         GL? gl,
         IInputContext? input)
@@ -170,6 +194,7 @@ public static unsafe class Program
         ctx.Initialize(scratchpad, vu0Data);
 
         using var runtime = new CastawayRuntime(dvdRootPath: dvdPath, initOpenAl: window != null);
+        runtime.Mmio.UseRealTimeTimers = useRealTimeTimers;
         using var graphics = new GsGraphicsPipeline();
         var overrides = new CastawayOverrides(overrideOpts);
 
@@ -180,6 +205,7 @@ public static unsafe class Program
             Console.WriteLine($"[Castaway.Host] Recording binary trace to: {traceBinaryPath} (max {maxTraceRecords} records)");
         }
 
+        bool watchdogStop = false;
         try
         {
             CastawayRuntime.LoadElfSegmentsToRam(elfPath, ram);
@@ -203,12 +229,11 @@ public static unsafe class Program
 
             overrides.Install(runtime, graphics);
 
+            int frameCount = 0;
             if (traceRecorder != null)
             {
                 RuntimeDispatcher.SetTraceHandler(traceRecorder.OnTraceEvent);
             }
-
-            int frameCount = 0;
             long lastFrameTick = 0;
             var sw = Stopwatch.StartNew();
 
@@ -221,10 +246,144 @@ public static unsafe class Program
 
             int presentationCount = 0;
             bool inApplicationUpdateFrame = false;
+            nint activeFrameCtxPtr = 0;
+            long frameUpdateStartMs = 0;
             int lastPresentedCount = -1;
             long lastMainThreadPresentMs = -1000;
+            long fpsWindowStartMs = 0;
+            int fpsWindowStartFrame = 0;
+            double currentFps = 0.0;
+            long lastRenderBatchMs = 0;
+            if (graphics.Mode == GsRendererMode.OpenGl)
+                graphics.Gs.EnableProfiling = true;
+            long prevVif1Ticks = 0, prevVu1Ticks = 0, prevGifTicks = 0, prevTrxTicks = 0, prevSoftTriTicks = 0, prevSoftSprTicks = 0, prevSprCount = 0;
+            long prevVif1UnpTicks = 0, prevVif1McTicks = 0, prevVif1Xfers = 0, prevVif1Bytes = 0, prevVif1UF = 0, prevVif1US = 0, prevVif1SF = 0, prevVif1SS = 0, prevVif1SB = 0;
             bool userRequestedExit = false;
             long exitRequestedAtMs = 0;
+            bool snapshotArmed = false;
+            FrameProfileRecorder? pendingSnapshot = null;
+            using var snapshotDoneEvent = new ManualResetEventSlim(false);
+
+            if (window != null)
+            {
+                Console.WriteLine("[HOTKEYS] F9=Toggle GL/Software | F10=Cycle Target FPS | F11=Capture Frame Snapshot (Snapshots/)");
+                overrides.OnSnapshotRequested = () =>
+                {
+                    Volatile.Write(ref snapshotArmed, true);
+                    Console.WriteLine("\n[SNAPSHOT] Armed — will capture complete GL + PS2 Software reference + perf profile on next frame...\n");
+                };
+            }
+
+            var watchdogThread = new Thread(() =>
+            {
+                long lastReportMs = 0;
+                while (!Volatile.Read(ref watchdogStop))
+                {
+                    Thread.Sleep(500);
+                    if (Volatile.Read(ref watchdogStop))
+                        break;
+
+                    if (Volatile.Read(ref inApplicationUpdateFrame))
+                    {
+                        long elapsed = sw.ElapsedMilliseconds - Volatile.Read(ref frameUpdateStartMs);
+                        if (elapsed >= 2000 && sw.ElapsedMilliseconds - lastReportMs >= 2000)
+                        {
+                            lastReportMs = sw.ElapsedMilliseconds;
+                            nint ptr = Volatile.Read(ref activeFrameCtxPtr);
+                            uint pc = 0, ra = 0, sp = 0;
+                            if (ptr != 0)
+                            {
+                                CpuContext* fctx = (CpuContext*)ptr;
+                                pc = fctx->PC;
+                                ra = fctx->GetU32(31);
+                                sp = fctx->GetU32(29);
+                            }
+                            Console.WriteLine($"[WATCHDOG] Frame {Volatile.Read(ref frameCount)} stuck in Application::UpdateFrame for {elapsed}ms! PC=0x{pc:X8} RA=0x{ra:X8} SP=0x{sp:X8} | {runtime.Kernel.FormatThreadStates()}");
+                        }
+                    }
+                }
+            })
+            {
+                IsBackground = true,
+                Name = "CastawayWatchdog"
+            };
+            watchdogThread.Start();
+
+            Action<FrameProfileRecorder?> presentFrame = snapshotToFinalize =>
+            {
+                if (gl == null || window == null)
+                    return;
+
+                int curPresent = Volatile.Read(ref presentationCount);
+                long nowMs = sw.ElapsedMilliseconds;
+                lastPresentedCount = curPresent;
+                lastMainThreadPresentMs = nowMs;
+
+                byte[]? renderVram = curPresent > 0 ? graphics.FrontVram : null;
+                byte[]? capturedGlRgba = null;
+                int fbW = window.FramebufferSize.X;
+                int fbH = window.FramebufferSize.Y;
+
+                if (graphics.Mode == GsRendererMode.OpenGl)
+                {
+                    lock (graphics.BatchLock)
+                    {
+                        if (graphics.FrontBatch.VertexCount > 0)
+                        {
+                            long rbStartTicks = Stopwatch.GetTimestamp();
+                            long rbStart = sw.ElapsedMilliseconds;
+                            if (graphics.FrontBatch.DrawCallCount <= 2 && graphics.FrontBatch.DrawCalls[0].DrawContext.Abe)
+                            {
+                                graphics.OpenGl.RenderFrame(graphics.Gs, fbW, fbH, runtime.Mmio.GsDispfb1, renderVram);
+                            }
+                            else
+                            {
+                                gl.ClearColor(0.0f, 0.0f, 0.0f, 1.0f);
+                                gl.Clear(ClearBufferMask.ColorBufferBit);
+                            }
+                            graphics.OpenGl.RenderBatch(graphics.FrontBatch, graphics.Gs, fbW, fbH, renderVram);
+                            lastRenderBatchMs = sw.ElapsedMilliseconds - rbStart;
+                            if (snapshotToFinalize != null)
+                                snapshotToFinalize.RenderBatchTicks = Stopwatch.GetTimestamp() - rbStartTicks;
+                        }
+                        else
+                        {
+                            graphics.OpenGl.RenderFrame(graphics.Gs, fbW, fbH, runtime.Mmio.GsDispfb1, renderVram);
+                        }
+
+                        if (snapshotToFinalize != null)
+                        {
+                            snapshotToFinalize.FrontBatchDrawCallsAtPresent = graphics.FrontBatch.DrawCallCount;
+                            snapshotToFinalize.FrontBatchVerticesAtPresent = graphics.FrontBatch.VertexCount;
+                            capturedGlRgba = graphics.OpenGl.CaptureBackbufferRgba(fbW, fbH);
+                            FrameSnapshotWriter.WriteSnapshot(snapshotToFinalize, graphics.FrontBatch, capturedGlRgba, fbW, fbH);
+                        }
+                    }
+                }
+                else
+                {
+                    // Software mode: present the 100% accurate PS2 VRAM display buffer
+                    graphics.OpenGl.RenderFrame(graphics.Gs, fbW, fbH, runtime.Mmio.GsDispfb1, renderVram);
+                    if (snapshotToFinalize != null)
+                    {
+                        capturedGlRgba = graphics.OpenGl.CaptureBackbufferRgba(fbW, fbH);
+                        FrameSnapshotWriter.WriteSnapshot(snapshotToFinalize, null, capturedGlRgba, fbW, fbH);
+                    }
+                }
+
+                int curFrameSnapshot = Volatile.Read(ref frameCount);
+                long fpsElapsedMs = nowMs - fpsWindowStartMs;
+                if (fpsElapsedMs >= 250)
+                {
+                    int deltaFrames = curFrameSnapshot - fpsWindowStartFrame;
+                    currentFps = deltaFrames * 1000.0 / fpsElapsedMs;
+                    fpsWindowStartMs = nowMs;
+                    fpsWindowStartFrame = curFrameSnapshot;
+                }
+                graphics.OpenGl.RenderFpsOverlay(fbW, fbH, currentFps);
+
+                window.SwapBuffers();
+            };
 
             if (window != null)
             {
@@ -248,44 +407,45 @@ public static unsafe class Program
                         return;
                     }
 
-                    overrides.UpdateInput(runtime.Pad, input, ram);
+                    int fcNow = Volatile.Read(ref frameCount);
+                    if (autoStartFrame > 0 && fcNow >= autoStartFrame && fcNow <= autoStartFrame + 5)
+                    {
+                        var st = DualShock2State.Neutral;
+                        st.PressedButtons = Ps2PadButtons.Start;
+                        runtime.Pad.SetPortState(0, st);
+                    }
+                    else
+                    {
+                        overrides.UpdateInput(runtime.Pad, input, ram);
+                    }
 
                     int curPresent = Volatile.Read(ref presentationCount);
+                    var snapWaiting = Volatile.Read(ref pendingSnapshot);
                     long nowMs = sw.ElapsedMilliseconds;
                     bool shouldPresent;
                     if (graphics.Mode == GsRendererMode.OpenGl)
                     {
                         // In OpenGL mode, presentation is strictly synchronized to completed batch swaps,
                         // or initial boot splash screens before batches begin (FrontBatch.VertexCount == 0 && VramDirty).
-                        shouldPresent = curPresent != lastPresentedCount || (graphics.FrontBatch.VertexCount == 0 && graphics.Gs.VramDirty && nowMs - lastMainThreadPresentMs >= 33);
+                        shouldPresent = snapWaiting != null || curPresent != lastPresentedCount || (graphics.FrontBatch.VertexCount == 0 && graphics.Gs.VramDirty && nowMs - lastMainThreadPresentMs >= 33);
                     }
                     else
                     {
-                        shouldPresent = curPresent != lastPresentedCount || (graphics.Gs.VramDirty && nowMs - lastMainThreadPresentMs >= 33);
+                        shouldPresent = snapWaiting != null || curPresent != lastPresentedCount || (graphics.Gs.VramDirty && nowMs - lastMainThreadPresentMs >= 33);
                     }
 
                     if (gl != null && shouldPresent)
                     {
-                        lastPresentedCount = curPresent;
-                        lastMainThreadPresentMs = nowMs;
-
-                        byte[]? renderVram = curPresent > 0 ? graphics.FrontVram : null;
-
-                        // 1. Always present the 100% accurate PS2 VRAM display buffer (BitBlts, FMVs, 2D backgrounds, Flash UI)
-                        graphics.OpenGl.RenderFrame(graphics.Gs, window.FramebufferSize.X, window.FramebufferSize.Y, runtime.Mmio.GsDispfb1, renderVram);
-
-                        // 2. In OpenGl mode, overlay the GPU-accelerated 3D primitive batch on top
-                        if (graphics.Mode == GsRendererMode.OpenGl)
+                        var takenSnap = Interlocked.Exchange(ref pendingSnapshot, null);
+                        try
                         {
-                            lock (graphics.BatchLock)
-                            {
-                                if (graphics.FrontBatch.VertexCount > 0)
-                                {
-                                    graphics.OpenGl.RenderBatch(graphics.FrontBatch, graphics.Gs, window.FramebufferSize.X, window.FramebufferSize.Y, renderVram);
-                                }
-                            }
+                            presentFrame(takenSnap);
                         }
-                        window.SwapBuffers();
+                        finally
+                        {
+                            if (takenSnap != null)
+                                snapshotDoneEvent.Set();
+                        }
                     }
                 };
             }
@@ -336,7 +496,9 @@ public static unsafe class Program
                 }
             });
 
-            // Scene and Event diagnostics
+            // Scene and Event diagnostics (opt-in via --debug-hooks to avoid per-frame overhead)
+            if (debugHooks)
+            {
             RuntimeDispatcher.RegisterHook(0x0034EBE0u, (c, r) =>
             {
                 Console.WriteLine($"[HOOK 0x0034EBE0 - Splash Destructor] called! a0=0x{c->GetU32(4):X8} a1=0x{c->GetU32(5):X8} RA=0x{c->GetU32(31):X8}");
@@ -771,6 +933,55 @@ public static unsafe class Program
                 RecompiledFunctions.sub_0029C048(c, r);
             });
 
+            RuntimeDispatcher.RegisterHook(0x004793F8u, (c, r) =>
+            {
+                Console.WriteLine($"[PAD] scePadInit(0x004793F8) frame={frameCount} a0={c->GetU32(4)} RA=0x{c->GetU32(31):X8}");
+                RecompiledFunctions.sub_004793F8(c, r);
+            });
+
+            RuntimeDispatcher.RegisterHook(0x004798A0u, (c, r) =>
+            {
+                Console.WriteLine($"[PAD] scePadPortClose(0x004798A0) frame={frameCount} port={c->GetU32(4)} slot={c->GetU32(5)} RA=0x{c->GetU32(31):X8}");
+                RecompiledFunctions.sub_004798A0(c, r);
+            });
+
+            RuntimeDispatcher.RegisterHook(0x004622B8u, (c, r) =>
+            {
+                uint a0 = c->GetU32(4);
+                uint pad0 = Ps2Memory.Read32(c, r, 0x0050A758u);
+                if (a0 == pad0)
+                {
+                    uint f4 = Ps2Memory.Read32(c, r, a0 + 4u);
+                    uint f576 = Ps2Memory.Read32(c, r, a0 + 576u);
+                    Console.WriteLine($"[PAD DISCONNECT 0x004622B8] frame={frameCount} pad0=0x{a0:X8} f4=0x{f4:X} f576={f576} RA=0x{c->GetU32(31):X8}");
+                }
+                RecompiledFunctions.sub_004622B8(c, r);
+            });
+
+            RuntimeDispatcher.RegisterHook(0x004327E0u, (c, r) =>
+            {
+                uint a0 = c->GetU32(4);
+                uint pad0 = Ps2Memory.Read32(c, r, 0x0050A758u);
+                RecompiledFunctions.sub_004327E0(c, r);
+                if (a0 == pad0)
+                {
+                    uint f4 = Ps2Memory.Read32(c, r, a0 + 4u);
+                    if ((f4 & 2u) == 0)
+                    {
+                        uint port = Ps2Memory.Read32(c, r, a0 + 528u);
+                        uint slot = Ps2Memory.Read32(c, r, a0 + 532u);
+                        uint f584 = Ps2Memory.Read32(c, r, a0 + 584u);
+                        uint padArea = Ps2Memory.Read32(c, r, 0x005AD250u);
+                        uint padOpen = Ps2Memory.Read32(c, r, 0x005AD260u);
+                        uint fc0 = padArea != 0 ? Ps2Memory.Read32(c, r, padArea + 88u) : 0;
+                        uint fc1 = padArea != 0 ? Ps2Memory.Read32(c, r, padArea + 216u) : 0;
+                        byte st0 = padArea != 0 ? r[(padArea + 0x70u) & 0x01FFFFFFu] : (byte)0;
+                        byte st1 = padArea != 0 ? r[(padArea + 128u + 0x70u) & 0x01FFFFFFu] : (byte)0;
+                        Console.WriteLine($"[PAD UPDATE CLEARED BIT1 0x004327E0] frame={frameCount} pad0=0x{a0:X8} port={port} slot={slot} f4=0x{f4:X} f584={f584} padArea=0x{padArea:X8} open={padOpen} fc=({fc0},{fc1}) st=({st0},{st1}) RA=0x{c->GetU32(31):X8}");
+                    }
+                }
+            });
+
             RuntimeDispatcher.RegisterHook(0x0029C1D8u, (c, r) =>
             {
                 uint a0 = c->GetU32(4);
@@ -906,6 +1117,7 @@ public static unsafe class Program
                     Console.WriteLine($"[HOOK 0x0026CFF0 EXIT frame={frameCount}] s0=0x{c->GetU32(16):X8} s1=0x{c->GetU32(17):X8} sp=0x{c->GetU32(29):X8}");
                 }
             });
+            }
 
             // Hook Application::UpdateFrame (0x003E2940) to step frame logic and advance VBlank
             RuntimeDispatcher.RegisterHook(0x003E2940u, (c, r) =>
@@ -962,18 +1174,180 @@ public static unsafe class Program
                     Console.WriteLine($"[FRAME {frameCount} PRE t={sw.Elapsed.TotalSeconds:F3}s] state={state} nextState={nextState} scene=0x{scenePtr:X8} nextSceneId=0x{sceneId:X8}");
                 }
 
-                // Advance hardware timers by 1 frame (16.667 ms) and fire INTC_TIM0/TIM1 once per frame
+                // Advance hardware timers (real-time wall-clock delta or fixed 16.667 ms) and fire INTC_TIM0/TIM1 once per frame
                 runtime.Kernel.StepFrameTimers(c, r);
+                if (!runtime.Audio.IsRealtimeAudioActive)
+                    runtime.Audio.StepMixSamples(800);
+
+                graphics.Gs.CurrentFrame = frameCount;
+                if (graphics.Mode == GsRendererMode.Software && frameCount >= 750)
+                {
+                    graphics.Gs.ClearDepthBuffer(0x1B80, 640, 640, 448, GsPsm.Psmz24, 0u);
+                    graphics.Gs.ClearFrameBuffer(0xA00, 640, 640, 448, GsPsm.Psmct32, 0xFF201005u);
+                }
+                if (frameCount == 800)
+                {
+                    graphics.Gs.OnSpriteKicked = (frame, count) =>
+                    {
+                        if (frame == 800)
+                        {
+                            if (count == 1)
+                                VramDumper.DumpUnswizzledBmp("fb_fbpA00_before_sprite1.bmp", graphics.Gs.Vram, 0xA00, 640, GsPsm.Psmct32);
+                            else if (count == 2)
+                                VramDumper.DumpUnswizzledBmp("fb_fbpA00_before_sprite2.bmp", graphics.Gs.Vram, 0xA00, 640, GsPsm.Psmct32);
+                        }
+                    };
+                }
+                else
+                {
+                    graphics.Gs.OnSpriteKicked = null;
+                }
 
                 // Execute native SLUS_216.64 frame update
-                inApplicationUpdateFrame = true;
+                FrameProfileRecorder? activeSnapshot = null;
+                long snapStartTicks = 0, snapVif1 = 0, snapVu1 = 0, snapGif = 0, snapTrx = 0, snapSoftTri = 0, snapSoftSpr = 0;
+                long snapVif1Xfers = 0, snapVif1Bytes = 0, snapVif1Cmds = 0, snapVif1Qw = 0, snapVif1UFast = 0, snapVif1USlow = 0;
+                long snapVif1SFast = 0, snapVif1SSlow = 0, snapVif1SBytes = 0, snapVif1Unk = 0, snapVif1MpgC = 0, snapVif1MpgB = 0;
+                long snapVif1UTicks = 0, snapVif1MTicks = 0, snapVif1DTicks = 0;
+                if (Volatile.Read(ref snapshotArmed) || (snapshotFrame > 0 && frameCount == snapshotFrame))
+                {
+                    Volatile.Write(ref snapshotArmed, false);
+                    activeSnapshot = new FrameProfileRecorder
+                    {
+                        CapturedFrame = frameCount,
+                        InitialGsState = graphics.Gs.CaptureState(),
+                        Dispfb1 = runtime.Mmio.GsDispfb1,
+                        Dispfb2 = runtime.Mmio.GsDispfb2
+                    };
+                    graphics.Gs.FrameRecorder = activeSnapshot;
+                    graphics.Vu1Compiler.FrameRecorder = activeSnapshot;
+                    snapStartTicks = Stopwatch.GetTimestamp();
+                    snapVif1 = graphics.Vif1.TotalProcessingTicks;
+                    snapVu1 = graphics.Vu1.TotalExecutionTicks;
+                    snapGif = graphics.Gs.TotalSubmitGifTicks;
+                    snapTrx = graphics.Gs.TotalVramTransferTicks;
+                    snapSoftTri = graphics.Gs.TotalRasterizeTriangleTicks;
+                    snapSoftSpr = graphics.Gs.TotalRasterizeSpriteTicks;
+                    snapVif1Xfers = graphics.Vif1.TotalTransfers;
+                    snapVif1Bytes = graphics.Vif1.TotalBytesReceived;
+                    snapVif1Cmds = graphics.Vif1.TotalCommandsProcessed;
+                    snapVif1Qw = graphics.Vif1.TotalUnpackQuadwordsWritten;
+                    snapVif1UFast = graphics.Vif1.TotalUnpackFastCalls;
+                    snapVif1USlow = graphics.Vif1.TotalUnpackSlowCalls;
+                    snapVif1SFast = graphics.Vif1.TotalStagedFastCalls;
+                    snapVif1SSlow = graphics.Vif1.TotalStagedSlowCalls;
+                    snapVif1SBytes = graphics.Vif1.TotalStagedBytesCopied;
+                    snapVif1Unk = graphics.Vif1.TotalUnknownCmdWords;
+                    snapVif1MpgC = graphics.Vif1.TotalMpgCalls;
+                    snapVif1MpgB = graphics.Vif1.TotalMpgBytesUploaded;
+                    snapVif1UTicks = graphics.Vif1.TotalUnpackTicks;
+                    snapVif1MTicks = graphics.Vif1.TotalMicroCallbackTicks;
+                    snapVif1DTicks = graphics.Vif1.TotalDirectGifTicks;
+                }
+
+                Volatile.Write(ref activeFrameCtxPtr, (nint)c);
+                Volatile.Write(ref frameUpdateStartMs, sw.ElapsedMilliseconds);
+                Volatile.Write(ref inApplicationUpdateFrame, true);
+                long updateStartMs = sw.ElapsedMilliseconds;
                 try
                 {
                     RecompiledFunctions.sub_003E2940(c, r);
+                    if (frameCount == 800)
+                    {
+                        Console.WriteLine($"[F800 SUMMARY] TotalZPass={Castaway.GsRenderer.Gs.GsProcessor.Frame800TotalZPass} TotalZFail={Castaway.GsRenderer.Gs.GsProcessor.Frame800TotalZFail} ZeroAlpha={Castaway.GsRenderer.Gs.GsProcessor.Frame800TotalZeroAlpha} ColorWritten={Castaway.GsRenderer.Gs.GsProcessor.Frame800TotalColorWritten}");
+                    }
                 }
                 finally
                 {
-                    inApplicationUpdateFrame = false;
+                    Volatile.Write(ref inApplicationUpdateFrame, false);
+                    Volatile.Write(ref activeFrameCtxPtr, 0);
+                    if (activeSnapshot != null)
+                    {
+                        graphics.Gs.FrameRecorder = null;
+                        graphics.Vu1Compiler.FrameRecorder = null;
+                        activeSnapshot.FrameUpdateTicks = Stopwatch.GetTimestamp() - snapStartTicks;
+                        activeSnapshot.Vif1TicksDelta = graphics.Vif1.TotalProcessingTicks - snapVif1;
+                        activeSnapshot.Vu1TicksDelta = graphics.Vu1.TotalExecutionTicks - snapVu1;
+                        activeSnapshot.GifTicksDelta = graphics.Gs.TotalSubmitGifTicks - snapGif;
+                        activeSnapshot.TrxTicksDelta = graphics.Gs.TotalVramTransferTicks - snapTrx;
+                        activeSnapshot.SoftTriTicksDelta = graphics.Gs.TotalRasterizeTriangleTicks - snapSoftTri;
+                        activeSnapshot.SoftSprTicksDelta = graphics.Gs.TotalRasterizeSpriteTicks - snapSoftSpr;
+                        activeSnapshot.Vif1TransfersDelta = graphics.Vif1.TotalTransfers - snapVif1Xfers;
+                        activeSnapshot.Vif1BytesDelta = graphics.Vif1.TotalBytesReceived - snapVif1Bytes;
+                        activeSnapshot.Vif1CommandsDelta = graphics.Vif1.TotalCommandsProcessed - snapVif1Cmds;
+                        activeSnapshot.Vif1UnpackQwordsDelta = graphics.Vif1.TotalUnpackQuadwordsWritten - snapVif1Qw;
+                        activeSnapshot.Vif1UnpackFastDelta = graphics.Vif1.TotalUnpackFastCalls - snapVif1UFast;
+                        activeSnapshot.Vif1UnpackSlowDelta = graphics.Vif1.TotalUnpackSlowCalls - snapVif1USlow;
+                        activeSnapshot.Vif1StagedFastDelta = graphics.Vif1.TotalStagedFastCalls - snapVif1SFast;
+                        activeSnapshot.Vif1StagedSlowDelta = graphics.Vif1.TotalStagedSlowCalls - snapVif1SSlow;
+                        activeSnapshot.Vif1StagedBytesDelta = graphics.Vif1.TotalStagedBytesCopied - snapVif1SBytes;
+                        activeSnapshot.Vif1UnknownCmdDelta = graphics.Vif1.TotalUnknownCmdWords - snapVif1Unk;
+                        activeSnapshot.Vif1MpgCallsDelta = graphics.Vif1.TotalMpgCalls - snapVif1MpgC;
+                        activeSnapshot.Vif1MpgBytesDelta = graphics.Vif1.TotalMpgBytesUploaded - snapVif1MpgB;
+                        activeSnapshot.Vif1UnpackTicksDelta = graphics.Vif1.TotalUnpackTicks - snapVif1UTicks;
+                        activeSnapshot.Vif1MicroCbTicksDelta = graphics.Vif1.TotalMicroCallbackTicks - snapVif1MTicks;
+                        activeSnapshot.Vif1DirectGifTicksDelta = graphics.Vif1.TotalDirectGifTicks - snapVif1DTicks;
+                        activeSnapshot.Dispfb1 = runtime.Mmio.GsDispfb1;
+                        activeSnapshot.Dispfb2 = runtime.Mmio.GsDispfb2;
+                    }
+                }
+                if (graphics.Mode == GsRendererMode.OpenGl && frameCount % 60 == 0)
+                {
+                    long updateMs = sw.ElapsedMilliseconds - updateStartMs;
+                    long curVif1 = graphics.Vif1.TotalProcessingTicks;
+                    long curVu1 = graphics.Vu1.TotalExecutionTicks;
+                    long curGif = graphics.Gs.TotalSubmitGifTicks;
+                    long curTrx = graphics.Gs.TotalVramTransferTicks;
+                    long curSoftTri = graphics.Gs.TotalRasterizeTriangleTicks;
+                    long curSoftSpr = graphics.Gs.TotalRasterizeSpriteTicks;
+                    long curSprCount = graphics.Gs.TotalSpritesDrawn;
+                    long curVif1UnpTicks = graphics.Vif1.TotalUnpackTicks;
+                    long curVif1McTicks = graphics.Vif1.TotalMicroCallbackTicks;
+                    long curVif1Xfers = graphics.Vif1.TotalTransfers;
+                    long curVif1Bytes = graphics.Vif1.TotalBytesReceived;
+                    long curVif1UF = graphics.Vif1.TotalUnpackFastCalls;
+                    long curVif1US = graphics.Vif1.TotalUnpackSlowCalls;
+                    long curVif1SF = graphics.Vif1.TotalStagedFastCalls;
+                    long curVif1SS = graphics.Vif1.TotalStagedSlowCalls;
+                    long curVif1SB = graphics.Vif1.TotalStagedBytesCopied;
+
+                    double tickToMs = 1000.0 / Stopwatch.Frequency;
+                    double dVif1 = (curVif1 - prevVif1Ticks) * tickToMs;
+                    double dVu1 = (curVu1 - prevVu1Ticks) * tickToMs;
+                    double dGif = (curGif - prevGifTicks) * tickToMs;
+                    double dTrx = (curTrx - prevTrxTicks) * tickToMs;
+                    double dSoftTri = (curSoftTri - prevSoftTriTicks) * tickToMs;
+                    double dSoftSpr = (curSoftSpr - prevSoftSprTicks) * tickToMs;
+                    long dSprCount = curSprCount - prevSprCount;
+                    double dVif1Unp = (curVif1UnpTicks - prevVif1UnpTicks) * tickToMs;
+                    double dVif1McExcl = ((curVif1McTicks - prevVif1McTicks) - (curVu1 - prevVu1Ticks)) * tickToMs;
+                    double dVif1Other = ((curVif1 - prevVif1Ticks) - (curVif1McTicks - prevVif1McTicks) - (curVif1UnpTicks - prevVif1UnpTicks)) * tickToMs;
+
+                    prevVif1Ticks = curVif1;
+                    prevVu1Ticks = curVu1;
+                    prevGifTicks = curGif;
+                    prevTrxTicks = curTrx;
+                    prevSoftTriTicks = curSoftTri;
+                    prevSoftSprTicks = curSoftSpr;
+                    prevSprCount = curSprCount;
+                    long dXfers = curVif1Xfers - prevVif1Xfers;
+                    long dBytes = curVif1Bytes - prevVif1Bytes;
+                    long dUF = curVif1UF - prevVif1UF;
+                    long dUS = curVif1US - prevVif1US;
+                    long dSF = curVif1SF - prevVif1SF;
+                    long dSS = curVif1SS - prevVif1SS;
+                    long dSB = curVif1SB - prevVif1SB;
+                    prevVif1UnpTicks = curVif1UnpTicks;
+                    prevVif1McTicks = curVif1McTicks;
+                    prevVif1Xfers = curVif1Xfers;
+                    prevVif1Bytes = curVif1Bytes;
+                    prevVif1UF = curVif1UF;
+                    prevVif1US = curVif1US;
+                    prevVif1SF = curVif1SF;
+                    prevVif1SS = curVif1SS;
+                    prevVif1SB = curVif1SB;
+
+                    Console.WriteLine($"[GL PERF f={frameCount}] Update={updateMs}ms RB={Volatile.Read(ref lastRenderBatchMs)}ms | 60fTotals(ms): Vif1={dVif1:F0} Vu1={dVu1:F0} Gif={dGif:F0} Trx={dTrx:F0} SoftTri={dSoftTri:F0} SoftSpr={dSoftSpr:F0}({dSprCount}) | Vif1Det: Unp={dVif1Unp:F0} McExcl={dVif1McExcl:F0} Oth={dVif1Other:F0} xfer={dXfers} B={dBytes} UF={dUF} US={dUS} SF={dSF} SS={dSS} SB={dSB} | Calls={graphics.FrontBatch.DrawCallCount} Vtx={graphics.FrontBatch.VertexCount} Tex={graphics.FrontBatch.Textures.Count} | FPS={currentFps:F1}");
                 }
 
                 uint postState = Ps2Memory.Read32(c, r, appPtr + 308u);
@@ -987,11 +1361,40 @@ public static unsafe class Program
                 // Advance VBlank / INTC handlers
                 runtime.Kernel.TriggerVBlank(c, r);
 
-                // Fallback batch swap for any frame where primitives were drawn but 0x00428AE8 was not hit at the end
-                if (graphics.Mode == GsRendererMode.OpenGl && graphics.BackBatch.VertexCount > 0)
+                if (activeSnapshot != null)
+                {
+                    activeSnapshot.EndFrame0 = graphics.Gs.Frame[0];
+                    activeSnapshot.BackBatchDrawCallsBeforeSwap = graphics.BackBatch.DrawCallCount;
+                    activeSnapshot.BackBatchVerticesBeforeSwap = graphics.BackBatch.VertexCount;
+                }
+
+                // Swap completed frame batches BEFORE signaling MainThreadIdleTick for snapshot capture
+                if ((graphics.Mode == GsRendererMode.OpenGl && (graphics.BackBatch.VertexCount > 0 || graphics.FrontBatch.VertexCount == 0)) ||
+                    graphics.Mode != GsRendererMode.OpenGl)
                 {
                     graphics.SwapBatches();
                     Interlocked.Increment(ref presentationCount);
+                }
+
+                if (activeSnapshot != null && gl != null && window != null)
+                {
+                    snapshotDoneEvent.Reset();
+                    Volatile.Write(ref pendingSnapshot, activeSnapshot);
+                }
+
+                if (activeSnapshot != null)
+                {
+                    if (gl != null && window != null)
+                    {
+                        // Main thread owns the OpenGL context: wait for OnMainThreadIdleTick to render, read back GL FB, and write snapshot
+                        while (!Volatile.Read(ref watchdogStop) && !Volatile.Read(ref userRequestedExit) && !snapshotDoneEvent.Wait(50))
+                        {
+                        }
+                    }
+                    else
+                    {
+                        FrameSnapshotWriter.WriteSnapshot(activeSnapshot, null, null, 0, 0);
+                    }
                 }
 
                 if (frameCount <= 5 || frameCount % 60 == 0)
@@ -1058,6 +1461,11 @@ public static unsafe class Program
                         var psmDisp = (GsPsm)((dispfb1 >> 15) & 0x1Ful);
                         VramDumper.DumpUnswizzledBmp($"fb_dispfb1_frame{frameCount}.bmp", graphics.Gs.Vram, fbpDisp, fbwDisp, psmDisp);
                     }
+
+                    VramDumper.DumpUnswizzledBmp($"fb_fbpA00_16_frame{frameCount}.bmp", graphics.Gs.Vram, 0xA00, 640, GsPsm.Psmct16S);
+                    VramDumper.DumpUnswizzledBmp($"fb_fbpA00_32_frame{frameCount}.bmp", graphics.Gs.Vram, 0xA00, 640, GsPsm.Psmct32);
+                    int zbp0 = (int)(graphics.Gs.Zbuf[0] & 0x1FFul) * 32;
+                    VramDumper.DumpUnswizzledBmp($"fb_zbuf_frame{frameCount}.bmp", graphics.Gs.Vram, zbp0, 640, GsPsm.Psmz32);
                 }
 
                 if (maxFrames > 0 && frameCount >= maxFrames)
@@ -1109,6 +1517,7 @@ public static unsafe class Program
         }
         finally
         {
+            Volatile.Write(ref watchdogStop, true);
             RuntimeDispatcher.SetTraceHandler(null);
             runtime.Dispose();
             RuntimeDispatcher.ClearHooks();

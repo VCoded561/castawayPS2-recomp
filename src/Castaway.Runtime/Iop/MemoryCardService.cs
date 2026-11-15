@@ -77,9 +77,9 @@ public sealed unsafe class MemoryCardService : IDisposable
             0x01 or 0x08 or 0x78 => HandleGetInfo(ram, send, recv, endParam),
             0x02 or 0x72 => HandleOpen(send),
             0x03 or 0x73 => HandleClose(send),
-            0x04 or 0x75 => HandleRead(ram, send, recv),
-            0x05 or 0x76 => HandleWrite(ram, send),
-            0x06 or 0x74 => HandleSeek(send),
+            0x04 or 0x74 => HandleSeek(send),
+            0x05 or 0x75 => HandleRead(ram, send, recv),
+            0x06 or 0x76 => HandleWrite(ram, send),
             0x07 or 0x10 or 0x7C => HandleFormat(send),
             0x0A or 0x7A => HandleFlush(send),
             0x0C => HandleChdir(ram, send),
@@ -226,15 +226,15 @@ public sealed unsafe class MemoryCardService : IDisposable
 
     private int HandleRead(byte* ram, ReadOnlySpan<byte> send, Span<byte> recv)
     {
-        // Layout:
+        // Layout (sceMcRead 0x00476B10):
         // +0: fd
-        // +16: dataPtr
-        // +20: size
-        // +24: paramPtr (optional)
+        // +12: size
+        // +24: dataPtr
+        // +28: paramPtr
         int handle = send.Length >= 4 ? BinaryPrimitives.ReadInt32LittleEndian(send[0..4]) : 0;
-        uint dataPtr = send.Length >= 20 ? BinaryPrimitives.ReadUInt32LittleEndian(send[16..20]) : 0;
-        int size = send.Length >= 24 ? BinaryPrimitives.ReadInt32LittleEndian(send[20..24]) : 0;
-        uint paramPtr = send.Length >= 28 ? BinaryPrimitives.ReadUInt32LittleEndian(send[24..28]) : 0;
+        int size = send.Length >= 16 ? BinaryPrimitives.ReadInt32LittleEndian(send[12..16]) : 0;
+        uint dataPtr = send.Length >= 28 ? BinaryPrimitives.ReadUInt32LittleEndian(send[24..28]) : 0;
+        uint paramPtr = send.Length >= 32 ? BinaryPrimitives.ReadUInt32LittleEndian(send[28..32]) : 0;
 
         Console.WriteLine($"[MC READ] handle={handle} dataPtr=0x{dataPtr:X8} size={size}");
 
@@ -264,41 +264,51 @@ public sealed unsafe class MemoryCardService : IDisposable
 
     private int HandleWrite(byte* ram, ReadOnlySpan<byte> send)
     {
-        // Layout:
+        // Layout (sceMcWrite 0x00476C24):
         // +0: fd
-        // +12: size
-        // +24: dataPtr
-        // +28: endParam
+        // +12: alignedSize
+        // +20: headSize (0..16 unaligned leading bytes stored at +32)
+        // +24: alignedDataPtr
+        // +32: headBytes[headSize]
         int handle = send.Length >= 4 ? BinaryPrimitives.ReadInt32LittleEndian(send[0..4]) : 0;
-        int size = send.Length >= 16 ? BinaryPrimitives.ReadInt32LittleEndian(send[12..16]) : 0;
+        int alignedSize = send.Length >= 16 ? BinaryPrimitives.ReadInt32LittleEndian(send[12..16]) : 0;
+        int headSize = send.Length >= 24 ? BinaryPrimitives.ReadInt32LittleEndian(send[20..24]) : 0;
         uint dataPtr = send.Length >= 28 ? BinaryPrimitives.ReadUInt32LittleEndian(send[24..28]) : 0;
 
-        Console.WriteLine($"[MC WRITE] handle={handle} dataPtr=0x{dataPtr:X8} size={size}");
+        Console.WriteLine($"[MC WRITE] handle={handle} headSize={headSize} dataPtr=0x{dataPtr:X8} size={alignedSize}");
 
-        if (!_openHandles.TryGetValue(handle, out var fs) || size < 0)
+        if (!_openHandles.TryGetValue(handle, out var fs) || alignedSize < 0 || headSize < 0)
             return -5;
 
-        if (size > 0 && dataPtr != 0)
+        int written = 0;
+        if (headSize > 0 && 32 + headSize <= send.Length)
+        {
+            fs.Write(send.Slice(32, headSize));
+            written += headSize;
+        }
+
+        if (alignedSize > 0 && dataPtr != 0)
         {
             uint phys = dataPtr & 0x01FFFFFFu;
-            if (phys + (uint)size <= 32 * 1024 * 1024)
+            if (phys + (uint)alignedSize <= 32 * 1024 * 1024)
             {
-                fs.Write(new ReadOnlySpan<byte>(ram + phys, size));
+                fs.Write(new ReadOnlySpan<byte>(ram + phys, alignedSize));
+                written += alignedSize;
             }
         }
 
         fs.Flush();
-        return size;
+        return written;
     }
 
     private int HandleSeek(ReadOnlySpan<byte> send)
     {
-        // Layout:
+        // Layout (sceMcSeek 0x0047697C):
         // +0: fd
-        // +12: offset
+        // +16: offset
         // +20: whence
         int handle = send.Length >= 4 ? BinaryPrimitives.ReadInt32LittleEndian(send[0..4]) : 0;
-        int offset = send.Length >= 16 ? BinaryPrimitives.ReadInt32LittleEndian(send[12..16]) : 0;
+        int offset = send.Length >= 20 ? BinaryPrimitives.ReadInt32LittleEndian(send[16..20]) : 0;
         int origin = send.Length >= 24 ? BinaryPrimitives.ReadInt32LittleEndian(send[20..24]) : 0;
 
         Console.WriteLine($"[MC SEEK] handle={handle} offset={offset} origin={origin}");

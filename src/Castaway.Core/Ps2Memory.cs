@@ -57,6 +57,8 @@ public static unsafe class Ps2Memory
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public static byte Read8(CpuContext* ctx, byte* ram, uint vaddr)
     {
+        if (vaddr < 0x10000000u)
+            return ram[vaddr & RamMask];
         if (IsScratchpad(vaddr) && ctx->Scratchpad != null)
             return ctx->Scratchpad[vaddr & ScratchpadOffsetMask];
         byte* vuPtr = GetVuPointer(ctx, vaddr);
@@ -70,6 +72,8 @@ public static unsafe class Ps2Memory
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public static ushort Read16(CpuContext* ctx, byte* ram, uint vaddr)
     {
+        if (vaddr < 0x10000000u)
+            return Unsafe.ReadUnaligned<ushort>(ram + (vaddr & RamMask));
         if (IsScratchpad(vaddr) && ctx->Scratchpad != null)
             return Unsafe.ReadUnaligned<ushort>(ctx->Scratchpad + (vaddr & ScratchpadOffsetMask));
         byte* vuPtr = GetVuPointer(ctx, vaddr);
@@ -83,6 +87,8 @@ public static unsafe class Ps2Memory
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public static uint Read32(CpuContext* ctx, byte* ram, uint vaddr)
     {
+        if (vaddr < 0x10000000u)
+            return Unsafe.ReadUnaligned<uint>(ram + (vaddr & RamMask));
         if (IsScratchpad(vaddr) && ctx->Scratchpad != null)
             return Unsafe.ReadUnaligned<uint>(ctx->Scratchpad + (vaddr & ScratchpadOffsetMask));
         byte* vuPtr = GetVuPointer(ctx, vaddr);
@@ -96,6 +102,8 @@ public static unsafe class Ps2Memory
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public static ulong Read64(CpuContext* ctx, byte* ram, uint vaddr)
     {
+        if (vaddr < 0x10000000u)
+            return Unsafe.ReadUnaligned<ulong>(ram + (vaddr & RamMask));
         if (IsScratchpad(vaddr) && ctx->Scratchpad != null)
             return Unsafe.ReadUnaligned<ulong>(ctx->Scratchpad + (vaddr & ScratchpadOffsetMask));
         byte* vuPtr = GetVuPointer(ctx, vaddr);
@@ -110,6 +118,8 @@ public static unsafe class Ps2Memory
     public static Vector128<uint> Read128(CpuContext* ctx, byte* ram, uint vaddr)
     {
         uint aligned = vaddr & ~0xFu;
+        if (aligned < 0x10000000u)
+            return Unsafe.ReadUnaligned<Vector128<uint>>(ram + (aligned & RamMask));
         if (IsScratchpad(aligned) && ctx->Scratchpad != null)
             return Unsafe.ReadUnaligned<Vector128<uint>>(ctx->Scratchpad + (aligned & ScratchpadOffsetMask));
         byte* vuPtr = GetVuPointer(ctx, aligned);
@@ -123,6 +133,11 @@ public static unsafe class Ps2Memory
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public static void Write8(CpuContext* ctx, byte* ram, uint vaddr, byte value)
     {
+        if (vaddr < 0x10000000u)
+        {
+            ram[vaddr & RamMask] = value;
+            return;
+        }
         if (IsScratchpad(vaddr) && ctx->Scratchpad != null)
         {
             ctx->Scratchpad[vaddr & ScratchpadOffsetMask] = value;
@@ -145,6 +160,11 @@ public static unsafe class Ps2Memory
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public static void Write16(CpuContext* ctx, byte* ram, uint vaddr, ushort value)
     {
+        if (vaddr < 0x10000000u)
+        {
+            Unsafe.WriteUnaligned(ram + (vaddr & RamMask), value);
+            return;
+        }
         if (IsScratchpad(vaddr) && ctx->Scratchpad != null)
         {
             Unsafe.WriteUnaligned(ctx->Scratchpad + (vaddr & ScratchpadOffsetMask), value);
@@ -167,6 +187,11 @@ public static unsafe class Ps2Memory
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public static void Write32(CpuContext* ctx, byte* ram, uint vaddr, uint value)
     {
+        if (vaddr < 0x10000000u)
+        {
+            Unsafe.WriteUnaligned(ram + (vaddr & RamMask), value);
+            return;
+        }
         if (IsScratchpad(vaddr) && ctx->Scratchpad != null)
         {
             Unsafe.WriteUnaligned(ctx->Scratchpad + (vaddr & ScratchpadOffsetMask), value);
@@ -189,6 +214,11 @@ public static unsafe class Ps2Memory
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public static void Write64(CpuContext* ctx, byte* ram, uint vaddr, ulong value)
     {
+        if (vaddr < 0x10000000u)
+        {
+            Unsafe.WriteUnaligned(ram + (vaddr & RamMask), value);
+            return;
+        }
         if (IsScratchpad(vaddr) && ctx->Scratchpad != null)
         {
             Unsafe.WriteUnaligned(ctx->Scratchpad + (vaddr & ScratchpadOffsetMask), value);
@@ -212,6 +242,11 @@ public static unsafe class Ps2Memory
     public static void Write128(CpuContext* ctx, byte* ram, uint vaddr, Vector128<uint> value)
     {
         uint aligned = vaddr & ~0xFu;
+        if (aligned < 0x10000000u)
+        {
+            Unsafe.WriteUnaligned(ram + (aligned & RamMask), value);
+            return;
+        }
         if (IsScratchpad(aligned) && ctx->Scratchpad != null)
         {
             Unsafe.WriteUnaligned(ctx->Scratchpad + (aligned & ScratchpadOffsetMask), value);

@@ -1,5 +1,8 @@
 using System.Buffers.Binary;
 using System.Diagnostics;
+using System.Runtime.CompilerServices;
+using System.Runtime.InteropServices;
+using System.Runtime.Intrinsics;
 
 namespace Castaway.GsRenderer.Vif;
 
@@ -44,9 +47,28 @@ public sealed class VifUnit
     public Action<ReadOnlySpan<byte>>? OnDirectGifData { get; set; }
     public Action? OnFlush { get; set; }
     public Action? OnMicroMemoryModified { get; set; }
+    public Action<int, int>? OnMicroMemoryRangeModified { get; set; }
 
-    // Streaming FIFO buffer for multi-word commands split across DMA tags
-    private readonly List<byte> _fifo = new(4096);
+    // Flat staging buffer for split VIF commands (e.g. TTE=1 4-byte UNPACK headers across REF tags)
+    private byte[] _staging = new byte[4096];
+    private int _stagingLen;
+
+    [InlineArray(4)]
+    private struct CycleMaskArray
+    {
+        private CycleMaskInfo _element0;
+    }
+
+    private struct CycleMaskInfo
+    {
+        public Vector128<uint> DataMask;
+        public Vector128<uint> RowMask;
+        public Vector128<uint> ColMask;
+        public Vector128<uint> WpMask;
+        public Vector128<uint> ColVec;
+        public Vector128<uint> StaticRowCol;
+        public bool HasWp;
+    }
 
     // Diagnostics
     public long TotalCommandsProcessed { get; private set; }
@@ -54,6 +76,17 @@ public sealed class VifUnit
     public long TotalMpgBytesUploaded { get; private set; }
     public long TotalProcessingTicks { get; set; }
     public long TotalTransfers { get; set; }
+    public long TotalBytesReceived { get; private set; }
+    public long TotalUnpackFastCalls { get; private set; }
+    public long TotalUnpackSlowCalls { get; private set; }
+    public long TotalStagedFastCalls { get; private set; }
+    public long TotalStagedSlowCalls { get; private set; }
+    public long TotalStagedBytesCopied { get; private set; }
+    public long TotalUnknownCmdWords { get; private set; }
+    public long TotalMpgCalls { get; private set; }
+    public long TotalUnpackTicks { get; private set; }
+    public long TotalMicroCallbackTicks { get; private set; }
+    public long TotalDirectGifTicks { get; private set; }
 
     public VifUnit(bool isVif1, byte[]? microMem = null, byte[]? dataMem = null)
     {
@@ -92,69 +125,84 @@ public sealed class VifUnit
         Path3Masked = false;
         Array.Clear(Row);
         Array.Clear(Col);
-        _fifo.Clear();
+        _stagingLen = 0;
+    }
+
+    private void EnsureStagingCapacity(int needed)
+    {
+        if (needed > _staging.Length)
+        {
+            Array.Resize(ref _staging, Math.Max(_staging.Length * 2, needed));
+        }
     }
 
     /// <summary>
     /// Feeds raw VIF stream bytes from DMA Channel 0/1 or VIF FIFO MMIO.
-    /// Fast-paths direct zero-copy parsing when FIFO is empty (99.9% of transfers).
+    /// Fast-paths direct zero-copy parsing when staging is empty, and stitches split
+    /// 4-byte TTE command headers directly against incoming payload spans without copying payloads.
     /// </summary>
     public void ProcessData(ReadOnlySpan<byte> data)
     {
         if (data.IsEmpty)
             return;
 
+        TotalBytesReceived += data.Length;
         long t0 = Stopwatch.GetTimestamp();
         try
         {
-        if (_fifo.Count == 0)
-        {
-            int offset = 0;
-            int totalLen = data.Length & ~3;
-
-            while (offset + 4 <= totalLen)
+            int dataOffset = 0;
+            if (_stagingLen > 0)
             {
-                uint vifCode = BinaryPrimitives.ReadUInt32LittleEndian(data.Slice(offset, 4));
-                byte rawCmd = (byte)(vifCode >> 24);
-                byte cmd = (byte)(rawCmd & 0x7Fu); // Strip interrupt bit (bit 31)
-                byte num = (byte)((vifCode >> 16) & 0xFFu);
-                ushort imm = (ushort)(vifCode & 0xFFFFu);
-
-                int payloadBytesNeeded = GetRequiredPayloadBytes(cmd, num, imm);
-                if (payloadBytesNeeded < 0)
-                {
-                    offset += 4;
-                    continue;
-                }
-
-                if (offset + 4 + payloadBytesNeeded > totalLen)
-                {
-                    break;
-                }
-
-                Code = vifCode;
-                Num = num;
-                TotalCommandsProcessed++;
-
-                ReadOnlySpan<byte> payload = data.Slice(offset + 4, payloadBytesNeeded);
-                ExecuteCommand(cmd, num, imm, payload);
-
-                offset += 4 + payloadBytesNeeded;
+                if (!ProcessStagedPrefix(data, ref dataOffset))
+                    return;
             }
 
-            if (offset < data.Length)
+            if (dataOffset < data.Length)
             {
-                var remainder = data.Slice(offset);
-                foreach (byte b in remainder)
-                    _fifo.Add(b);
+                ReadOnlySpan<byte> remaining = data.Slice(dataOffset);
+                int offset = 0;
+                int totalLen = remaining.Length & ~3;
+
+                while (offset + 4 <= totalLen)
+                {
+                    uint vifCode = BinaryPrimitives.ReadUInt32LittleEndian(remaining.Slice(offset, 4));
+                    byte rawCmd = (byte)(vifCode >> 24);
+                    byte cmd = (byte)(rawCmd & 0x7Fu); // Strip interrupt bit (bit 31)
+                    byte num = (byte)((vifCode >> 16) & 0xFFu);
+                    ushort imm = (ushort)(vifCode & 0xFFFFu);
+
+                    int payloadBytesNeeded = GetRequiredPayloadBytes(cmd, num, imm);
+                    if (payloadBytesNeeded < 0)
+                    {
+                        TotalUnknownCmdWords++;
+                        offset += 4;
+                        continue;
+                    }
+
+                    if (offset + 4 + payloadBytesNeeded > totalLen)
+                    {
+                        break;
+                    }
+
+                    Code = vifCode;
+                    Num = num;
+                    TotalCommandsProcessed++;
+
+                    ReadOnlySpan<byte> payload = remaining.Slice(offset + 4, payloadBytesNeeded);
+                    ExecuteCommand(cmd, num, imm, payload);
+
+                    offset += 4 + payloadBytesNeeded;
+                }
+
+                if (offset < remaining.Length)
+                {
+                    ReadOnlySpan<byte> tail = remaining.Slice(offset);
+                    EnsureStagingCapacity(tail.Length);
+                    tail.CopyTo(_staging.AsSpan(0, tail.Length));
+                    _stagingLen = tail.Length;
+                    TotalStagedBytesCopied += tail.Length;
+                }
             }
-            return;
-        }
-
-        foreach (byte b in data)
-            _fifo.Add(b);
-
-        DrainFifo();
         }
         finally
         {
@@ -163,16 +211,35 @@ public sealed class VifUnit
         }
     }
 
-    private void DrainFifo()
+    private bool ProcessStagedPrefix(ReadOnlySpan<byte> data, ref int dataOffset)
     {
-        int offset = 0;
-        int totalLen = _fifo.Count & ~3; // Process 32-bit aligned words
-
-        ReadOnlySpan<byte> span = System.Runtime.InteropServices.CollectionsMarshal.AsSpan(_fifo);
-
-        while (offset + 4 <= totalLen)
+        while (_stagingLen > 0)
         {
-            uint vifCode = BinaryPrimitives.ReadUInt32LittleEndian(span.Slice(offset, 4));
+            if (_stagingLen < 4)
+            {
+                int needHeader = 4 - _stagingLen;
+                int avail = data.Length - dataOffset;
+                if (avail < needHeader)
+                {
+                    if (avail > 0)
+                    {
+                        EnsureStagingCapacity(_stagingLen + avail);
+                        data.Slice(dataOffset, avail).CopyTo(_staging.AsSpan(_stagingLen));
+                        _stagingLen += avail;
+                        TotalStagedBytesCopied += avail;
+                        dataOffset += avail;
+                    }
+                    return false;
+                }
+
+                EnsureStagingCapacity(4);
+                data.Slice(dataOffset, needHeader).CopyTo(_staging.AsSpan(_stagingLen));
+                TotalStagedBytesCopied += needHeader;
+                _stagingLen = 4;
+                dataOffset += needHeader;
+            }
+
+            uint vifCode = BinaryPrimitives.ReadUInt32LittleEndian(_staging.AsSpan(0, 4));
             byte rawCmd = (byte)(vifCode >> 24);
             byte cmd = (byte)(rawCmd & 0x7Fu); // Strip interrupt bit (bit 31)
             byte num = (byte)((vifCode >> 16) & 0xFFu);
@@ -181,34 +248,68 @@ public sealed class VifUnit
             int payloadBytesNeeded = GetRequiredPayloadBytes(cmd, num, imm);
             if (payloadBytesNeeded < 0)
             {
-                // Unknown/reserved VIF command: treat as single-word NOP to prevent stall
-                offset += 4;
+                TotalUnknownCmdWords++;
+                // Unknown/reserved VIF command: discard 4-byte word and continue
+                _stagingLen -= 4;
+                if (_stagingLen > 0)
+                {
+                    Buffer.BlockCopy(_staging, 4, _staging, 0, _stagingLen);
+                }
                 continue;
             }
 
-            if (offset + 4 + payloadBytesNeeded > totalLen)
+            // Zero-copy fast path when only the 4-byte VIFcode header was staged (e.g. TTE=1 REF tag)
+            if (_stagingLen == 4 && data.Length - dataOffset >= payloadBytesNeeded)
             {
-                // Wait for remaining payload words in subsequent DMA transfers
-                break;
+                TotalStagedFastCalls++;
+                Code = vifCode;
+                Num = num;
+                TotalCommandsProcessed++;
+
+                ReadOnlySpan<byte> payload = data.Slice(dataOffset, payloadBytesNeeded);
+                ExecuteCommand(cmd, num, imm, payload);
+
+                dataOffset += payloadBytesNeeded;
+                _stagingLen = 0;
+                return true;
             }
 
+            int totalCmdBytes = 4 + payloadBytesNeeded;
+            int stillNeeded = totalCmdBytes - _stagingLen;
+            int remAvail = data.Length - dataOffset;
+
+            if (remAvail < stillNeeded)
+            {
+                if (remAvail > 0)
+                {
+                    EnsureStagingCapacity(_stagingLen + remAvail);
+                    data.Slice(dataOffset, remAvail).CopyTo(_staging.AsSpan(_stagingLen));
+                    _stagingLen += remAvail;
+                    TotalStagedBytesCopied += remAvail;
+                    dataOffset += remAvail;
+                }
+                return false;
+            }
+
+            if (stillNeeded > 0)
+            {
+                EnsureStagingCapacity(totalCmdBytes);
+                data.Slice(dataOffset, stillNeeded).CopyTo(_staging.AsSpan(_stagingLen));
+                TotalStagedBytesCopied += stillNeeded;
+                dataOffset += stillNeeded;
+            }
+
+            TotalStagedSlowCalls++;
             Code = vifCode;
             Num = num;
             TotalCommandsProcessed++;
 
-            ReadOnlySpan<byte> payload = span.Slice(offset + 4, payloadBytesNeeded);
-            ExecuteCommand(cmd, num, imm, payload);
-
-            offset += 4 + payloadBytesNeeded;
+            ExecuteCommand(cmd, num, imm, _staging.AsSpan(4, payloadBytesNeeded));
+            _stagingLen = 0;
+            return true;
         }
 
-        if (offset > 0)
-        {
-            if (offset >= _fifo.Count)
-                _fifo.Clear();
-            else
-                _fifo.RemoveRange(0, offset);
-        }
+        return true;
     }
 
     private int GetRequiredPayloadBytes(byte cmd, byte num, ushort imm)
@@ -300,7 +401,6 @@ public sealed class VifUnit
                 if (IsVif1)
                 {
                     Base = (ushort)(imm & 0x3FFu);
-                    Tops = (ushort)((Base + (Dbf ? Ofst : 0)) & 0x3FFu);
                 }
                 break;
 
@@ -355,21 +455,35 @@ public sealed class VifUnit
 
             case 0x4A: // MPG
             {
+                TotalMpgCalls++;
                 int destAddr = (imm * 8) & MicroMemMask;
-                for (int i = 0; i < payload.Length; i++)
+                int len = payload.Length;
+                if (len > 0)
                 {
-                    MicroMem[(destAddr + i) & MicroMemMask] = payload[i];
+                    int first = Math.Min(len, MicroMem.Length - destAddr);
+                    payload.Slice(0, first).CopyTo(MicroMem.AsSpan(destAddr, first));
+                    int remain = len - first;
+                    int pos = 0;
+                    while (remain > 0)
+                    {
+                        int chunk = Math.Min(remain, MicroMem.Length);
+                        payload.Slice(len - remain, chunk).CopyTo(MicroMem.AsSpan(pos, chunk));
+                        remain -= chunk;
+                    }
+                    TotalMpgBytesUploaded += len;
+                    OnMicroMemoryRangeModified?.Invoke(destAddr, len);
                 }
-                TotalMpgBytesUploaded += payload.Length;
                 OnMicroMemoryModified?.Invoke();
                 break;
             }
 
             case 0x50: // DIRECT
             case 0x51: // DIRECTHL
-                if (IsVif1)
+                if (IsVif1 && OnDirectGifData != null)
                 {
-                    OnDirectGifData?.Invoke(payload);
+                    long td = Stopwatch.GetTimestamp();
+                    OnDirectGifData(payload);
+                    TotalDirectGifTicks += Stopwatch.GetTimestamp() - td;
                 }
                 break;
         }
@@ -389,11 +503,17 @@ public sealed class VifUnit
             Tops = (ushort)((Base + (Dbf ? Ofst : 0)) & 0x3FFu);
         }
 
-        OnMicroProgramCall?.Invoke(startByteAddr, isContinue);
+        if (OnMicroProgramCall != null)
+        {
+            long tm = Stopwatch.GetTimestamp();
+            OnMicroProgramCall(startByteAddr, isContinue);
+            TotalMicroCallbackTicks += Stopwatch.GetTimestamp() - tm;
+        }
     }
 
     private void ExecuteUnpack(byte cmd, byte num, ushort imm, ReadOnlySpan<byte> payload)
     {
+        long tu = Stopwatch.GetTimestamp();
         bool useMask = (cmd & 0x10) != 0;
         int vn = (cmd >> 2) & 0x3; // 0=S, 1=V2, 2=V3, 3=V4
         int vl = cmd & 0x3;        // 0=32, 1=16, 2=8, 3=5 (V4-5)
@@ -413,6 +533,25 @@ public sealed class VifUnit
         int dstVectors = num == 0 ? 256 : num;
         int cl = Math.Max(1, (int)Cl);
         int wl = Math.Max(1, (int)Wl);
+
+        if (!(vl == 3 && vn != 3))
+        {
+            int bytesPerVec = vl == 3 ? 2 : ((vn + 1) << (2 - vl));
+            int srcVecsNeeded = cl >= wl
+                ? dstVectors
+                : (dstVectors / wl) * cl + Math.Min(dstVectors % wl, cl);
+
+            if (srcVecsNeeded * bytesPerVec <= payload.Length)
+            {
+                TotalUnpackFastCalls++;
+                uint effectiveMode = (vn == 3 && vl == 3) ? 0u : (Mode & 0x3u);
+                ExecuteUnpackFast(payload, dstQwordAddr, dstVectors, cl, wl, vn, vl, usn, useMask, effectiveMode);
+                TotalUnpackTicks += Stopwatch.GetTimestamp() - tu;
+                return;
+            }
+        }
+
+        TotalUnpackSlowCalls++;
 
         int srcBitOffset = 0;
         int cycleStep = 0;
@@ -455,6 +594,7 @@ public sealed class VifUnit
                 }
             }
         }
+        TotalUnpackTicks += Stopwatch.GetTimestamp() - tu;
     }
 
     private static void ReadSourceVector(
@@ -520,6 +660,11 @@ public sealed class VifUnit
             outVec[2] = outVec[0];
             outVec[3] = outVec[0];
         }
+        else if (vn == 1) // For V2-* (vn == 1), mirror v1 v0 v1 v0 (PS2 hardware / PCSX2 behavior)
+        {
+            outVec[2] = outVec[0];
+            outVec[3] = outVec[1];
+        }
     }
 
     private void WriteUnpackedVectorToVuMem(
@@ -533,7 +678,6 @@ public sealed class VifUnit
     {
         int byteAddr = (dstQwordAddr << 4) & DataMemMask;
         int clampedCycle = Math.Min(cycleStep, 3);
-        int compCount = vn + 1;
 
         for (int comp = 0; comp < 4; comp++)
         {
@@ -549,9 +693,9 @@ public sealed class VifUnit
                 maskBits = 1;
             }
 
-            if (maskBits == 3 || (!useMask && !isFillingCycle && comp >= compCount))
+            if (maskBits == 3)
             {
-                // Write protect or unfilled component without mask: preserve existing lane in VU DataMem untouched
+                // Write protect: preserve existing lane in VU DataMem untouched
                 continue;
             }
 
@@ -589,7 +733,303 @@ public sealed class VifUnit
                 finalVal = v;
             }
 
-            BinaryPrimitives.WriteUInt32LittleEndian(DataMem.AsSpan(byteAddr + comp * 4, 4), finalVal);
+            Unsafe.WriteUnaligned(ref Unsafe.Add(ref MemoryMarshal.GetArrayDataReference(DataMem), byteAddr + comp * 4), finalVal);
         }
+    }
+
+    private void ExecuteUnpackFast(
+        ReadOnlySpan<byte> payload,
+        int dstQwordAddr,
+        int dstVectors,
+        int cl,
+        int wl,
+        int vn,
+        int vl,
+        bool usn,
+        bool useMask,
+        uint effectiveMode)
+    {
+        ref byte srcBase = ref MemoryMarshal.GetReference(payload);
+        ref byte dmBase = ref MemoryMarshal.GetArrayDataReference(DataMem);
+        int qwordMask = DataMemQwordMask;
+        int formatKey = (vn << 2) | vl;
+        int srcOffset = 0;
+        int curDst = dstQwordAddr;
+        int cycleStep = 0;
+        bool isSkipping = cl >= wl;
+        int stepSkip = cl - wl;
+        bool needRow = !isSkipping || useMask || effectiveMode != 0;
+        Vector128<uint> rowVec = needRow
+            ? Unsafe.ReadUnaligned<Vector128<uint>>(ref Unsafe.As<uint, byte>(ref MemoryMarshal.GetArrayDataReference(Row)))
+            : default;
+
+        Unsafe.SkipInit(out CycleMaskArray cycleMasks);
+        if (useMask)
+        {
+            uint maskReg = Mask;
+            int cycleCount = Math.Min(wl, 4);
+            for (int c = 0; c < cycleCount; c++)
+            {
+                uint cycleByte = (maskReg >> (c * 8)) & 0xFFu;
+                uint m0 = cycleByte & 0x3u;
+                uint m1 = (cycleByte >> 2) & 0x3u;
+                uint m2 = (cycleByte >> 4) & 0x3u;
+                uint m3 = (cycleByte >> 6) & 0x3u;
+
+                Vector128<uint> dataM = Vector128.Create(
+                    m0 == 0 ? 0xFFFFFFFFu : 0u,
+                    m1 == 0 ? 0xFFFFFFFFu : 0u,
+                    m2 == 0 ? 0xFFFFFFFFu : 0u,
+                    m3 == 0 ? 0xFFFFFFFFu : 0u);
+                Vector128<uint> rowM = Vector128.Create(
+                    m0 == 1 ? 0xFFFFFFFFu : 0u,
+                    m1 == 1 ? 0xFFFFFFFFu : 0u,
+                    m2 == 1 ? 0xFFFFFFFFu : 0u,
+                    m3 == 1 ? 0xFFFFFFFFu : 0u);
+                Vector128<uint> colM = Vector128.Create(
+                    m0 == 2 ? 0xFFFFFFFFu : 0u,
+                    m1 == 2 ? 0xFFFFFFFFu : 0u,
+                    m2 == 2 ? 0xFFFFFFFFu : 0u,
+                    m3 == 2 ? 0xFFFFFFFFu : 0u);
+                Vector128<uint> wpM = Vector128.Create(
+                    m0 == 3 ? 0xFFFFFFFFu : 0u,
+                    m1 == 3 ? 0xFFFFFFFFu : 0u,
+                    m2 == 3 ? 0xFFFFFFFFu : 0u,
+                    m3 == 3 ? 0xFFFFFFFFu : 0u);
+                Vector128<uint> colV = Vector128.Create(Col[c]);
+
+                cycleMasks[c] = new CycleMaskInfo
+                {
+                    DataMask = dataM,
+                    RowMask = rowM,
+                    ColMask = colM,
+                    WpMask = wpM,
+                    ColVec = colV,
+                    StaticRowCol = (rowVec & rowM) | (colV & colM),
+                    HasWp = (m0 == 3) | (m1 == 3) | (m2 == 3) | (m3 == 3),
+                };
+            }
+        }
+
+        for (int i = 0; i < dstVectors; i++)
+        {
+            bool isDataCycle = isSkipping || cycleStep < cl;
+            Vector128<uint> vec;
+            if (isDataCycle)
+            {
+                ref byte p = ref Unsafe.Add(ref srcBase, srcOffset);
+                switch (formatKey)
+                {
+                    case 0xC: // V4-32
+                        vec = Unsafe.ReadUnaligned<Vector128<uint>>(ref p);
+                        srcOffset += 16;
+                        break;
+                    case 0x8: // V3-32
+                        vec = Vector128.Create(
+                            Unsafe.ReadUnaligned<uint>(ref p),
+                            Unsafe.ReadUnaligned<uint>(ref Unsafe.Add(ref p, 4)),
+                            Unsafe.ReadUnaligned<uint>(ref Unsafe.Add(ref p, 8)),
+                            0u);
+                        srcOffset += 12;
+                        break;
+                    case 0x4: // V2-32
+                    {
+                        uint x = Unsafe.ReadUnaligned<uint>(ref p);
+                        uint y = Unsafe.ReadUnaligned<uint>(ref Unsafe.Add(ref p, 4));
+                        vec = Vector128.Create(x, y, x, y);
+                        srcOffset += 8;
+                        break;
+                    }
+                    case 0x0: // S-32
+                        vec = Vector128.Create(Unsafe.ReadUnaligned<uint>(ref p));
+                        srcOffset += 4;
+                        break;
+                    case 0xD: // V4-16
+                    {
+                        ulong raw64 = Unsafe.ReadUnaligned<ulong>(ref p);
+                        vec = usn
+                            ? Vector128.WidenLower(Vector128.CreateScalarUnsafe(raw64).AsUInt16())
+                            : Vector128.WidenLower(Vector128.CreateScalarUnsafe(raw64).AsInt16()).AsUInt32();
+                        srcOffset += 8;
+                        break;
+                    }
+                    case 0x9: // V3-16
+                        if (usn)
+                        {
+                            vec = Vector128.Create(
+                                (uint)Unsafe.ReadUnaligned<ushort>(ref p),
+                                (uint)Unsafe.ReadUnaligned<ushort>(ref Unsafe.Add(ref p, 2)),
+                                (uint)Unsafe.ReadUnaligned<ushort>(ref Unsafe.Add(ref p, 4)),
+                                0u);
+                        }
+                        else
+                        {
+                            vec = Vector128.Create(
+                                unchecked((uint)(int)Unsafe.ReadUnaligned<short>(ref p)),
+                                unchecked((uint)(int)Unsafe.ReadUnaligned<short>(ref Unsafe.Add(ref p, 2))),
+                                unchecked((uint)(int)Unsafe.ReadUnaligned<short>(ref Unsafe.Add(ref p, 4))),
+                                0u);
+                        }
+                        srcOffset += 6;
+                        break;
+                    case 0x5: // V2-16
+                    {
+                        uint x = usn ? Unsafe.ReadUnaligned<ushort>(ref p) : unchecked((uint)(int)Unsafe.ReadUnaligned<short>(ref p));
+                        uint y = usn ? Unsafe.ReadUnaligned<ushort>(ref Unsafe.Add(ref p, 2)) : unchecked((uint)(int)Unsafe.ReadUnaligned<short>(ref Unsafe.Add(ref p, 2)));
+                        vec = Vector128.Create(x, y, x, y);
+                        srcOffset += 4;
+                        break;
+                    }
+                    case 0x1: // S-16
+                        vec = Vector128.Create(usn
+                            ? (uint)Unsafe.ReadUnaligned<ushort>(ref p)
+                            : unchecked((uint)(int)Unsafe.ReadUnaligned<short>(ref p)));
+                        srcOffset += 2;
+                        break;
+                    case 0xE: // V4-8
+                    {
+                        uint raw32 = Unsafe.ReadUnaligned<uint>(ref p);
+                        vec = usn
+                            ? Vector128.WidenLower(Vector128.WidenLower(Vector128.CreateScalarUnsafe(raw32).AsByte()))
+                            : Vector128.WidenLower(Vector128.WidenLower(Vector128.CreateScalarUnsafe(raw32).AsSByte())).AsUInt32();
+                        srcOffset += 4;
+                        break;
+                    }
+                    case 0xA: // V3-8
+                        if (usn)
+                        {
+                            vec = Vector128.Create(
+                                (uint)p,
+                                (uint)Unsafe.Add(ref p, 1),
+                                (uint)Unsafe.Add(ref p, 2),
+                                0u);
+                        }
+                        else
+                        {
+                            vec = Vector128.Create(
+                                unchecked((uint)(int)(sbyte)p),
+                                unchecked((uint)(int)(sbyte)Unsafe.Add(ref p, 1)),
+                                unchecked((uint)(int)(sbyte)Unsafe.Add(ref p, 2)),
+                                0u);
+                        }
+                        srcOffset += 3;
+                        break;
+                    case 0x6: // V2-8
+                    {
+                        uint x = usn ? p : unchecked((uint)(int)(sbyte)p);
+                        uint y = usn ? Unsafe.Add(ref p, 1) : unchecked((uint)(int)(sbyte)Unsafe.Add(ref p, 1));
+                        vec = Vector128.Create(x, y, x, y);
+                        srcOffset += 2;
+                        break;
+                    }
+                    case 0x2: // S-8
+                        vec = Vector128.Create(usn ? (uint)p : unchecked((uint)(int)(sbyte)p));
+                        srcOffset += 1;
+                        break;
+                    case 0xF: // V4-5
+                    {
+                        ushort v = Unsafe.ReadUnaligned<ushort>(ref p);
+                        vec = Vector128.Create(
+                            (uint)((v & 0x001F) << 3),
+                            (uint)(((v >> 5) & 0x001F) << 3),
+                            (uint)(((v >> 10) & 0x001F) << 3),
+                            (v & 0x8000) != 0 ? 0x80u : 0x00u);
+                        srcOffset += 2;
+                        break;
+                    }
+                    default:
+                        vec = default;
+                        break;
+                }
+            }
+            else
+            {
+                vec = Vector128<uint>.Zero;
+            }
+
+            ref byte dstRef = ref Unsafe.Add(ref dmBase, (curDst << 4) & DataMemMask);
+            Vector128<uint> outVec;
+
+            if (!useMask)
+            {
+                if (!isDataCycle)
+                {
+                    outVec = rowVec;
+                }
+                else
+                {
+                    switch (effectiveMode)
+                    {
+                        case 0:
+                            outVec = vec;
+                            break;
+                        case 1:
+                            outVec = vec + rowVec;
+                            break;
+                        case 2:
+                            outVec = vec + rowVec;
+                            rowVec = outVec;
+                            break;
+                        default: // 3: Load R mode (R = Data)
+                            outVec = vec;
+                            rowVec = vec;
+                            break;
+                    }
+                }
+            }
+            else
+            {
+                ref readonly CycleMaskInfo cm = ref cycleMasks[cycleStep < 3 ? cycleStep : 3];
+                switch (effectiveMode)
+                {
+                    case 0:
+                        outVec = (vec & cm.DataMask) | cm.StaticRowCol;
+                        break;
+                    case 1:
+                        outVec = ((vec + rowVec) & cm.DataMask) | cm.StaticRowCol;
+                        break;
+                    case 2:
+                    {
+                        Vector128<uint> sum = vec + rowVec;
+                        rowVec = Vector128.ConditionalSelect(cm.DataMask, sum, rowVec);
+                        outVec = (sum & cm.DataMask) | (rowVec & cm.RowMask) | (cm.ColVec & cm.ColMask);
+                        break;
+                    }
+                    default: // 3: Load R mode (R = Data)
+                        rowVec = Vector128.ConditionalSelect(cm.DataMask, vec, rowVec);
+                        outVec = (vec & cm.DataMask) | (rowVec & cm.RowMask) | (cm.ColVec & cm.ColMask);
+                        break;
+                }
+
+                if (cm.HasWp)
+                {
+                    outVec |= Unsafe.ReadUnaligned<Vector128<uint>>(ref dstRef) & cm.WpMask;
+                }
+            }
+
+            Unsafe.WriteUnaligned(ref dstRef, outVec);
+
+            curDst = (curDst + 1) & qwordMask;
+            cycleStep++;
+            if (isSkipping)
+            {
+                if (cycleStep >= wl)
+                {
+                    curDst = (curDst + stepSkip) & qwordMask;
+                    cycleStep = 0;
+                }
+            }
+            else if (cycleStep >= wl)
+            {
+                cycleStep = 0;
+            }
+        }
+
+        if (effectiveMode >= 2)
+        {
+            Unsafe.WriteUnaligned(ref Unsafe.As<uint, byte>(ref MemoryMarshal.GetArrayDataReference(Row)), rowVec);
+        }
+
+        TotalUnpackQuadwordsWritten += dstVectors;
     }
 }

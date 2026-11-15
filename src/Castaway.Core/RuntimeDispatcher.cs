@@ -114,7 +114,7 @@ public static unsafe class RuntimeDispatcher
     private static bool CheckEntrySlow(uint pc, CpuContext* ctx, byte* ram)
     {
         TraceHandler?.Invoke(pc, 0u, ctx); // 0 = FuncEnter
-        if (_activeHookBypassPc != pc && Hooks.TryGetValue(pc, out var hook))
+        if (_activeHookBypassPc != pc && HasHook(pc) && Hooks.TryGetValue(pc, out var hook))
         {
             uint prev = _activeHookBypassPc;
             _activeHookBypassPc = pc;

@@ -24,6 +24,7 @@ public static class Program
                 "scan-tables" or "tables" => ScanTablesCommand.Run(verbArgs),
                 "trace-diff" or "diff" => TraceDiffCommand.Run(verbArgs),
                 "scan-vu1" or "extract-vu1" or "vu1" => VifVu1ScannerCommand.Run(verbArgs),
+                "aot-vu1" => Vu1AotCommand.Run(verbArgs),
                 "call-tree" or "tree" => CallTreeCommand.Run(verbArgs),
                 "slice-flow" or "slice" => SliceFlowCommand.Run(verbArgs),
                 "dump-mem" => DumpMem(verbArgs),

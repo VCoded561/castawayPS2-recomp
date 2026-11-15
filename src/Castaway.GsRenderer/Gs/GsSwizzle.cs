@@ -1,5 +1,6 @@
 using System.Buffers.Binary;
 using System.Runtime.CompilerServices;
+using System.Runtime.InteropServices;
 
 namespace Castaway.GsRenderer.Gs;
 
@@ -153,12 +154,29 @@ public static class GsSwizzle
         }
     };
 
-    // Precomputed hardware-accurate offset tables for 8-bit (64x128) and 4-bit (128x128) page swizzling
+    // Precomputed hardware-accurate offset tables for 32-bit (32x64), 8-bit (64x128), and 4-bit (128x128) page swizzling
+    private static readonly ushort[] OffsetTable32 = new ushort[32 * 64];
     private static readonly ushort[] OffsetTable8 = new ushort[64 * 128];
     private static readonly ushort[] OffsetTable4 = new ushort[128 * 128];
 
+    internal static ReadOnlySpan<ushort> OffsetTable32Span => OffsetTable32;
+    internal static ReadOnlySpan<ushort> OffsetTable8Span => OffsetTable8;
+    internal static ReadOnlySpan<ushort> OffsetTable4Span => OffsetTable4;
+
     static GsSwizzle()
     {
+        // Build PSMCT32 offset table (32 rows x 64 columns, byte offset inside an 8 KiB page)
+        for (int y = 0; y < 32; ++y)
+        {
+            int by = (y >> 3) << 3;
+            int py = (y & 7) << 3;
+            for (int x = 0; x < 64; ++x)
+            {
+                int blockInPage = BlockTable32[by + (x >> 3)];
+                int wordInBlock = ColumnWordTable32[py + (x & 7)];
+                OffsetTable32[(y << 6) | x] = (ushort)(((blockInPage << 6) + wordInBlock) << 2);
+            }
+        }
         // Build PSMT8 offset table (64 rows x 128 columns)
         for (int y = 0; y < 64; ++y)
         {
@@ -196,9 +214,10 @@ public static class GsSwizzle
     /// <summary>
     /// Computes the byte offset in 4 MB GS VRAM for a 32-bit pixel (PSMCT32 / PSMCT24 / PSMZ32 / PSMZ24 / PSMT8H / PSMT4HL / PSMT4HH).
     /// <paramref name="baseBlock"/> is in 256-byte block units (0..16383), <paramref name="bwPixels"/> is buffer width in pixels (multiple of 64).
+    /// When <paramref name="isZ"/> is true, applies PS2 GS hardware swizzle32Z (blockAddressXor = 0x18).
     /// </summary>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    public static int GetPixelByteAddress32(int baseBlock, int bwPixels, int x, int y)
+    public static int GetPixelByteAddress32(int baseBlock, int bwPixels, int x, int y, bool isZ = false)
     {
         int pagesPerRow = Math.Max(1, bwPixels >> 6);
         int pageX = x >> 6;
@@ -207,7 +226,7 @@ public static class GsSwizzle
 
         int bx = (x & 63) >> 3;
         int by = (y & 31) >> 3;
-        int blockInPage = BlockTable32[(by << 3) + bx];
+        int blockInPage = BlockTable32[(by << 3) + bx] ^ (isZ ? 0x18 : 0x00);
         int blockIdx = (pageBlockBase + blockInPage) & 0x3FFF;
 
         int px = x & 7;
@@ -271,16 +290,16 @@ public static class GsSwizzle
     }
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    public static uint ReadPixel32(ReadOnlySpan<byte> vram, int baseBlock, int bwPixels, int x, int y)
+    public static uint ReadPixel32(ReadOnlySpan<byte> vram, int baseBlock, int bwPixels, int x, int y, bool isZ = false)
     {
-        int addr = GetPixelByteAddress32(baseBlock, bwPixels, x, y);
+        int addr = GetPixelByteAddress32(baseBlock, bwPixels, x, y, isZ);
         return BinaryPrimitives.ReadUInt32LittleEndian(vram.Slice(addr, 4));
     }
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    public static void WritePixel32(Span<byte> vram, int baseBlock, int bwPixels, int x, int y, uint value)
+    public static void WritePixel32(Span<byte> vram, int baseBlock, int bwPixels, int x, int y, uint value, bool isZ = false)
     {
-        int addr = GetPixelByteAddress32(baseBlock, bwPixels, x, y);
+        int addr = GetPixelByteAddress32(baseBlock, bwPixels, x, y, isZ);
         BinaryPrimitives.WriteUInt32LittleEndian(vram.Slice(addr, 4), value);
     }
 
@@ -330,6 +349,219 @@ public static class GsSwizzle
             vram[byteAddr] = (byte)((b & 0xF0) | (value & 0x0F));
         else
             vram[byteAddr] = (byte)((b & 0x0F) | ((value & 0x0F) << 4));
+    }
+
+    public static int WriteRect32(byte[] vram, int baseBlock, int dbwPixels, int dsax, int dsay, int rrw, int rrh, bool isZ, ReadOnlySpan<byte> buf, ref int trxPixelX, ref int trxPixelY)
+    {
+        int pagesPerRow = Math.Max(1, dbwPixels >> 6);
+        int consumed = 0;
+        int bufLen = buf.Length;
+        int px = trxPixelX;
+        int py = trxPixelY;
+        ref byte vramBase = ref MemoryMarshal.GetArrayDataReference(vram);
+        ref byte srcBase = ref MemoryMarshal.GetReference(buf);
+
+        if (!isZ)
+        {
+            ref ushort tblBase = ref MemoryMarshal.GetArrayDataReference(OffsetTable32);
+            while (py < rrh && consumed + 4 <= bufLen)
+            {
+                int y = dsay + py;
+                int rowPageBase = baseBlock * 256 + (y >> 5) * pagesPerRow * 8192;
+                ref ushort rowTbl = ref Unsafe.Add(ref tblBase, (y & 31) << 6);
+                int count = Math.Min(rrw - px, (bufLen - consumed) >> 2);
+                int x = dsax + px;
+                for (int i = 0; i < count; i++, x++)
+                {
+                    int addr = (rowPageBase + ((x >> 6) << 13) + Unsafe.Add(ref rowTbl, x & 63)) & VramByteMask;
+                    Unsafe.WriteUnaligned(ref Unsafe.Add(ref vramBase, addr), Unsafe.ReadUnaligned<uint>(ref Unsafe.Add(ref srcBase, consumed + (i << 2))));
+                }
+                consumed += count << 2;
+                px += count;
+                if (px >= rrw)
+                {
+                    px = 0;
+                    py++;
+                }
+            }
+        }
+        else
+        {
+            while (py < rrh && consumed + 4 <= bufLen)
+            {
+                int y = dsay + py;
+                int count = Math.Min(rrw - px, (bufLen - consumed) >> 2);
+                int x = dsax + px;
+                for (int i = 0; i < count; i++, x++)
+                {
+                    int addr = GetPixelByteAddress32(baseBlock, dbwPixels, x, y, isZ: true);
+                    Unsafe.WriteUnaligned(ref Unsafe.Add(ref vramBase, addr), Unsafe.ReadUnaligned<uint>(ref Unsafe.Add(ref srcBase, consumed + (i << 2))));
+                }
+                consumed += count << 2;
+                px += count;
+                if (px >= rrw)
+                {
+                    px = 0;
+                    py++;
+                }
+            }
+        }
+
+        trxPixelX = px;
+        trxPixelY = py;
+        return consumed;
+    }
+
+    public static int WriteRect16(byte[] vram, int baseBlock, int dbwPixels, int dsax, int dsay, int rrw, int rrh, bool is16S, bool isZ, ReadOnlySpan<byte> buf, ref int trxPixelX, ref int trxPixelY)
+    {
+        int pagesPerRow = Math.Max(1, dbwPixels >> 6);
+        int consumed = 0;
+        int bufLen = buf.Length;
+        int px = trxPixelX;
+        int py = trxPixelY;
+        ref byte vramBase = ref MemoryMarshal.GetArrayDataReference(vram);
+        ref byte srcBase = ref MemoryMarshal.GetReference(buf);
+        ref byte blkTblBase = ref MemoryMarshal.GetReference(isZ
+            ? (is16S ? BlockTableZ16S : BlockTableZ16)
+            : (is16S ? BlockTable16S : BlockTable16));
+        ref byte colTblBase = ref MemoryMarshal.GetReference(ColumnHalfwordTable16);
+
+        while (py < rrh && consumed + 2 <= bufLen)
+        {
+            int y = dsay + py;
+            int pageRowBase = baseBlock + (y >> 6) * pagesPerRow * 32;
+            ref byte blkRow = ref Unsafe.Add(ref blkTblBase, ((y & 63) >> 3) << 2);
+            ref byte colRow = ref Unsafe.Add(ref colTblBase, (y & 7) << 4);
+            int count = Math.Min(rrw - px, (bufLen - consumed) >> 1);
+            int x = dsax + px;
+            for (int i = 0; i < count; i++, x++)
+            {
+                int pageBlockBase = pageRowBase + (x >> 6) * 32;
+                int blockInPage = Unsafe.Add(ref blkRow, (x & 63) >> 4);
+                int blockIdx = (pageBlockBase + blockInPage) & 0x3FFF;
+                int hwInBlock = Unsafe.Add(ref colRow, x & 15);
+                int addr = (((blockIdx << 7) + hwInBlock) << 1) & VramByteMask;
+                Unsafe.WriteUnaligned(ref Unsafe.Add(ref vramBase, addr), Unsafe.ReadUnaligned<ushort>(ref Unsafe.Add(ref srcBase, consumed + (i << 1))));
+            }
+            consumed += count << 1;
+            px += count;
+            if (px >= rrw)
+            {
+                px = 0;
+                py++;
+            }
+        }
+
+        trxPixelX = px;
+        trxPixelY = py;
+        return consumed;
+    }
+
+    public static int WriteRect8(byte[] vram, int baseBlock, int dbwPixels, int dsax, int dsay, int rrw, int rrh, ReadOnlySpan<byte> buf, ref int trxPixelX, ref int trxPixelY)
+    {
+        int bw = Math.Max(128, dbwPixels);
+        int perRow = Math.Max(1, bw >> 7);
+        int consumed = 0;
+        int bufLen = buf.Length;
+        int px = trxPixelX;
+        int py = trxPixelY;
+        ref byte vramBase = ref MemoryMarshal.GetArrayDataReference(vram);
+        ref byte srcBase = ref MemoryMarshal.GetReference(buf);
+        ref ushort tblBase = ref MemoryMarshal.GetArrayDataReference(OffsetTable8);
+
+        while (py < rrh && consumed < bufLen)
+        {
+            int y = dsay + py;
+            int rowPageBase = baseBlock * 256 + (y >> 6) * perRow * 8192;
+            ref ushort rowTbl = ref Unsafe.Add(ref tblBase, (y & 63) << 7);
+            int count = Math.Min(rrw - px, bufLen - consumed);
+            int x = dsax + px;
+            for (int i = 0; i < count; i++, x++)
+            {
+                int addr = (rowPageBase + ((x >> 7) << 13) + Unsafe.Add(ref rowTbl, x & 127)) & VramByteMask;
+                Unsafe.Add(ref vramBase, addr) = Unsafe.Add(ref srcBase, consumed + i);
+            }
+            consumed += count;
+            px += count;
+            if (px >= rrw)
+            {
+                px = 0;
+                py++;
+            }
+        }
+
+        trxPixelX = px;
+        trxPixelY = py;
+        return consumed;
+    }
+
+    public static int WriteRect4(byte[] vram, int baseBlock, int dbwPixels, int dsax, int dsay, int rrw, int rrh, ReadOnlySpan<byte> buf, ref int trxPixelX, ref int trxPixelY)
+    {
+        int bw = Math.Max(128, dbwPixels);
+        int perRow = Math.Max(1, bw >> 7);
+        int consumed = 0;
+        int bufLen = buf.Length;
+        int px = trxPixelX;
+        int py = trxPixelY;
+        ref byte vramBase = ref MemoryMarshal.GetArrayDataReference(vram);
+        ref byte srcBase = ref MemoryMarshal.GetReference(buf);
+        ref ushort tblBase = ref MemoryMarshal.GetArrayDataReference(OffsetTable4);
+
+        while (py < rrh && consumed < bufLen)
+        {
+            int y = dsay + py;
+            int rowPageBase = baseBlock * 256 + (y >> 7) * perRow * 8192;
+            ref ushort rowTbl = ref Unsafe.Add(ref tblBase, (y & 127) << 7);
+
+            while (px + 1 < rrw && consumed < bufLen)
+            {
+                byte packed = Unsafe.Add(ref srcBase, consumed++);
+                int x0 = dsax + px;
+                int nib0 = ((rowPageBase + ((x0 >> 7) << 13)) << 1) + Unsafe.Add(ref rowTbl, x0 & 127);
+                ref byte b0 = ref Unsafe.Add(ref vramBase, (nib0 >> 1) & VramByteMask);
+                b0 = (nib0 & 1) == 0 ? (byte)((b0 & 0xF0) | (packed & 0x0F)) : (byte)((b0 & 0x0F) | ((packed & 0x0F) << 4));
+
+                int x1 = x0 + 1;
+                int nib1 = ((rowPageBase + ((x1 >> 7) << 13)) << 1) + Unsafe.Add(ref rowTbl, x1 & 127);
+                ref byte b1 = ref Unsafe.Add(ref vramBase, (nib1 >> 1) & VramByteMask);
+                b1 = (nib1 & 1) == 0 ? (byte)((b1 & 0xF0) | (packed >> 4)) : (byte)((b1 & 0x0F) | (packed & 0xF0));
+
+                px += 2;
+            }
+
+            if (px >= rrw)
+            {
+                px = 0;
+                py++;
+                continue;
+            }
+
+            if (consumed < bufLen)
+            {
+                byte packed = Unsafe.Add(ref srcBase, consumed++);
+                WriteTexel4(vram, baseBlock, bw, dsax + px, dsay + py, (byte)(packed & 0x0F));
+                px++;
+                while (px >= rrw)
+                {
+                    px -= rrw;
+                    py++;
+                }
+                if (py < rrh)
+                {
+                    WriteTexel4(vram, baseBlock, bw, dsax + px, dsay + py, (byte)((packed >> 4) & 0x0F));
+                    px++;
+                    while (px >= rrw)
+                    {
+                        px -= rrw;
+                        py++;
+                    }
+                }
+            }
+        }
+
+        trxPixelX = px;
+        trxPixelY = py;
+        return consumed;
     }
 
     /// <summary>

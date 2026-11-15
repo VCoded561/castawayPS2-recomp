@@ -1,4 +1,5 @@
 using System.Buffers.Binary;
+using System.Diagnostics;
 using System.Runtime.Intrinsics;
 using Castaway.Core;
 
@@ -6,12 +7,35 @@ namespace Castaway.Runtime;
 
 public sealed unsafe class MmioRouter
 {
+    /// <summary>EE Timer 1 input frequency under /256 prescaler (147.456 MHz / 256).</summary>
+    public const uint Timer1TicksPerSecond = 576_000u;
+    /// <summary>Fixed per-frame advance at 60 Hz (16.667 ms) for deterministic/trace runs.</summary>
+    public const uint FixedTimerTicksPerFrame = 9_600u;
+    /// <summary>Max real-time frame timer advance (66.67 ms / 15 FPS floor, matching SLUS_216.64 sub_001BF008).</summary>
+    public const uint MaxRealTimeTimerTicksPerFrame = 38_400u;
+
     private readonly EeKernel _kernel;
     private readonly DmaController _dma;
     private readonly uint[] _timerCount = new uint[4];
     private readonly uint[] _timerMode = new uint[4];
     private readonly uint[] _timerComp = new uint[4];
     private readonly uint[] _timerHold = new uint[4];
+
+    private Func<long> _timestampProvider = Stopwatch.GetTimestamp;
+    private long _timestampFrequency = Stopwatch.Frequency;
+    private bool _hasRealTimeBaseline;
+    private long _lastTimerHostTick;
+    private long _realTimeTickRemainderNum;
+
+    /// <summary>
+    /// When true, <see cref="StepFrameTimers"/> advances EE timers proportionally to real elapsed
+    /// host wall-clock time (clamped to 66.67 ms), eliminating slow motion when running at 30 FPS or
+    /// during heavy frames. Keep false for deterministic tests and binary trace comparisons.
+    /// </summary>
+    public bool UseRealTimeTimers { get; set; }
+
+    /// <summary>Timer ticks applied during the most recent <see cref="StepFrameTimers"/> call.</summary>
+    public uint LastFrameTimerTicks { get; private set; }
 
     private uint _sifMscom;
     private uint _sifSmcom;
@@ -34,6 +58,7 @@ public sealed unsafe class MmioRouter
     public ulong GsDisplay2 => _gsDisplay2;
     public ulong GsBgcolor => _gsBgcolor;
     public ulong GsCsr => _gsCsr;
+    public void SetGsCsrFinish() => _gsCsr |= 0x0002ul;
 
     public CpuContext* ActiveContext { get; set; }
     public byte* ActiveRam { get; set; }
@@ -43,6 +68,19 @@ public sealed unsafe class MmioRouter
         _kernel = kernel;
         _dma = dma;
         _kernel.Mmio = this;
+    }
+
+    public void SetRealTimeClockSource(Func<long> timestampProvider, long timestampFrequency)
+    {
+        ArgumentNullException.ThrowIfNull(timestampProvider);
+        if (timestampFrequency <= 0)
+            throw new ArgumentOutOfRangeException(nameof(timestampFrequency), "Timestamp frequency must be positive.");
+
+        _timestampProvider = timestampProvider;
+        _timestampFrequency = timestampFrequency;
+        _hasRealTimeBaseline = false;
+        _lastTimerHostTick = 0;
+        _realTimeTickRemainderNum = 0;
     }
 
     public uint AdvanceTimerCount(int tIdx, uint delta)
@@ -62,11 +100,53 @@ public sealed unsafe class MmioRouter
     {
         if (ram != null)
             ActiveRam = ram;
-        // At 60 Hz, Timer 1 (BUSCLK / 256 = 576,000 Hz) advances by 9,600 ticks per frame (16.667 ms)
-        AdvanceTimerCount(0, 9600u);
-        AdvanceTimerCount(1, 9600u);
-        AdvanceTimerCount(2, 9600u);
-        AdvanceTimerCount(3, 9600u);
+
+        uint delta = ComputeFrameTimerTicks();
+        LastFrameTimerTicks = delta;
+        AdvanceTimerCount(0, delta);
+        AdvanceTimerCount(1, delta);
+        AdvanceTimerCount(2, delta);
+        AdvanceTimerCount(3, delta);
+    }
+
+    private uint ComputeFrameTimerTicks()
+    {
+        if (!UseRealTimeTimers)
+        {
+            _hasRealTimeBaseline = false;
+            _realTimeTickRemainderNum = 0;
+            return FixedTimerTicksPerFrame;
+        }
+
+        long now = _timestampProvider();
+        if (!_hasRealTimeBaseline)
+        {
+            _hasRealTimeBaseline = true;
+            _lastTimerHostTick = now;
+            _realTimeTickRemainderNum = 0;
+            return FixedTimerTicksPerFrame;
+        }
+
+        long elapsedHostTicks = Math.Max(0L, now - _lastTimerHostTick);
+        _lastTimerHostTick = now;
+
+        if (elapsedHostTicks >= _timestampFrequency)
+        {
+            _realTimeTickRemainderNum = 0;
+            return MaxRealTimeTimerTicksPerFrame;
+        }
+
+        Int128 totalNum = (Int128)elapsedHostTicks * Timer1TicksPerSecond + _realTimeTickRemainderNum;
+        Int128 maxNum = (Int128)MaxRealTimeTimerTicksPerFrame * _timestampFrequency;
+        if (totalNum >= maxNum)
+        {
+            _realTimeTickRemainderNum = 0;
+            return MaxRealTimeTimerTicksPerFrame;
+        }
+
+        uint wholeTicks = (uint)(totalNum / _timestampFrequency);
+        _realTimeTickRemainderNum = (long)(totalNum % _timestampFrequency);
+        return wholeTicks;
     }
 
     public uint ReadSifReg(uint reg)
@@ -140,7 +220,7 @@ public sealed unsafe class MmioRouter
             uint regOff = vaddr & 0xFFu;
             return regOff switch
             {
-                0x00 => tIdx == 1 ? _timerCount[1] : AdvanceTimerCount(tIdx, 16u), // T1_COUNT advances by exact 9600 ticks/frame in StepFrameTimers
+                0x00 => tIdx == 1 ? _timerCount[1] : AdvanceTimerCount(tIdx, 16u), // T1_COUNT advances in StepFrameTimers
                 0x10 => (_timerMode[tIdx] & ~0x0800u) | 0x0400u, // EquF ready bit (Ovff handled via AdvanceTimerCount)
                 0x20 => _timerComp[tIdx],
                 0x30 => _timerHold[tIdx],
@@ -316,11 +396,28 @@ public sealed unsafe class MmioRouter
         return Read128(vaddr);
     }
 
+    private long _vif1FifoReadCount;
+
     public Vector128<uint> Read128(uint vaddr)
     {
+        uint norm = vaddr & 0x1FFFFFFFu;
+        if (norm >= 0x10005000u && norm < 0x10005FF0u && _dma.OnVif1ReadData != null)
+        {
+            Span<byte> qword = stackalloc byte[16];
+            _dma.OnVif1ReadData(qword);
+            long cnt = Interlocked.Increment(ref _vif1FifoReadCount);
+            if (cnt == 1 || cnt % 1024 == 0)
+            {
+                Console.WriteLine($"[MMIO VIF1_FIFO READ128 #{cnt}] vaddr=0x{vaddr:X8} val0=0x{System.Runtime.CompilerServices.Unsafe.ReadUnaligned<uint>(ref qword[0]):X8}");
+            }
+            return System.Runtime.CompilerServices.Unsafe.ReadUnaligned<Vector128<uint>>(ref qword[0]);
+        }
+
         uint lo0 = Read32(vaddr);
         uint lo1 = Read32(vaddr + 4);
-        return Vector128.Create(lo0, lo1, 0u, 0u);
+        uint lo2 = Read32(vaddr + 8);
+        uint lo3 = Read32(vaddr + 12);
+        return Vector128.Create(lo0, lo1, lo2, lo3);
     }
 
     public void Write128(CpuContext* ctx, byte* ram, uint vaddr, Vector128<uint> value)

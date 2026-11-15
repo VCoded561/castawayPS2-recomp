@@ -25,12 +25,17 @@ public sealed unsafe class CastawayRuntime : IDisposable
         Dvd = new DvdVirtualFileSystem(dvdRootPath);
         Pad = new PadService();
         MemoryCard = new MemoryCardService(savesRootDir, Kernel);
-        Audio = new Spu2AudioService(initOpenAl);
+        Audio = new Spu2AudioService(initOpenAl)
+        {
+            StreamFileReader = Dvd.ReadEaSlotAtOffset
+        };
+        Dvd.AttachSpu2Ram(Audio.Spu2Ram);
         SifRpc = new SifRpcRouter(Kernel, Dvd, Pad, MemoryCard, Audio);
 
         Kernel.OnSifSetDma = SifRpc.HandleSifSetDma;
         Kernel.OnSifGetReg = Mmio.ReadSifReg;
         Kernel.OnSifSetReg = Mmio.WriteSifReg;
+        Kernel.OnVBlankTick = ramPtr => Audio.AdvanceHeartbeat(ramPtr);
     }
 
     /// <summary>
@@ -148,13 +153,22 @@ public sealed unsafe class CastawayRuntime : IDisposable
             ctx->SetS32(2, 0);
         });
 
-        // 4. Controller Subsystem & IOP Event Poll Threads
-        // Ps2ControllerUpdate (0x00432BB0) & IOP CD Event Poll Thread (0x00438C68) -> return immediately so threads become dormant cleanly
+        // 4. Controller Subsystem Pump Thread
+        // Ps2ControllerUpdate (0x00432BB0) returns immediately because PumpPadSubsystem runs it on frame update.
+        // Note: 0x00438C68 (tid=4) is the native EA MultiStream Audio Pump thread and runs natively.
         RuntimeDispatcher.RegisterHook(0x00432BB0u, (ctx, ram) =>
         {
         });
-        RuntimeDispatcher.RegisterHook(0x00438C68u, (ctx, ram) =>
+
+        // Flush SOUND_RegisterEeHeartbeat (0x00469298, called at top of tid=4 0x00438C68)
+        // immediately so cmd=73 reaches the IOP and starts EE heartbeat *(0x005AB540) from boot;
+        // otherwise tid=4 waits forever on *(0x005AB540) changing before its first flush,
+        // stalling EA Logo SFX (f=2, f=92) until a later stream open at f=640.
+        RuntimeDispatcher.RegisterHook(0x00469298u, (ctx, ram) =>
         {
+            RuntimeDispatcher.Call(0x00469298u, ctx, ram);
+            ctx->SetU32(4, 0u);
+            RuntimeDispatcher.Call(0x00466EC8u, ctx, ram);
         });
 
         // 4b. DelayThread (0x004832E0):
@@ -404,11 +418,10 @@ public sealed unsafe class CastawayRuntime : IDisposable
             }
         });
 
-        // 9. Ps2ControllerUpdate::SyncQueue (0x00417A88), Audio::WaitQueueEmpty (0x00431D40),
-        // and MessageThread::SyncQueue (0x003E3DA0):
+        // 9. Ps2ControllerUpdate::SyncQueue (0x00417A88) and MessageThread::SyncQueue (0x003E3DA0):
         // Under cooperative single-threaded execution, drain all pending commands in the controller
-        // command queue (0x00594DF8 + 112) synchronously via 0x00417BD0, mark the audio command ring
-        // buffer (+1920) read index equal to write index, and return immediately from MessageThread::SyncQueue.
+        // command queue (0x00594DF8 + 112) synchronously via 0x00417BD0, and return immediately from MessageThread::SyncQueue.
+        // Note: Audio::WaitQueueEmpty (0x00431D40) runs natively on the Audio thread (tid=5) so audio commands execute instead of being discarded.
         RuntimeDispatcher.RegisterHook(0x00417A88u, (ctx, ram) =>
         {
             const uint queueAddr = 0x00594DF8u + 112u;
@@ -418,18 +431,6 @@ public sealed unsafe class CastawayRuntime : IDisposable
                 ctx->SetU32(4, 0x00594DF8u);
                 RuntimeDispatcher.Call(0x00417BD0u, ctx, ram);
             }
-        });
-
-        RuntimeDispatcher.RegisterHook(0x00431D40u, (ctx, ram) =>
-        {
-            uint audioThis = ctx->GetU32(4);
-            if (audioThis != 0u)
-            {
-                uint ringBuf = audioThis + 1920u;
-                uint writeIdx = Ps2Memory.Read32(ctx, ram, ringBuf + 40u);
-                Ps2Memory.Write32(ctx, ram, ringBuf + 44u, writeIdx);
-            }
-            RuntimeDispatcher.Call(0x00431D40u, ctx, ram);
         });
 
         RuntimeDispatcher.RegisterHook(0x003E3DA0u, (ctx, ram) =>

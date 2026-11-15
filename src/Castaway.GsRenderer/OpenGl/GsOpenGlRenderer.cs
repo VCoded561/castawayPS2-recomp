@@ -20,24 +20,19 @@ public struct GsComputeDisplayParams
 }
 
 [StructLayout(LayoutKind.Sequential)]
-public unsafe struct GsGlDrawParams
+public struct GsGlDrawParams
 {
     public int Tme;
     public int Fst;
-    public int Tbp0;
-    public int Tbw;
-    public int Psm;
     public int Tw;
     public int Th;
     public int Tcc;
     public int Tfx;
-    public int Cbp;
-    public int Cpsm;
-    public int Csa;
     public int Ate;
     public int Atst;
     public int Aref;
     public int Afail;
+    public int Zte;
     public int Wms;
     public int Wmt;
     public int MinU;
@@ -45,12 +40,12 @@ public unsafe struct GsGlDrawParams
     public int MinV;
     public int MaxV;
     public int LinearFilter;
-    public int Ta0;
-    public int Ta1;
-    public int Aem;
-    public int Pad0;
-    public int Pad1;
-    public fixed uint Clut[256];
+    public int AfailMode;
+    public int Fba;
+    public int Date;
+    public int Datm;
+    private int _pad0;
+    private int _pad1;
 }
 
 /// <summary>
@@ -74,6 +69,24 @@ public sealed unsafe class GsOpenGlRenderer : IDisposable
     private uint _primitiveVao;
     private uint _drawParamsUbo;
     private uint _primitiveProgram;
+    private uint _dummyWhiteTex;
+    private uint _batchFbo;
+    private uint _batchColorTex;
+    private uint _batchDepthRbo;
+    private int _batchFboWidth;
+    private int _batchFboHeight;
+
+    // FPS overlay resources (DSA)
+    private uint _fpsFontTex;
+    private uint _fpsVbo;
+    private uint _fpsVao;
+    private uint _fpsProgram;
+    private const int FpsOverlayMaxVerts = 64 * 6; // up to 64 quads (background + characters)
+
+    // GPU Texture2D cache keyed by decoded texture content hash + dimensions
+    private readonly Dictionary<(ulong Hash64, int Width, int Height), uint> _gpuTexCache = new(256);
+    private readonly Queue<(ulong Hash64, int Width, int Height)> _gpuTexOrder = new(512);
+    private const int MaxGpuCachedTextures = 512;
 
     public int BaseDisplayWidth { get; private set; } = 640;
     public int BaseDisplayHeight { get; private set; } = 448;
@@ -183,6 +196,15 @@ public sealed unsafe class GsOpenGlRenderer : IDisposable
         // 8. Compile Primitive Graphics Program
         _primitiveProgram = CompileGraphicsProgram(gl, PrimitiveVertexShaderSource, PrimitiveFragmentShaderSource);
 
+        // 9. Create 1x1 white dummy texture for untextured draws (DSA)
+        gl.CreateTextures(TextureTarget.Texture2D, 1, out _dummyWhiteTex);
+        gl.TextureStorage2D(_dummyWhiteTex, 1, SizedInternalFormat.Rgba8, 1, 1);
+        uint whitePixel = 0xFFFFFFFFu;
+        gl.TextureSubImage2D(_dummyWhiteTex, 0, 0, 0, 1, 1, PixelFormat.Rgba, PixelType.UnsignedByte, &whitePixel);
+
+        // 10. Initialize FPS overlay resources (DSA)
+        InitializeFpsOverlayDsa(gl);
+
         IsInitialized = true;
     }
 
@@ -224,66 +246,122 @@ public sealed unsafe class GsOpenGlRenderer : IDisposable
         }
     }
 
+    private uint GetOrUploadBatchTexture(in GsBatchTexture tex)
+    {
+        var key = (tex.Hash64, tex.Width, tex.Height);
+        if (_gpuTexCache.TryGetValue(key, out uint glTex))
+            return glTex;
+
+        if (_gpuTexOrder.Count >= MaxGpuCachedTextures)
+        {
+            var oldest = _gpuTexOrder.Dequeue();
+            if (_gpuTexCache.Remove(oldest, out uint oldTex) && oldTex != 0)
+            {
+                _gl!.DeleteTexture(oldTex);
+            }
+        }
+
+        _gl!.CreateTextures(TextureTarget.Texture2D, 1, out glTex);
+        _gl.TextureStorage2D(glTex, 1, SizedInternalFormat.Rgba8, (uint)tex.Width, (uint)tex.Height);
+        int nearest = (int)TextureMinFilter.Nearest;
+        int clampToEdge = (int)TextureWrapMode.ClampToEdge;
+        _gl.TextureParameter(glTex, TextureParameterName.TextureMinFilter, nearest);
+        _gl.TextureParameter(glTex, TextureParameterName.TextureMagFilter, nearest);
+        _gl.TextureParameter(glTex, TextureParameterName.TextureWrapS, clampToEdge);
+        _gl.TextureParameter(glTex, TextureParameterName.TextureWrapT, clampToEdge);
+
+        fixed (uint* pPixels = tex.Pixels)
+        {
+            _gl.TextureSubImage2D(glTex, 0, 0, 0, (uint)tex.Width, (uint)tex.Height, PixelFormat.Rgba, PixelType.UnsignedByte, pPixels);
+        }
+
+        _gpuTexCache[key] = glTex;
+        _gpuTexOrder.Enqueue(key);
+        return glTex;
+    }
+
+    private void EnsureBatchFramebuffer(int width, int height)
+    {
+        int w = Math.Max(1, width);
+        int h = Math.Max(1, height);
+        if (_batchFbo != 0 && _batchFboWidth == w && _batchFboHeight == h)
+            return;
+
+        if (_batchFbo != 0) _gl!.DeleteFramebuffer(_batchFbo);
+        if (_batchColorTex != 0) _gl!.DeleteTexture(_batchColorTex);
+        if (_batchDepthRbo != 0) _gl!.DeleteRenderbuffer(_batchDepthRbo);
+
+        _gl!.CreateTextures(TextureTarget.Texture2D, 1, out _batchColorTex);
+        _gl.TextureStorage2D(_batchColorTex, 1, SizedInternalFormat.Rgba8, (uint)w, (uint)h);
+        int nearest = (int)TextureMinFilter.Nearest;
+        int clampToEdge = (int)TextureWrapMode.ClampToEdge;
+        _gl.TextureParameter(_batchColorTex, TextureParameterName.TextureMinFilter, nearest);
+        _gl.TextureParameter(_batchColorTex, TextureParameterName.TextureMagFilter, nearest);
+        _gl.TextureParameter(_batchColorTex, TextureParameterName.TextureWrapS, clampToEdge);
+        _gl.TextureParameter(_batchColorTex, TextureParameterName.TextureWrapT, clampToEdge);
+
+        _gl.CreateRenderbuffers(1, out _batchDepthRbo);
+        _gl.NamedRenderbufferStorage(_batchDepthRbo, InternalFormat.DepthComponent24, (uint)w, (uint)h);
+
+        _gl.CreateFramebuffers(1, out _batchFbo);
+        _gl.NamedFramebufferTexture(_batchFbo, FramebufferAttachment.ColorAttachment0, _batchColorTex, 0);
+        _gl.NamedFramebufferRenderbuffer(_batchFbo, FramebufferAttachment.DepthAttachment, RenderbufferTarget.Renderbuffer, _batchDepthRbo);
+
+        _batchFboWidth = w;
+        _batchFboHeight = h;
+    }
+
     /// <summary>
     /// Renders a batched stream of GS primitives directly on the GPU using OpenGL 4.6 DSA.
-    /// Eliminates CPU software rasterization overhead while maintaining 100% PS2 drawing state accuracy.
+    /// Uses cached Texture2D snapshots for mid-frame VRAM overwrite accuracy and hardware texture L1/L2 caching.
     /// </summary>
     public void RenderBatch(GsPrimitiveBatch batch, GsProcessor gs, int viewportWidth, int viewportHeight, byte[]? vramOverride = null)
     {
         if (!IsInitialized || _gl == null)
             return;
 
-        // 1. Sync 4 MB GS VRAM to SSBO via DSA when modified by DMA Host-to-Local BitBlt
-        byte[] vram = vramOverride ?? gs.Vram;
-        bool dirty = vramOverride != null || gs.VramDirty;
-        if (dirty)
-        {
-            fixed (byte* vramPtr = vram)
-            {
-                _gl.NamedBufferSubData(_vramSsbo, 0, (nuint)GsSwizzle.VramByteSize, vramPtr);
-            }
-            if (vramOverride == null)
-                gs.VramDirty = false;
-        }
-
-        // 2. Upload display params UBO
-        var dispParams = new GsComputeDisplayParams
-        {
-            FbpBlock = (int)(gs.Frame[0] & 0x1FFul) * 32,
-            FbwPixels = Math.Max(1, (int)((gs.Frame[0] >> 16) & 0x3Ful)) * 64,
-            Fpsm = (int)((gs.Frame[0] >> 24) & 0x3Ful),
-            CbpBlock = (int)((gs.Tex0[0] >> 37) & 0x3FFFul),
-            Cpsm = (int)((gs.Tex0[0] >> 51) & 0xFul),
-            DisplayWidth = BaseDisplayWidth,
-            DisplayHeight = BaseDisplayHeight,
-            ScaleMultiplier = ScaleMultiplier
-        };
-        _gl.NamedBufferSubData(_paramsUbo, 0, (nuint)sizeof(GsComputeDisplayParams), &dispParams);
-
         if (batch.VertexCount == 0)
             return;
 
-        // 3. Clear depth buffer for reverse-Z PS2 testing (ZTST: GEQUAL/GREATER)
+        // 1. Bind persistent offscreen FBO (Rgba8 + Depth24) so DATE reads exact destination alpha
+        EnsureBatchFramebuffer(viewportWidth, viewportHeight);
+        _gl.Disable(EnableCap.ScissorTest);
+        _gl.ColorMask(true, true, true, true);
         _gl.DepthMask(true);
+        _gl.BlitNamedFramebuffer(
+            0, _batchFbo,
+            0, 0, viewportWidth, viewportHeight,
+            0, 0, viewportWidth, viewportHeight,
+            ClearBufferMask.ColorBufferBit, BlitFramebufferFilter.Nearest);
+        _gl.BindFramebuffer(FramebufferTarget.Framebuffer, _batchFbo);
+
+        // Clear depth buffer for reverse-Z PS2 testing (ZTST: GEQUAL/GREATER)
         _gl.ClearDepth(0.0f);
         _gl.Clear(ClearBufferMask.DepthBufferBit);
 
-        // 4. Upload dynamic vertex buffer via DSA NamedBufferSubData
+        // 2. Upload dynamic vertex buffer via DSA NamedBufferSubData
         fixed (GsGlVertex* vtxPtr = batch.Vertices)
         {
             _gl.NamedBufferSubData(_primitiveVbo, 0, (nuint)(batch.VertexCount * sizeof(GsGlVertex)), vtxPtr);
         }
 
-        // 5. Set global OpenGL viewport and state bindings
+        // 3. Set global OpenGL viewport and state bindings
         _gl.Viewport(0, 0, (uint)viewportWidth, (uint)viewportHeight);
         _gl.UseProgram(_primitiveProgram);
-        _gl.BindBufferBase(BufferTargetARB.ShaderStorageBuffer, 0, _vramSsbo);
+        var displayParams = new GsComputeDisplayParams
+        {
+            DisplayWidth = Math.Max(1, BaseDisplayWidth),
+            DisplayHeight = Math.Max(1, BaseDisplayHeight),
+            ScaleMultiplier = Math.Max(1, ScaleMultiplier)
+        };
+        _gl.NamedBufferSubData(_paramsUbo, 0, (nuint)sizeof(GsComputeDisplayParams), &displayParams);
         _gl.BindBufferBase(BufferTargetARB.UniformBuffer, 1, _paramsUbo);
         _gl.BindBufferBase(BufferTargetARB.UniformBuffer, 2, _drawParamsUbo);
         _gl.BindVertexArray(_primitiveVao);
 
         float scaleX = (float)viewportWidth / BaseDisplayWidth;
         float scaleY = (float)viewportHeight / BaseDisplayHeight;
+        uint lastBoundTex = 0;
 
         int totalDrawCalls = batch.DrawCallCount;
         for (int i = 0; i < totalDrawCalls; i++)
@@ -300,6 +378,22 @@ public sealed unsafe class GsOpenGlRenderer : IDisposable
             _gl.Enable(EnableCap.ScissorTest);
             _gl.Scissor(Math.Max(0, scLeft), Math.Max(0, scBottom), (uint)scW, (uint)scH);
 
+            // Framebuffer channel mask (FBMSK: 1 = protected, 0 = writable)
+            // Protect bit 7 of alpha when bit 31 is masked (standard GS DATE stencil preservation).
+            bool maskR = (dc.Fbmsk & 0x000000FFu) != 0x000000FFu;
+            bool maskG = (dc.Fbmsk & 0x0000FF00u) != 0x0000FF00u;
+            bool maskB = (dc.Fbmsk & 0x00FF0000u) != 0x00FF0000u;
+            bool maskA = (dc.Fbmsk & 0xFF000000u) != 0xFF000000u && (dc.Fbmsk & 0x80000000u) == 0;
+            bool writeDepth = dc.Zte && !dc.Zmsk;
+
+            if (dc.Ate && dc.Atst == 0)
+            {
+                if (dc.Afail == 0 || (dc.Afail == 2 && !writeDepth))
+                    continue;
+            }
+
+            _gl.ColorMask(maskR, maskG, maskB, maskA);
+
             // Depth test (PS2 ZTST: 2=GEQUAL, 3=GREATER, 1=ALWAYS)
             if (dc.Zte)
             {
@@ -312,7 +406,7 @@ public sealed unsafe class GsOpenGlRenderer : IDisposable
                     _ => DepthFunction.Never
                 };
                 _gl.DepthFunc(depthFn);
-                _gl.DepthMask(!dc.Zmsk);
+                _gl.DepthMask(writeDepth);
             }
             else
             {
@@ -324,60 +418,125 @@ public sealed unsafe class GsOpenGlRenderer : IDisposable
             if (dc.Abe)
             {
                 _gl.Enable(EnableCap.Blend);
-                if (dc.SpecA == 0 && dc.SpecB == 1 && dc.SpecC == 0 && dc.SpecD == 1)
+                if (dc.SpecC == 2)
                 {
-                    // Standard Alpha Blending: (Cs - Cd) * As + Cd = Cs * As + Cd * (1 - As)
-                    _gl.BlendFunc(BlendingFactor.SrcAlpha, BlendingFactor.OneMinusSrcAlpha);
-                    _gl.BlendEquation(BlendEquationModeEXT.FuncAdd);
+                    float fix = Math.Clamp(dc.Fix / 128.0f, 0.0f, 1.0f);
+                    _gl.BlendColor(0.0f, 0.0f, 0.0f, fix);
                 }
-                else if (dc.SpecA == 0 && dc.SpecB == 2 && dc.SpecC == 0 && dc.SpecD == 1)
+
+                BlendingFactor cFactor = dc.SpecC switch
                 {
-                    // Modulated Additive: Cs * As + Cd
-                    _gl.BlendFunc(BlendingFactor.SrcAlpha, BlendingFactor.One);
-                    _gl.BlendEquation(BlendEquationModeEXT.FuncAdd);
-                }
-                else if (dc.SpecA == 0 && dc.SpecB == 2 && dc.SpecD == 1)
+                    0 => BlendingFactor.Src1Alpha,
+                    1 => BlendingFactor.DstAlpha,
+                    2 => BlendingFactor.ConstantAlpha,
+                    _ => BlendingFactor.Src1Alpha
+                };
+                BlendingFactor invCFactor = dc.SpecC switch
                 {
-                    // Additive: Cs + Cd
-                    _gl.BlendFunc(BlendingFactor.One, BlendingFactor.One);
-                    _gl.BlendEquation(BlendEquationModeEXT.FuncAdd);
-                }
-                else if (dc.SpecA == 1 && dc.SpecB == 0 && dc.SpecC == 0 && dc.SpecD == 2)
+                    0 => BlendingFactor.OneMinusSrc1Alpha,
+                    1 => BlendingFactor.OneMinusDstAlpha,
+                    2 => BlendingFactor.OneMinusConstantAlpha,
+                    _ => BlendingFactor.OneMinusSrc1Alpha
+                };
+
+                var (srcRgb, dstRgb, eqRgb) = (dc.SpecA, dc.SpecB, dc.SpecD) switch
                 {
-                    // Inverted modulate: (Cd - Cs) * As
-                    _gl.BlendFunc(BlendingFactor.SrcAlpha, BlendingFactor.OneMinusSrcAlpha);
-                    _gl.BlendEquation(BlendEquationModeEXT.FuncReverseSubtract);
-                }
-                else
-                {
-                    _gl.BlendFunc(BlendingFactor.SrcAlpha, BlendingFactor.OneMinusSrcAlpha);
-                    _gl.BlendEquation(BlendEquationModeEXT.FuncAdd);
-                }
+                    (0, 0, 0) or (1, 1, 0) or (2, 2, 0) => (BlendingFactor.One, BlendingFactor.Zero, BlendEquationModeEXT.FuncAdd),
+                    (0, 0, 1) or (1, 1, 1) or (2, 2, 1) => (BlendingFactor.Zero, BlendingFactor.One, BlendEquationModeEXT.FuncAdd),
+                    (0, 0, 2) or (1, 1, 2) or (2, 2, 2) => (BlendingFactor.Zero, BlendingFactor.Zero, BlendEquationModeEXT.FuncAdd),
+
+                    (0, 1, 1) => (cFactor, invCFactor, BlendEquationModeEXT.FuncAdd),
+                    (0, 1, 2) => (cFactor, cFactor, BlendEquationModeEXT.FuncSubtract),
+                    (0, 1, 0) => (BlendingFactor.One, cFactor, BlendEquationModeEXT.FuncSubtract),
+
+                    (1, 0, 0) => (invCFactor, cFactor, BlendEquationModeEXT.FuncAdd),
+                    (1, 0, 2) => (cFactor, cFactor, BlendEquationModeEXT.FuncReverseSubtract),
+                    (1, 0, 1) => (cFactor, BlendingFactor.One, BlendEquationModeEXT.FuncReverseSubtract),
+
+                    (0, 2, 1) => (cFactor, BlendingFactor.One, BlendEquationModeEXT.FuncAdd),
+                    (0, 2, 2) => (cFactor, BlendingFactor.Zero, BlendEquationModeEXT.FuncAdd),
+                    (0, 2, 0) => (BlendingFactor.One, BlendingFactor.Zero, BlendEquationModeEXT.FuncAdd),
+
+                    (1, 2, 0) => (BlendingFactor.One, cFactor, BlendEquationModeEXT.FuncAdd),
+                    (1, 2, 2) => (BlendingFactor.Zero, cFactor, BlendEquationModeEXT.FuncAdd),
+                    (1, 2, 1) => (BlendingFactor.Zero, BlendingFactor.One, BlendEquationModeEXT.FuncAdd),
+
+                    (2, 0, 1) => (cFactor, BlendingFactor.One, BlendEquationModeEXT.FuncReverseSubtract),
+                    (2, 0, 0) => (invCFactor, BlendingFactor.Zero, BlendEquationModeEXT.FuncAdd),
+                    (2, 0, 2) => (BlendingFactor.Zero, BlendingFactor.Zero, BlendEquationModeEXT.FuncAdd),
+
+                    (2, 1, 0) => (BlendingFactor.One, cFactor, BlendEquationModeEXT.FuncSubtract),
+                    (2, 1, 1) => (BlendingFactor.Zero, invCFactor, BlendEquationModeEXT.FuncAdd),
+                    (2, 1, 2) => (BlendingFactor.Zero, BlendingFactor.Zero, BlendEquationModeEXT.FuncAdd),
+
+                    _ => (cFactor, invCFactor, BlendEquationModeEXT.FuncAdd)
+                };
+
+                _gl.BlendFuncSeparate(srcRgb, dstRgb, BlendingFactor.One, BlendingFactor.Zero);
+                _gl.BlendEquationSeparate(eqRgb, BlendEquationModeEXT.FuncAdd);
             }
             else
             {
                 _gl.Disable(EnableCap.Blend);
             }
 
-            // Upload per-draw-call state to UBO via DSA
+            // Bind decoded Texture2D via DSA
+            uint glTex = _dummyWhiteTex;
+            if (dc.Tme && dc.TexIndex >= 0 && dc.TexIndex < batch.Textures.Count)
+            {
+                glTex = GetOrUploadBatchTexture(batch.Textures[dc.TexIndex]);
+            }
+            if (glTex != lastBoundTex)
+            {
+                _gl.BindTextureUnit(0, glTex);
+                lastBoundTex = glTex;
+            }
+
+            bool twoPassAfail = false;
+            int afailMode = 0;
+            if (dc.Ate && dc.Atst == 0)
+            {
+                afailMode = 2; // ATST=NEVER always fails
+                if (dc.Afail == 2)
+                    _gl.ColorMask(false, false, false, false);
+                else if (dc.Afail == 1)
+                    _gl.DepthMask(false);
+                else if (dc.Afail == 3)
+                {
+                    _gl.ColorMask(maskR, maskG, maskB, false);
+                    _gl.DepthMask(false);
+                }
+            }
+            else if (dc.Ate && dc.Atst >= 2 && dc.Afail != 0)
+            {
+                if (dc.Afail == 1 && !writeDepth)
+                    afailMode = 2; // FB_ONLY with no depth write
+                else if (dc.Afail == 2 && !writeDepth)
+                    afailMode = 0; // ZB_ONLY with no depth write == KEEP
+                else
+                    twoPassAfail = true;
+            }
+
+            if (dc.Date)
+            {
+                _gl.TextureBarrier();
+                _gl.BindTextureUnit(1, _batchColorTex);
+            }
+
+            // Upload compact per-draw-call state to UBO via DSA (96 bytes)
             var drawParams = new GsGlDrawParams
             {
                 Tme = dc.Tme ? 1 : 0,
                 Fst = dc.Fst ? 1 : 0,
-                Tbp0 = dc.Tbp0,
-                Tbw = dc.Tbw,
-                Psm = (int)dc.Psm,
                 Tw = dc.Tw,
                 Th = dc.Th,
                 Tcc = dc.Tcc,
                 Tfx = dc.Tfx,
-                Cbp = dc.Cbp,
-                Cpsm = (int)dc.Cpsm,
-                Csa = dc.Csa,
                 Ate = dc.Ate ? 1 : 0,
                 Atst = dc.Atst,
                 Aref = dc.Aref,
                 Afail = dc.Afail,
+                Zte = dc.Zte ? 1 : 0,
                 Wms = dc.Wms,
                 Wmt = dc.Wmt,
                 MinU = (int)dc.MinU,
@@ -385,31 +544,49 @@ public sealed unsafe class GsOpenGlRenderer : IDisposable
                 MinV = (int)dc.MinV,
                 MaxV = (int)dc.MaxV,
                 LinearFilter = dc.LinearFilter ? 1 : 0,
-                Ta0 = dc.Ta0,
-                Ta1 = dc.Ta1,
-                Aem = dc.Aem ? 1 : 0,
-                Pad0 = 0,
-                Pad1 = 0
+                AfailMode = afailMode,
+                Fba = dc.Fba ? 1 : 0,
+                Date = dc.Date ? 1 : 0,
+                Datm = dc.Datm
             };
-
-            if (call.ClutOffset >= 0)
-            {
-                fixed (uint* srcClut = &batch.ClutPool[call.ClutOffset])
-                {
-                    for (int c = 0; c < 256; c++)
-                    {
-                        drawParams.Clut[c] = srcClut[c];
-                    }
-                }
-            }
 
             _gl.NamedBufferSubData(_drawParamsUbo, 0, (nuint)sizeof(GsGlDrawParams), &drawParams);
 
             // Draw triangles
             _gl.DrawArrays(PrimitiveType.Triangles, call.StartVertex, (uint)call.VertexCount);
+
+            if (twoPassAfail)
+            {
+                drawParams.AfailMode = 1; // Pass 2: keep only alpha-failing fragments
+                _gl.NamedBufferSubData(_drawParamsUbo, 0, (nuint)sizeof(GsGlDrawParams), &drawParams);
+                if (dc.Afail == 2)
+                {
+                    _gl.ColorMask(false, false, false, false);
+                }
+                else if (dc.Afail == 1)
+                {
+                    _gl.DepthMask(false);
+                }
+                else // Afail == 3 (RGB_ONLY)
+                {
+                    _gl.ColorMask(maskR, maskG, maskB, false);
+                    _gl.DepthMask(false);
+                }
+                _gl.DrawArrays(PrimitiveType.Triangles, call.StartVertex, (uint)call.VertexCount);
+            }
         }
 
+        _gl.ColorMask(true, true, true, true);
+        _gl.DepthMask(true);
+        _gl.Disable(EnableCap.Blend);
         _gl.Disable(EnableCap.ScissorTest);
+
+        _gl.BindFramebuffer(FramebufferTarget.Framebuffer, 0);
+        _gl.BlitNamedFramebuffer(
+            _batchFbo, 0,
+            0, 0, viewportWidth, viewportHeight,
+            0, 0, viewportWidth, viewportHeight,
+            ClearBufferMask.ColorBufferBit, BlitFramebufferFilter.Nearest);
     }
 
     /// <summary>
@@ -599,236 +776,43 @@ public sealed unsafe class GsOpenGlRenderer : IDisposable
         in vec4 vColor;
         in vec3 vStq;
         in vec2 vUv;
-        out vec4 fragColor;
+        layout(location = 0, index = 0) out vec4 fragColor;
+        layout(location = 0, index = 1) out vec4 fragBlend;
 
-        layout(std430, binding = 0) readonly buffer GsVramBuffer {
-            uint VramWords[];
-        };
+        layout(binding = 0) uniform sampler2D uTex;
+        layout(binding = 1) uniform sampler2D uDstTex;
 
         layout(std140, binding = 2) uniform GsDrawParams {
             int uTme;
             int uFst;
-            int uTbp0;
-            int uTbw;
-
-            int uPsm;
             int uTw;
             int uTh;
+
             int uTcc;
-
             int uTfx;
-            int uCbp;
-            int uCpsm;
-            int uCsa;
-
             int uAte;
             int uAtst;
+
             int uAref;
             int uAfail;
-
+            int uZte;
             int uWms;
+
             int uWmt;
             int uMinU;
             int uMaxU;
-
             int uMinV;
+
             int uMaxV;
             int uLinearFilter;
-            int uTa0;
+            int uAfailMode;
+            int uFba;
 
-            int uTa1;
-            int uAem;
-            int uPad0;
-            int uPad1;
-
-            uvec4 uClut[64];
+            int uDate;
+            int uDatm;
+            int _uPad0;
+            int _uPad1;
         };
-
-        const int BlockTable32[32] = int[32](
-             0,  1,  4,  5, 16, 17, 20, 21,
-             2,  3,  6,  7, 18, 19, 22, 23,
-             8,  9, 12, 13, 24, 25, 28, 29,
-            10, 11, 14, 15, 26, 27, 30, 31
-        );
-
-        const int BlockTable16[32] = int[32](
-             0,  2,  8, 10,
-             1,  3,  9, 11,
-             4,  6, 12, 14,
-             5,  7, 13, 15,
-            16, 18, 24, 26,
-            17, 19, 25, 27,
-            20, 22, 28, 30,
-            21, 23, 29, 31
-        );
-
-        const int BlockTable16S[32] = int[32](
-             0,  2, 16, 18,
-             1,  3, 17, 19,
-             8, 10, 24, 26,
-             9, 11, 25, 27,
-             4,  6, 20, 22,
-             5,  7, 21, 23,
-            12, 14, 28, 30,
-            13, 15, 29, 31
-        );
-
-        const int ColumnWordTable32[64] = int[64](
-             0,  1,  4,  5,  8,  9, 12, 13,
-             2,  3,  6,  7, 10, 11, 14, 15,
-            16, 17, 20, 21, 24, 25, 28, 29,
-            18, 19, 22, 23, 26, 27, 30, 31,
-            32, 33, 36, 37, 40, 41, 44, 45,
-            34, 35, 38, 39, 42, 43, 46, 47,
-            48, 49, 52, 53, 56, 57, 60, 61,
-            50, 51, 54, 55, 58, 59, 62, 63
-        );
-
-        const int ColumnHalfwordTable16[128] = int[128](
-              0,   1,   4,   5,   8,   9,  12,  13,  16,  17,  20,  21,  24,  25,  28,  29,
-              2,   3,   6,   7,  10,  11,  14,  15,  18,  19,  22,  23,  26,  27,  30,  31,
-             32,  33,  36,  37,  40,  41,  44,  45,  48,  49,  52,  53,  56,  57,  60,  61,
-             34,  35,  38,  39,  42,  43,  46,  47,  50,  51,  54,  55,  58,  59,  62,  63,
-             64,  65,  68,  69,  72,  73,  76,  77,  80,  81,  84,  85,  88,  89,  92,  93,
-             66,  67,  70,  71,  74,  75,  78,  79,  82,  83,  86,  87,  90,  91,  94,  95,
-             96,  97, 100, 101, 104, 105, 108, 109, 112, 113, 116, 117, 120, 121, 124, 125,
-             98,  99, 102, 103, 106, 107, 110, 111, 114, 115, 118, 119, 122, 123, 126, 127
-        );
-
-        const int ColumnWord[32] = int[32](
-            0, 1, 4, 5, 8, 9, 12, 13,
-            2, 3, 6, 7, 10, 11, 14, 15,
-            8, 9, 12, 13, 0, 1, 4, 5,
-            10, 11, 14, 15, 2, 3, 6, 7
-        );
-
-        uint readTexel32(int baseBlock, int bwPixels, int x, int y) {
-            int pagesPerRow = max(1, bwPixels >> 6);
-            int pageX = x >> 6;
-            int pageY = y >> 5;
-            int pageBlockBase = baseBlock + (pageY * pagesPerRow + pageX) * 32;
-            int bx = (x & 63) >> 3;
-            int by = (y & 31) >> 3;
-            int blockInPage = BlockTable32[(by << 3) + bx];
-            int blockIdx = (pageBlockBase + blockInPage) & 0x3FFF;
-            int wordInBlock = ColumnWordTable32[((y & 7) << 3) + (x & 7)];
-            int wordIndex = ((blockIdx << 6) + wordInBlock) & 0xFFFFF;
-            return VramWords[wordIndex];
-        }
-
-        uint readTexel16(int baseBlock, int bwPixels, int x, int y, bool is16S) {
-            int pagesPerRow = max(1, bwPixels >> 6);
-            int pageX = x >> 6;
-            int pageY = y >> 6;
-            int pageBlockBase = baseBlock + (pageY * pagesPerRow + pageX) * 32;
-            int bx = (x & 63) >> 4;
-            int by = (y & 63) >> 3;
-            int blockInPage = is16S ? BlockTable16S[(by << 2) + bx] : BlockTable16[(by << 2) + bx];
-            int blockIdx = (pageBlockBase + blockInPage) & 0x3FFF;
-            int px = x & 15;
-            int py = y & 7;
-            int halfwordInBlock = ColumnHalfwordTable16[(py << 4) + px];
-            int halfwordIndex = ((blockIdx << 7) + halfwordInBlock) & 0x1FFFFF;
-            uint word = VramWords[halfwordIndex >> 1];
-            uint c16 = ((halfwordIndex & 1) != 0) ? (word >> 16) : (word & 0xFFFFu);
-            uint r8 = (c16 & 0x1Fu) << 3;
-            uint g8 = ((c16 >> 5) & 0x1Fu) << 3;
-            uint b8 = ((c16 >> 10) & 0x1Fu) << 3;
-            uint a8;
-            if ((c16 & 0x8000u) != 0u) {
-                a8 = uint(uTa1);
-            } else if (uAem != 0 && (c16 & 0x7FFFu) == 0u) {
-                a8 = 0u;
-            } else {
-                a8 = uint(uTa0);
-            }
-            return r8 | (g8 << 8) | (b8 << 16) | (a8 << 24);
-        }
-
-        uint getPixelByteAddress8(int baseBlock, int bwPixels, int x, int y) {
-            int perRow = max(1, bwPixels >> 7);
-            int pageAddr = baseBlock * 256 + ((x >> 7) + (y >> 6) * perRow) * 8192;
-            int block = BlockTable32[((y >> 4) & 3) * 8 + ((x >> 4) & 7)];
-            int wx = x & 15;
-            int wy = y & 15;
-            int column = wy >> 2;
-            int subWy = wy & 3;
-            int table = (subWy & 2) >> 1;
-            table ^= (y >> 2) & 1;
-            int byteOffset = ((wx & 8) >> 2) + ((subWy & 2) >> 1);
-            int colWord = ColumnWord[table * 16 + (subWy & 1) * 8 + (wx & 7)];
-            return uint(pageAddr + block * 256 + column * 64 + colWord * 4 + byteOffset) & 0x3FFFFFu;
-        }
-
-        uint readTexel8(int baseBlock, int bwPixels, int x, int y) {
-            uint byteAddr = getPixelByteAddress8(baseBlock, max(128, bwPixels), x, y);
-            uint word = VramWords[byteAddr >> 2];
-            uint shift = (byteAddr & 3u) * 8u;
-            return (word >> shift) & 0xFFu;
-        }
-
-        uint getPixelNibbleAddress4(int baseBlock, int bwPixels, int x, int y) {
-            int perRow = max(1, bwPixels >> 7);
-            int pageAddr = baseBlock * 256 + ((x >> 7) + (y >> 7) * perRow) * 8192;
-            int block = BlockTable16[((y >> 4) & 7) * 4 + ((x >> 5) & 3)];
-            int wx = x & 31;
-            int wy = y & 15;
-            int column = wy >> 2;
-            int subWy = wy & 3;
-            int shift = (wx & 0x18) + ((subWy & 2) << 1);
-            int nibble = shift >> 2;
-            int table = (subWy & 2) >> 1;
-            table ^= column & 1;
-            int colWord = ColumnWord[table * 16 + (subWy & 1) * 8 + (wx & 7)];
-            return (uint(pageAddr) << 1) + uint(((column * 64 + block * 256 + colWord * 4) * 2) + nibble);
-        }
-
-        uint readTexel4(int baseBlock, int bwPixels, int x, int y) {
-            uint nibAddr = getPixelNibbleAddress4(baseBlock, max(128, bwPixels), x, y);
-            uint byteAddr = (nibAddr >> 1) & 0x3FFFFFu;
-            uint word = VramWords[byteAddr >> 2];
-            uint shift = (byteAddr & 3u) * 8u;
-            uint byteVal = (word >> shift) & 0xFFu;
-            return ((nibAddr & 1u) == 0u) ? (byteVal & 0x0Fu) : ((byteVal >> 4) & 0x0Fu);
-        }
-
-        uint lookupClut(uint index, bool is8Bit) {
-            uint idx = is8Bit ? (index & 0xFFu) : (index & 0x0Fu);
-            return uClut[idx >> 2][idx & 3u];
-        }
-
-        uvec4 readSingleTexel(int tx, int ty) {
-            uint raw;
-            if (uPsm == 0x13) { // PSMT8
-                uint idx = readTexel8(uTbp0, uTbw, tx, ty);
-                raw = lookupClut(idx, true);
-            } else if (uPsm == 0x1B) { // PSMT8H
-                uint word = readTexel32(uTbp0, uTbw, tx, ty);
-                uint idx = (word >> 24) & 0xFFu;
-                raw = lookupClut(idx, true);
-            } else if (uPsm == 0x14) { // PSMT4
-                uint idx = readTexel4(uTbp0, uTbw, tx, ty);
-                raw = lookupClut(idx, false);
-            } else if (uPsm == 0x24) { // PSMT4HL
-                uint word = readTexel32(uTbp0, uTbw, tx, ty);
-                uint idx = (word >> 24) & 0x0Fu;
-                raw = lookupClut(idx, false);
-            } else if (uPsm == 0x2C) { // PSMT4HH
-                uint word = readTexel32(uTbp0, uTbw, tx, ty);
-                uint idx = (word >> 28) & 0x0Fu;
-                raw = lookupClut(idx, false);
-            } else if (uPsm == 0x02 || uPsm == 0x0A) { // PSMCT16 / PSMCT16S
-                raw = readTexel16(uTbp0, uTbw, tx, ty, uPsm == 0x0A);
-            } else if (uPsm == 0x01) { // PSMCT24
-                uint raw24 = readTexel32(uTbp0, uTbw, tx, ty) & 0x00FFFFFFu;
-                uint a = (uAem != 0 && raw24 == 0u) ? 0u : uint(uTa0);
-                raw = raw24 | (a << 24);
-            } else { // PSMCT32
-                raw = readTexel32(uTbp0, uTbw, tx, ty);
-            }
-
-            return uvec4(raw & 0xFFu, (raw >> 8) & 0xFFu, (raw >> 16) & 0xFFu, (raw >> 24) & 0xFFu);
-        }
 
         int applyWrap(int coord, int size, int mode, int minVal, int maxVal) {
             if (mode == 0) { // REPEAT
@@ -842,7 +826,11 @@ public sealed unsafe class GsOpenGlRenderer : IDisposable
             }
         }
 
-        uvec4 sampleTexture(float uCoord, float vCoord) {
+        vec4 readTexel(int tx, int ty) {
+            return texelFetch(uTex, ivec2(tx, ty), 0);
+        }
+
+        vec4 sampleTexture(float uCoord, float vCoord) {
             if (uLinearFilter != 0) {
                 float fU = uCoord - 0.5;
                 float fV = vCoord - 0.5;
@@ -859,25 +847,31 @@ public sealed unsafe class GsOpenGlRenderer : IDisposable
                 tx1 = applyWrap(tx1, uTw, uWms, uMinU, uMaxU);
                 ty1 = applyWrap(ty1, uTh, uWmt, uMinV, uMaxV);
 
-                uvec4 c00 = readSingleTexel(tx0, ty0);
-                uvec4 c10 = readSingleTexel(tx1, ty0);
-                uvec4 c01 = readSingleTexel(tx0, ty1);
-                uvec4 c11 = readSingleTexel(tx1, ty1);
+                vec4 c00 = readTexel(tx0, ty0);
+                vec4 c10 = readTexel(tx1, ty0);
+                vec4 c01 = readTexel(tx0, ty1);
+                vec4 c11 = readTexel(tx1, ty1);
 
-                vec4 top = mix(vec4(c00), vec4(c10), fracU);
-                vec4 bot = mix(vec4(c01), vec4(c11), fracU);
-                vec4 res = mix(top, bot, fracV);
-                return uvec4(clamp(res + 0.5, 0.0, 255.0));
+                vec4 top = mix(c00, c10, fracU);
+                vec4 bot = mix(c01, c11, fracU);
+                return mix(top, bot, fracV);
             } else {
                 int tx = int(floor(uCoord));
                 int ty = int(floor(vCoord));
                 tx = applyWrap(tx, uTw, uWms, uMinU, uMaxU);
                 ty = applyWrap(ty, uTh, uWmt, uMinV, uMaxV);
-                return readSingleTexel(tx, ty);
+                return readTexel(tx, ty);
             }
         }
 
         void main() {
+            if (uDate != 0) {
+                int dstA = int(round(texelFetch(uDstTex, ivec2(gl_FragCoord.xy), 0).a * 255.0));
+                if (((dstA >> 7) & 1) != uDatm) {
+                    discard;
+                }
+            }
+
             vec3 fragRgb = vColor.rgb;
             int fragA = int(round(vColor.a * 128.0));
 
@@ -887,29 +881,28 @@ public sealed unsafe class GsOpenGlRenderer : IDisposable
                     uCoord = vUv.x;
                     vCoord = vUv.y;
                 } else {
-                    float invQ = (vStq.z != 0.0) ? (1.0 / vStq.z) : 1.0;
+                    float invQ = (abs(vStq.z) > 1e-6) ? (1.0 / vStq.z) : 1.0;
                     uCoord = (vStq.x * invQ) * float(uTw);
                     vCoord = (vStq.y * invQ) * float(uTh);
                 }
 
-                uvec4 texB = sampleTexture(uCoord, vCoord);
-                vec3 tRgb = vec3(texB.rgb) / 255.0;
-                int tA = int(texB.a);
+                vec4 tex = sampleTexture(uCoord, vCoord);
+                int tA = int(round(tex.a * 255.0));
                 int vA = fragA;
 
-                if (uTfx == 0) { // Modulate: C = (Ct * Cf) >> 7, A = (At * Af) >> 7 (if TCC=1)
-                    fragRgb = clamp(tRgb * vColor.rgb, 0.0, 1.0);
+                if (uTfx == 0) { // Modulate
+                    fragRgb = clamp(tex.rgb * vColor.rgb, 0.0, 1.0);
                     fragA = (uTcc != 0) ? ((tA * vA) >> 7) : vA;
-                } else if (uTfx == 1) { // Decal: C = Ct, A = At (if TCC=1)
-                    fragRgb = tRgb;
+                } else if (uTfx == 1) { // Decal
+                    fragRgb = tex.rgb;
                     fragA = (uTcc != 0) ? tA : vA;
-                } else if (uTfx == 2) { // Highlight: C = ((Ct * Cf) >> 7) + Af, A = (At + Af) (if TCC=1)
-                    float af = float(vA) / 128.0;
-                    fragRgb = clamp(tRgb * vColor.rgb + af, 0.0, 1.0);
+                } else if (uTfx == 2) { // Highlight
+                    float af = float(vA) / 255.0;
+                    fragRgb = clamp(tex.rgb * vColor.rgb + af, 0.0, 1.0);
                     fragA = (uTcc != 0) ? min(255, tA + vA) : vA;
-                } else { // Highlight2: C = ((Ct * Cf) >> 7) + Af, A = At (if TCC=1)
-                    float af = float(vA) / 128.0;
-                    fragRgb = clamp(tRgb * vColor.rgb + af, 0.0, 1.0);
+                } else { // Highlight2
+                    float af = float(vA) / 255.0;
+                    fragRgb = clamp(tex.rgb * vColor.rgb + af, 0.0, 1.0);
                     fragA = (uTcc != 0) ? tA : vA;
                 }
             } else {
@@ -917,7 +910,7 @@ public sealed unsafe class GsOpenGlRenderer : IDisposable
             }
 
             // Alpha Test
-            if (uAte != 0) {
+            if (uAte != 0 && uAfailMode != 2) {
                 bool pass = true;
                 if (uAtst == 0) pass = false;
                 else if (uAtst == 2) pass = (fragA < uAref);
@@ -927,12 +920,19 @@ public sealed unsafe class GsOpenGlRenderer : IDisposable
                 else if (uAtst == 6) pass = (fragA > uAref);
                 else if (uAtst == 7) pass = (fragA != uAref);
 
-                if (!pass) {
-                    if (uAfail == 0) discard; // KEEP: discard pixel
+                if (uAfailMode == 0) {
+                    if (!pass) discard;
+                } else {
+                    if (pass) discard;
                 }
             }
 
-            fragColor = vec4(fragRgb, clamp(float(fragA) / 128.0, 0.0, 1.0));
+            if (uFba != 0) {
+                fragA = fragA | 128;
+            }
+
+            fragColor = vec4(fragRgb, clamp(float(fragA) / 255.0, 0.0, 1.0));
+            fragBlend = vec4(0.0, 0.0, 0.0, clamp(float(fragA) / 128.0, 0.0, 1.0));
         }
         """;
 
@@ -1091,7 +1091,7 @@ public sealed unsafe class GsOpenGlRenderer : IDisposable
         }
         """;
 
-    public const string PresentFragmentShaderSource = """
+        public const string PresentFragmentShaderSource = """
         #version 460 core
         in vec2 vUv;
         out vec4 fragColor;
@@ -1100,6 +1100,216 @@ public sealed unsafe class GsOpenGlRenderer : IDisposable
             fragColor = vec4(texture(uDisplayTex, vUv).rgb, 1.0);
         }
         """;
+
+    private const string FpsVertexShaderSource = """
+        #version 460 core
+        layout(location = 0) in vec2 aPosNdc;
+        layout(location = 1) in vec2 aUv;
+        layout(location = 2) in vec4 aColor;
+        out vec2 vUv;
+        out vec4 vColor;
+        void main() {
+            vUv = aUv;
+            vColor = aColor;
+            gl_Position = vec4(aPosNdc, 0.0, 1.0);
+        }
+        """;
+
+    private const string FpsFragmentShaderSource = """
+        #version 460 core
+        in vec2 vUv;
+        in vec4 vColor;
+        out vec4 fragColor;
+        layout(binding = 0) uniform sampler2D uFontTex;
+        void main() {
+            vec4 tex = texture(uFontTex, vUv);
+            fragColor = tex * vColor;
+            if (fragColor.a < 0.01) discard;
+        }
+        """;
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct FpsOverlayVertex
+    {
+        public float X, Y, U, V;
+        public float R, G, B, A;
+    }
+
+    // 5x7 bitmap glyphs: 0-9, F, P, S, :, . (15 glyphs, 6px wide x 8px tall each -> 96x8 texture)
+    private static readonly byte[][] FpsGlyphs =
+    {
+        new byte[] { 0x0E, 0x11, 0x13, 0x15, 0x19, 0x11, 0x0E }, // 0
+        new byte[] { 0x04, 0x0C, 0x04, 0x04, 0x04, 0x04, 0x0E }, // 1
+        new byte[] { 0x0E, 0x11, 0x01, 0x02, 0x04, 0x08, 0x1F }, // 2
+        new byte[] { 0x1F, 0x02, 0x04, 0x02, 0x01, 0x11, 0x0E }, // 3
+        new byte[] { 0x02, 0x06, 0x0A, 0x12, 0x1F, 0x02, 0x02 }, // 4
+        new byte[] { 0x1F, 0x10, 0x1E, 0x01, 0x01, 0x11, 0x0E }, // 5
+        new byte[] { 0x06, 0x08, 0x10, 0x1E, 0x11, 0x11, 0x0E }, // 6
+        new byte[] { 0x1F, 0x01, 0x02, 0x04, 0x08, 0x08, 0x08 }, // 7
+        new byte[] { 0x0E, 0x11, 0x11, 0x0E, 0x11, 0x11, 0x0E }, // 8
+        new byte[] { 0x0E, 0x11, 0x11, 0x0F, 0x01, 0x02, 0x0C }, // 9
+        new byte[] { 0x1F, 0x10, 0x10, 0x1E, 0x10, 0x10, 0x10 }, // F (10)
+        new byte[] { 0x1E, 0x11, 0x11, 0x1E, 0x10, 0x10, 0x10 }, // P (11)
+        new byte[] { 0x0F, 0x10, 0x10, 0x0E, 0x01, 0x01, 0x1E }, // S (12)
+        new byte[] { 0x00, 0x04, 0x04, 0x00, 0x04, 0x04, 0x00 }, // : (13)
+        new byte[] { 0x00, 0x00, 0x00, 0x00, 0x00, 0x0C, 0x0C }, // . (14)
+        new byte[] { 0x1F, 0x1F, 0x1F, 0x1F, 0x1F, 0x1F, 0x1F }, // solid block (15)
+    };
+
+    private void InitializeFpsOverlayDsa(GL gl)
+    {
+        const int atlasW = 96;
+        const int atlasH = 8;
+        uint[] pixels = new uint[atlasW * atlasH];
+        for (int g = 0; g < FpsGlyphs.Length; g++)
+        {
+            byte[] rows = FpsGlyphs[g];
+            int gx = g * 6;
+            for (int y = 0; y < 7; y++)
+            {
+                byte bits = rows[y];
+                for (int x = 0; x < 5; x++)
+                {
+                    bool on = ((bits >> (4 - x)) & 1) != 0;
+                    pixels[y * atlasW + (gx + x)] = on ? 0xFFFFFFFFu : 0x00000000u;
+                }
+            }
+        }
+
+        gl.CreateTextures(TextureTarget.Texture2D, 1, out _fpsFontTex);
+        gl.TextureStorage2D(_fpsFontTex, 1, SizedInternalFormat.Rgba8, atlasW, atlasH);
+        int nearest = (int)TextureMinFilter.Nearest;
+        int clamp = (int)TextureWrapMode.ClampToEdge;
+        gl.TextureParameter(_fpsFontTex, TextureParameterName.TextureMinFilter, nearest);
+        gl.TextureParameter(_fpsFontTex, TextureParameterName.TextureMagFilter, nearest);
+        gl.TextureParameter(_fpsFontTex, TextureParameterName.TextureWrapS, clamp);
+        gl.TextureParameter(_fpsFontTex, TextureParameterName.TextureWrapT, clamp);
+        fixed (uint* p = pixels)
+        {
+            gl.TextureSubImage2D(_fpsFontTex, 0, 0, 0, atlasW, atlasH, PixelFormat.Rgba, PixelType.UnsignedByte, p);
+        }
+
+        gl.CreateBuffers(1, out _fpsVbo);
+        gl.NamedBufferStorage(_fpsVbo, (nuint)(FpsOverlayMaxVerts * sizeof(FpsOverlayVertex)), null, BufferStorageMask.DynamicStorageBit);
+
+        gl.CreateVertexArrays(1, out _fpsVao);
+        gl.EnableVertexArrayAttrib(_fpsVao, 0);
+        gl.VertexArrayAttribFormat(_fpsVao, 0, 2, VertexAttribType.Float, false, 0);
+        gl.VertexArrayAttribBinding(_fpsVao, 0, 0);
+        gl.EnableVertexArrayAttrib(_fpsVao, 1);
+        gl.VertexArrayAttribFormat(_fpsVao, 1, 2, VertexAttribType.Float, false, 8);
+        gl.VertexArrayAttribBinding(_fpsVao, 1, 0);
+        gl.EnableVertexArrayAttrib(_fpsVao, 2);
+        gl.VertexArrayAttribFormat(_fpsVao, 2, 4, VertexAttribType.Float, false, 16);
+        gl.VertexArrayAttribBinding(_fpsVao, 2, 0);
+        gl.VertexArrayVertexBuffer(_fpsVao, 0, _fpsVbo, 0, (uint)sizeof(FpsOverlayVertex));
+
+        _fpsProgram = CompileGraphicsProgram(gl, FpsVertexShaderSource, FpsFragmentShaderSource);
+    }
+
+    public void RenderFpsOverlay(int viewportWidth, int viewportHeight, double fps)
+    {
+        if (!IsInitialized || _gl == null || viewportWidth <= 0 || viewportHeight <= 0 || _fpsProgram == 0)
+            return;
+
+        string text = $"FPS:{fps:F0}";
+        int scale = Math.Max(2, viewportHeight / 300);
+        int padX = 6;
+        int padY = 4;
+        int charW = 6 * scale;
+        int charH = 8 * scale;
+        int boxX = 8;
+        int boxY = 8;
+        int boxW = text.Length * charW + padX * 2;
+        int boxH = charH + padY * 2;
+
+        Span<FpsOverlayVertex> verts = stackalloc FpsOverlayVertex[FpsOverlayMaxVerts];
+        int vCount = 0;
+
+        static void AddQuad(Span<FpsOverlayVertex> v, ref int count, int vpW, int vpH, float px, float py, float pw, float ph, float u0, float v0, float u1, float v1, float r, float g, float b, float a)
+        {
+            if (count + 6 > FpsOverlayMaxVerts) return;
+            float x0 = (px / vpW) * 2.0f - 1.0f;
+            float x1 = ((px + pw) / vpW) * 2.0f - 1.0f;
+            float y0 = 1.0f - (py / vpH) * 2.0f;
+            float y1 = 1.0f - ((py + ph) / vpH) * 2.0f;
+
+            v[count++] = new FpsOverlayVertex { X = x0, Y = y0, U = u0, V = v0, R = r, G = g, B = b, A = a };
+            v[count++] = new FpsOverlayVertex { X = x1, Y = y0, U = u1, V = v0, R = r, G = g, B = b, A = a };
+            v[count++] = new FpsOverlayVertex { X = x0, Y = y1, U = u0, V = v1, R = r, G = g, B = b, A = a };
+            v[count++] = new FpsOverlayVertex { X = x1, Y = y0, U = u1, V = v0, R = r, G = g, B = b, A = a };
+            v[count++] = new FpsOverlayVertex { X = x1, Y = y1, U = u1, V = v1, R = r, G = g, B = b, A = a };
+            v[count++] = new FpsOverlayVertex { X = x0, Y = y1, U = u0, V = v1, R = r, G = g, B = b, A = a };
+        }
+
+        // Solid dark background box using glyph 15
+        const float invAtlasW = 1.0f / 96.0f;
+        const float invAtlasH = 1.0f / 8.0f;
+        AddQuad(verts, ref vCount, viewportWidth, viewportHeight, boxX, boxY, boxW, boxH, (15 * 6 + 1) * invAtlasW, 1 * invAtlasH, (15 * 6 + 4) * invAtlasW, 6 * invAtlasH, 0.0f, 0.0f, 0.0f, 0.72f);
+
+        float cr = fps >= 50 ? 0.25f : (fps >= 25 ? 1.0f : 1.0f);
+        float cg = fps >= 50 ? 1.0f : (fps >= 25 ? 0.9f : 0.3f);
+        float cb = fps >= 50 ? 0.35f : (fps >= 25 ? 0.2f : 0.3f);
+
+        for (int i = 0; i < text.Length; i++)
+        {
+            char ch = text[i];
+            int glyphIdx = ch switch
+            {
+                >= '0' and <= '9' => ch - '0',
+                'F' => 10,
+                'P' => 11,
+                'S' => 12,
+                ':' => 13,
+                '.' => 14,
+                _ => -1
+            };
+            if (glyphIdx < 0) continue;
+
+            float u0 = (glyphIdx * 6) * invAtlasW;
+            float u1 = (glyphIdx * 6 + 5) * invAtlasW;
+            AddQuad(verts, ref vCount, viewportWidth, viewportHeight, boxX + padX + i * charW, boxY + padY, 5 * scale, 7 * scale, u0, 0.0f, u1, 7.0f * invAtlasH, cr, cg, cb, 1.0f);
+        }
+
+        fixed (FpsOverlayVertex* pVerts = verts)
+        {
+            _gl.NamedBufferSubData(_fpsVbo, 0, (nuint)(vCount * sizeof(FpsOverlayVertex)), pVerts);
+        }
+
+        _gl.Viewport(0, 0, (uint)viewportWidth, (uint)viewportHeight);
+        _gl.Disable(EnableCap.DepthTest);
+        _gl.Disable(EnableCap.ScissorTest);
+        _gl.ColorMask(true, true, true, true);
+        _gl.Enable(EnableCap.Blend);
+        _gl.BlendFunc(BlendingFactor.SrcAlpha, BlendingFactor.OneMinusSrcAlpha);
+        _gl.BlendEquation(BlendEquationModeEXT.FuncAdd);
+
+        _gl.UseProgram(_fpsProgram);
+        _gl.BindTextureUnit(0, _fpsFontTex);
+        _gl.BindVertexArray(_fpsVao);
+        _gl.DrawArrays(PrimitiveType.Triangles, 0, (uint)vCount);
+        _gl.Disable(EnableCap.Blend);
+    }
+
+    /// <summary>
+    /// Reads RGBA8 pixel data from the active default backbuffer (bottom-to-top OpenGL row order).
+    /// Must be called on the OpenGL context thread after rendering and before SwapBuffers.
+    /// </summary>
+    public byte[]? CaptureBackbufferRgba(int width, int height)
+    {
+        if (!IsInitialized || _gl == null || width <= 0 || height <= 0)
+            return null;
+
+        byte[] rgba = new byte[width * height * 4];
+        _gl.Finish();
+        _gl.ReadBuffer(ReadBufferMode.Back);
+        _gl.PixelStore(PixelStoreParameter.PackAlignment, 1);
+        fixed (byte* p = rgba)
+        {
+            _gl.ReadPixels(0, 0, (uint)width, (uint)height, PixelFormat.Rgba, PixelType.UnsignedByte, p);
+        }
+        return rgba;
+    }
 
     public void Dispose()
     {
@@ -1117,6 +1327,21 @@ public sealed unsafe class GsOpenGlRenderer : IDisposable
         if (_primitiveVao != 0) _gl.DeleteVertexArray(_primitiveVao);
         if (_drawParamsUbo != 0) _gl.DeleteBuffer(_drawParamsUbo);
         if (_primitiveProgram != 0) _gl.DeleteProgram(_primitiveProgram);
+        if (_dummyWhiteTex != 0) _gl.DeleteTexture(_dummyWhiteTex);
+        if (_batchFbo != 0) _gl.DeleteFramebuffer(_batchFbo);
+        if (_batchColorTex != 0) _gl.DeleteTexture(_batchColorTex);
+        if (_batchDepthRbo != 0) _gl.DeleteRenderbuffer(_batchDepthRbo);
+        if (_fpsFontTex != 0) _gl.DeleteTexture(_fpsFontTex);
+        if (_fpsVbo != 0) _gl.DeleteBuffer(_fpsVbo);
+        if (_fpsVao != 0) _gl.DeleteVertexArray(_fpsVao);
+        if (_fpsProgram != 0) _gl.DeleteProgram(_fpsProgram);
+
+        foreach (uint tex in _gpuTexCache.Values)
+        {
+            if (tex != 0) _gl.DeleteTexture(tex);
+        }
+        _gpuTexCache.Clear();
+        _gpuTexOrder.Clear();
 
         IsInitialized = false;
     }
