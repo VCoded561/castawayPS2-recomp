@@ -1221,6 +1221,1338 @@ public unsafe class Phase4GsRendererTests
         Assert.Equal(0x807F0000u, gs.ReadFramePixel(0x80, 640, GsPsm.Psmct32, 12, 12));
     }
 
+    [Fact]
+    public void Ovl2_ParticleMicroprogram_AotMatchesDecoded_AndPreservesHorizontalPositions()
+    {
+        string elfPath = Ps2ElfReader.FindDefaultElfPath();
+        var reader = new Ps2ElfReader(elfPath);
+        byte[] raw = reader.GetRawBytes();
+
+        // Load Ovl2 (0x0048CFA8, 2048 bytes -> dst 0x15E0) from SLUS_216.64 into MicroMem
+        var vutext = reader.FindSection(".vutext")!;
+        uint fileOff = vutext.FileOffset + (0x0048CFA8u - vutext.VAddr);
+
+        var vuAot = new Vu1State();
+        var vuDec = new Vu1State();
+        raw.AsSpan((int)fileOff, 2048).CopyTo(vuAot.MicroMem.AsSpan(0x15E0, 2048));
+        raw.AsSpan((int)fileOff, 2048).CopyTo(vuDec.MicroMem.AsSpan(0x15E0, 2048));
+
+        // Identify loaded regions via Vu1AotPrograms
+        var aotType = typeof(Vu1Recompiler).Assembly.GetType("Castaway.GsRenderer.Vu1.Vu1AotPrograms")!;
+        var identifyFull = aotType.GetMethod("IdentifyLoadedRegions", System.Reflection.BindingFlags.Static | System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Public, [typeof(byte[])])!;
+        uint regionMask = (uint)identifyFull.Invoke(null, [vuAot.MicroMem])!;
+        Assert.NotEqual(0u, regionMask & 2u);
+
+        // Setup shared VU1 constants matching sub_003E8850 (0x3A3..0x3B5) and screen proj (0x43..0x46)
+        void SetupVuData(Vu1State vu)
+        {
+            vu.Top = 0x49;
+            vu.VI[1] = 0x49;
+            // Identity world->view at 0x3A3..0x3A6, view->screen at 0x43..0x46
+            static void WriteMat(byte[] dm, int qw, float tz)
+            {
+                MemoryMarshal.Write(dm.AsSpan((qw + 0) << 4, 16), Vector128.Create(1f, 0f, 0f, 0f));
+                MemoryMarshal.Write(dm.AsSpan((qw + 1) << 4, 16), Vector128.Create(0f, 1f, 0f, 0f));
+                MemoryMarshal.Write(dm.AsSpan((qw + 2) << 4, 16), Vector128.Create(0f, 0f, 1f, 0f));
+                MemoryMarshal.Write(dm.AsSpan((qw + 3) << 4, 16), Vector128.Create(0f, 0f, tz, 1f));
+            }
+            WriteMat(vu.DataMem, 0x3A3, 10f);
+            // Perspective-like screen matrix at 0x43..0x46: x' = x*500, y' = y*500, z' = z, w' = z
+            MemoryMarshal.Write(vu.DataMem.AsSpan(0x43 << 4, 16), Vector128.Create(500f, 0f, 0f, 0f));
+            MemoryMarshal.Write(vu.DataMem.AsSpan(0x44 << 4, 16), Vector128.Create(0f, 500f, 0f, 0f));
+            MemoryMarshal.Write(vu.DataMem.AsSpan(0x45 << 4, 16), Vector128.Create(0f, 0f, 1f, 1f));
+            MemoryMarshal.Write(vu.DataMem.AsSpan(0x46 << 4, 16), Vector128.Create(0f, 0f, 0f, 0f));
+
+            MemoryMarshal.Write(vu.DataMem.AsSpan(0x3A7 << 4, 16), Vector128.Create(2048f, 2048f, 1f, 0f));
+            MemoryMarshal.Write(vu.DataMem.AsSpan(0x3A8 << 4, 16), Vector128.Create(100f, 100f, 1f, 0f));
+            MemoryMarshal.Write(vu.DataMem.AsSpan(0x3A9 << 4, 16), Vector128.Create(1250f, 2048f, 1250.2f, 0f));
+            MemoryMarshal.Write(vu.DataMem.AsSpan(0x3AA << 4, 16), Vector128.Create(0.5f, 1f, 0f, 0f));
+            MemoryMarshal.Write(vu.DataMem.AsSpan(0x3AB << 4, 16), Vector128.Create(1f, 1f, 0f, 0f));
+            MemoryMarshal.Write(vu.DataMem.AsSpan(0x3AC << 4, 16), Vector128.Create(1f, 1f, 1f, 1f));
+            MemoryMarshal.Write(vu.DataMem.AsSpan(0x3AE << 4, 16), Vector128.Create(0f, 0f, 0f, 0f));
+            MemoryMarshal.Write(vu.DataMem.AsSpan(0x3AF << 4, 16), Vector128.Create(0f, 0f, 2048f, 2048f));
+            MemoryMarshal.Write(vu.DataMem.AsSpan(0x3B0 << 4, 16), Vector128.Create(1f, 1f, 1f, 1f));
+            MemoryMarshal.Write(vu.DataMem.AsSpan(0x3B2 << 4, 16), Vector128.Create(0f, -9.8f, 0f, 1f));
+            BinaryPrimitives.WriteUInt64LittleEndian(vu.DataMem.AsSpan((0x3B3 << 4) + 0, 8), 0x302A400000008010UL);
+            BinaryPrimitives.WriteUInt64LittleEndian(vu.DataMem.AsSpan((0x3B3 << 4) + 8, 8), 0x0412UL);
+
+            int top = 0x49;
+            MemoryMarshal.Write(vu.DataMem.AsSpan((top + 99) << 4, 16), Vector128.Create(1f, 1f, 1f, 1f));
+
+            // Pack particle span [0, 3) (start1=0, end1=3, start2=0, end2=0) into dm[top+0]
+            BinaryPrimitives.WriteUInt32LittleEndian(vu.DataMem.AsSpan((top << 4) + 0, 4), 0u);
+            BinaryPrimitives.WriteUInt32LittleEndian(vu.DataMem.AsSpan((top << 4) + 4, 4), 3u);
+            BinaryPrimitives.WriteUInt32LittleEndian(vu.DataMem.AsSpan((top << 4) + 8, 4), 0u);
+            BinaryPrimitives.WriteUInt32LittleEndian(vu.DataMem.AsSpan((top << 4) + 12, 4), 0u);
+
+            // 3 particles at distinctly different X positions (-2, 0, +2)
+            float[] xs = [-2f, 0f, 2f];
+            for (int p = 0; p < 3; p++)
+            {
+                MemoryMarshal.Write(vu.DataMem.AsSpan(((top + 1 + p) << 4), 16), Vector128.Create(0.5f));
+                MemoryMarshal.Write(vu.DataMem.AsSpan(((top + 17 + p) << 4), 16), Vector128.Create(0.5f));
+                MemoryMarshal.Write(vu.DataMem.AsSpan(((top + 33 + p) << 4), 16), Vector128.Create(1.0f));
+                MemoryMarshal.Write(vu.DataMem.AsSpan(((top + 49 + p) << 4), 16), Vector128.Create(128, 128, 128, 128));
+                MemoryMarshal.Write(vu.DataMem.AsSpan(((top + 65 + p * 2) << 4), 16), Vector128.Create(xs[p], 0f, 0f, 1f));
+                MemoryMarshal.Write(vu.DataMem.AsSpan(((top + 65 + p * 2 + 1) << 4), 16), Vector128.Create(xs[p], -1f, 0f, 1f));
+            }
+        }
+
+        SetupVuData(vuAot);
+        SetupVuData(vuDec);
+
+        const System.Reflection.BindingFlags AnyStatic =
+            System.Reflection.BindingFlags.Static | System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Public;
+        const System.Reflection.BindingFlags AnyInst =
+            System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Public;
+        var decType = typeof(Vu1Recompiler).Assembly.GetType("Castaway.GsRenderer.Vu1.Vu1DecodedExecutor", throwOnError: true)!;
+        object decExec = Activator.CreateInstance(decType, nonPublic: true)!;
+        var decExecute = decType.GetMethod("Execute", AnyInst, [typeof(Vu1State), typeof(ushort)])!;
+        var aotTryExecute = aotType.GetMethod("TryExecute", AnyStatic, [typeof(Vu1State), typeof(ushort), typeof(uint)])!;
+
+        List<byte[]> aotKicks = [], decKicks = [];
+        vuAot.OnXgKick = s => aotKicks.Add(s.ToArray());
+        vuDec.OnXgKick = s => decKicks.Add(s.ToArray());
+
+        // Execute 0x15E0 then 0x16F8
+        Assert.True((bool)aotTryExecute.Invoke(null, [vuAot, (ushort)0x15E0, regionMask])!);
+        decExecute.Invoke(decExec, [vuDec, (ushort)0x15E0]);
+        Assert.True((bool)aotTryExecute.Invoke(null, [vuAot, (ushort)0x16F8, regionMask])!);
+        decExecute.Invoke(decExec, [vuDec, (ushort)0x16F8]);
+
+        for (int i = 0; i < 32; i++)
+            Assert.Equal(vuDec.VF[i], vuAot.VF[i]);
+        for (int i = 0; i < 16; i++)
+            Assert.Equal(vuDec.VI[i], vuAot.VI[i]);
+        Assert.Equal(decKicks.Count, aotKicks.Count);
+        for (int k = 0; k < decKicks.Count; k++)
+            Assert.True(decKicks[k].AsSpan().SequenceEqual(aotKicks[k]), $"Kick {k} mismatch");
+        Assert.True(vuDec.DataMem.AsSpan().SequenceEqual(vuAot.DataMem));
+
+        // Also execute 0x1CE8 (second MSCNT pass used by Ovl2) and verify AOT == Decoded
+        Assert.True((bool)aotTryExecute.Invoke(null, [vuAot, (ushort)0x1CE8, regionMask])!);
+        decExecute.Invoke(decExec, [vuDec, (ushort)0x1CE8]);
+        Assert.Equal(decKicks.Count, aotKicks.Count);
+        for (int k = 0; k < decKicks.Count; k++)
+            Assert.True(decKicks[k].AsSpan().SequenceEqual(aotKicks[k]), $"Kick {k} (after 0x1CE8) mismatch");
+
+        // Verify distinct particle X coordinates in the emitted XGKICK packet (xs = [-2, 0, +2])
+        Assert.NotEmpty(aotKicks);
+        AssertDistinctQuadXCoords(aotKicks, expectedParticles: 3);
+    }
+
+    [Fact]
+    public void Ovl2_Vif1ParticlePacket_PreservesDistinctScreenX_AndSizes()
+    {
+        string elfPath = Ps2ElfReader.FindDefaultElfPath();
+        var reader = new Ps2ElfReader(elfPath);
+        byte[] raw = reader.GetRawBytes();
+        var vutext = reader.FindSection(".vutext")!;
+        uint fileOff = vutext.FileOffset + (0x0048CFA8u - vutext.VAddr);
+
+        using var pipeline = new GsGraphicsPipeline();
+        var prevKick = pipeline.Vu1.OnXgKick;
+        List<byte[]> kicks = [];
+        pipeline.Vu1.OnXgKick = s => { kicks.Add(s.ToArray()); prevKick?.Invoke(s); };
+
+        // Load Ovl2 via VIF1 MPG at 0x15E0 (0x2BC * 8) -> wait: 0x15E0 / 8 = 0x2BC; 2048 bytes = 256 insns (num=0)
+        using var ms = new MemoryStream();
+        using var bw = new BinaryWriter(ms);
+
+        // Upload Ovl2 (256 instructions = 2048 bytes -> MPG num=0 at addr=0x2BC)
+        bw.Write(MakeVifCode(0x4A, 0, 0x15E0 / 8));
+        bw.Write(raw, (int)fileOff, 2048);
+
+        // Setup BASE=0x049, OFFSET=0x049 (via 0x03 BASE, 0x02 OFFSET) and STCYCL WL=1, CL=1
+        bw.Write(MakeVifCode(0x03, 0, 0x0049)); // BASE
+        bw.Write(MakeVifCode(0x02, 0, 0x0049)); // OFFSET
+        bw.Write(MakeVifCode(0x01, 0, 0x0101)); // STCYCL WL=1, CL=1
+
+        // Screen matrix at dm[0x43..0x46] (FLG=0, addr=0x43, num=4, V4-32 = 0x6C)
+        bw.Write(MakeVifCode(0x6C, 4, 0x0043));
+        WriteVec4(bw, 500f, 0f, 0f, 0f);
+        WriteVec4(bw, 0f, 500f, 0f, 0f);
+        WriteVec4(bw, 0f, 0f, 1f, 1f);
+        WriteVec4(bw, 0f, 0f, 0f, 0f);
+
+        // Per-emitter header (FLG=0): world->view mat at 0x3A3..0x3A6 (4) + 12 constants 0x3A7..0x3B2
+        static void WriteVec4(BinaryWriter w, float x, float y, float z, float wVal)
+        {
+            w.Write(x); w.Write(y); w.Write(z); w.Write(wVal);
+        }
+        bw.Write(MakeVifCode(0x6C, 17, 0x03A3));
+        WriteVec4(bw, 1f, 0f, 0f, 0f);
+        WriteVec4(bw, 0f, 1f, 0f, 0f);
+        WriteVec4(bw, 0f, 0f, 1f, 0f);
+        WriteVec4(bw, 0f, 0f, 10f, 1f);
+        WriteVec4(bw, 2048f, 2048f, 1f, 0f);   // 0x3A7
+        WriteVec4(bw, 100f, 100f, 1f, 0f);     // 0x3A8
+        WriteVec4(bw, 1250f, 2048f, 1250.2f, 0f); // 0x3A9
+        WriteVec4(bw, 0.5f, 1f, 0f, 0f);       // 0x3AA
+        WriteVec4(bw, 1f, 1f, 0f, 0f);         // 0x3AB
+        WriteVec4(bw, 1f, 1f, 1f, 1f);         // 0x3AC
+        WriteVec4(bw, 0f, 0f, 0f, 0f);         // 0x3AD
+        WriteVec4(bw, 0f, 0f, 0f, 0f);         // 0x3AE
+        WriteVec4(bw, 0f, 0f, 2048f, 2048f);   // 0x3AF
+        WriteVec4(bw, 1f, 1f, 1f, 1f);         // 0x3B0
+        WriteVec4(bw, 0f, 0f, 0f, 0f);         // 0x3B1
+        WriteVec4(bw, 0f, -9.8f, 0f, 1f);      // 0x3B2
+        bw.Write(0x302A400000008010UL);        // 0x3B3 GIFTAG lo
+        bw.Write(0x0412UL);                    // 0x3B3 GIFTAG hi
+
+        // Also dm[TOP+99] = (1,1,1,1) -> absolute 0x49 + 99 = 0xAC
+        bw.Write(MakeVifCode(0x6C, 1, 0x00AC));
+        WriteVec4(bw, 1f, 1f, 1f, 1f);
+
+        // MSCALF 0x15E0 (0x15E0 / 8 = 0x2BC)
+        bw.Write(MakeVifCode(0x15, 0, 0x15E0 / 8));
+
+        // Exact 48-QW packet format from sub_003E9F48:
+        // 0x6E018000 (V4-8, FLG=1, num=1, addr=0): 4 bytes (Wait! in sub_003E9F48 4($v1) has start1, end1? Wait: V4-8 is 4 bytes -> 4x32 ints!)
+        bw.Write(0x6E018000u);
+        bw.Write((sbyte)0); bw.Write((sbyte)3); bw.Write((sbyte)0); bw.Write((sbyte)0);
+
+        // 0x60308001 (S-32, FLG=1, num=48, addr=1): 48 floats (t0..t15, size0..size15, rot0..rot15)
+        bw.Write(0x60308001u);
+        for (int i = 0; i < 16; i++) bw.Write(0.5f);
+        for (int i = 0; i < 16; i++) bw.Write(0.5f);
+        for (int i = 0; i < 16; i++) bw.Write(1.0f);
+
+        // 0x6C208041 (V4-32, FLG=1, num=32, addr=65): 32 vec4s (16 particles * pos+vel)
+        bw.Write(0x6C208041u);
+        float[] xs = [-2f, 0f, 2f];
+        for (int i = 0; i < 16; i++)
+        {
+            float px = i < 3 ? xs[i] : 0f;
+            WriteVec4(bw, px, 0f, 0f, 1f);
+            WriteVec4(bw, px, -1f, 0f, 1f);
+        }
+
+        // 0x6F10C031 (V4-5, USN=1, FLG=1, num=16, addr=49): 16 ushort RGBA5551
+        bw.Write(0x6F10C031u);
+        for (int i = 0; i < 16; i++) bw.Write((ushort)0xFFFF);
+
+        // 0x17000000 (MSCNT)
+        bw.Write(0x17000000u);
+
+        pipeline.Vif1.ProcessData(ms.ToArray());
+
+        Assert.NotEmpty(kicks);
+        AssertDistinctQuadXCoords(kicks, expectedParticles: 3);
+    }
+
+    [Fact]
+    public void Ovl2_MultiPacketMscnt_LoopsBackTo16F8_OnEndDelaySlotBranch_WithoutEntering1CE8()
+    {
+        string elfPath = Ps2ElfReader.FindDefaultElfPath();
+        var reader = new Ps2ElfReader(elfPath);
+        byte[] raw = reader.GetRawBytes();
+        var vutext = reader.FindSection(".vutext")!;
+        uint fileOff = vutext.FileOffset + (0x0048CFA8u - vutext.VAddr);
+
+        using var pipeline = new GsGraphicsPipeline();
+        var prevKick = pipeline.Vu1.OnXgKick;
+        List<byte[]> kicks = [];
+        pipeline.Vu1.OnXgKick = s => { kicks.Add(s.ToArray()); prevKick?.Invoke(s); };
+
+        static void WriteVec4(BinaryWriter w, float x, float y, float z, float wVal)
+        {
+            w.Write(x); w.Write(y); w.Write(z); w.Write(wVal);
+        }
+
+        // First packet initializes Ovl2 (MSCALF 0x15E0) + sends packet 0 + MSCNT.
+        using (var ms = new MemoryStream())
+        using (var bw = new BinaryWriter(ms))
+        {
+            bw.Write(MakeVifCode(0x4A, 0, 0x15E0 / 8));
+            bw.Write(raw, (int)fileOff, 2048);
+            bw.Write(MakeVifCode(0x03, 0, 0x0049)); // BASE
+            bw.Write(MakeVifCode(0x02, 0, 0x0049)); // OFFSET
+            bw.Write(MakeVifCode(0x01, 0, 0x0101)); // STCYCL WL=1, CL=1
+
+            bw.Write(MakeVifCode(0x6C, 4, 0x0043));
+            WriteVec4(bw, 500f, 0f, 0f, 0f);
+            WriteVec4(bw, 0f, 500f, 0f, 0f);
+            WriteVec4(bw, 0f, 0f, 1f, 1f);
+            WriteVec4(bw, 0f, 0f, 0f, 0f);
+
+            bw.Write(MakeVifCode(0x6C, 17, 0x03A3));
+            WriteVec4(bw, 1f, 0f, 0f, 0f);
+            WriteVec4(bw, 0f, 1f, 0f, 0f);
+            WriteVec4(bw, 0f, 0f, 1f, 0f);
+            WriteVec4(bw, 0f, 0f, 10f, 1f);
+            WriteVec4(bw, 2048f, 2048f, 1f, 0f);
+            WriteVec4(bw, 100f, 100f, 1f, 0f);
+            WriteVec4(bw, 1250f, 2048f, 1250.2f, 0f);
+            WriteVec4(bw, 0.5f, 1f, 0f, 0f);
+            WriteVec4(bw, 1f, 1f, 0f, 0f);
+            WriteVec4(bw, 1f, 1f, 1f, 1f);
+            WriteVec4(bw, 0f, 0f, 0f, 0f);
+            WriteVec4(bw, 0f, 0f, 0f, 0f);
+            WriteVec4(bw, 0f, 0f, 2048f, 2048f);
+            WriteVec4(bw, 1f, 1f, 1f, 1f);
+            WriteVec4(bw, 0f, 0f, 0f, 0f);
+            WriteVec4(bw, 0f, -9.8f, 0f, 1f);
+            bw.Write(0x302A400000008010UL);
+            bw.Write(0x0412UL);
+
+            bw.Write(MakeVifCode(0x6C, 1, 0x00AC));
+            WriteVec4(bw, 1f, 1f, 1f, 1f);
+            bw.Write(MakeVifCode(0x15, 0, 0x15E0 / 8)); // MSCALF 0x15E0
+            pipeline.Vif1.ProcessData(ms.ToArray());
+        }
+
+        // Before [923] [E] NOP | B 0x16F8 fix, MSCNT #1 exited with Tpc = 0x1CE8 instead of 0x16F8,
+        // causing MSCNT #2/#3 to enter mid-loop at 0x1CE8 and emit garbage quads.
+        float[][] packetXs =
+        [
+            [-2f, 0f, 2f],
+            [-3f, -1f, 1.5f],
+            [-1.5f, 0.5f, 3f]
+        ];
+
+        for (int p = 0; p < packetXs.Length; p++)
+        {
+            int kicksBefore = kicks.Count;
+            using var ms = new MemoryStream();
+            using var bw = new BinaryWriter(ms);
+
+            bw.Write(0x6E018000u);
+            bw.Write((sbyte)0); bw.Write((sbyte)3); bw.Write((sbyte)0); bw.Write((sbyte)0);
+
+            bw.Write(0x60308001u);
+            for (int i = 0; i < 16; i++) bw.Write(0.5f);
+            for (int i = 0; i < 16; i++) bw.Write(0.5f);
+            for (int i = 0; i < 16; i++) bw.Write(1.0f);
+
+            bw.Write(0x6C208041u);
+            for (int i = 0; i < 16; i++)
+            {
+                float px = i < 3 ? packetXs[p][i] : 0f;
+                WriteVec4(bw, px, 0f, 0f, 1f);
+                WriteVec4(bw, px, -1f, 0f, 1f);
+            }
+
+            bw.Write(0x6F10C031u);
+            for (int i = 0; i < 16; i++) bw.Write((ushort)0xFFFF);
+
+            bw.Write(0x17000000u); // MSCNT
+            pipeline.Vif1.ProcessData(ms.ToArray());
+
+            Assert.Equal((ushort)0x16F8, pipeline.Vu1.Tpc);
+            Assert.Equal(kicksBefore + 1, kicks.Count);
+            AssertDistinctQuadXCoords([kicks[^1]], expectedParticles: 3);
+        }
+    }
+
+    private static void AssertDistinctQuadXCoords(List<byte[]> kicks, int expectedParticles)
+    {
+        var xs = new List<float>();
+        var ys = new List<float>();
+        var summary = new System.Text.StringBuilder();
+        foreach (byte[] kick in kicks)
+        {
+            if (kick.Length < 16) continue;
+            ulong tagLo = BinaryPrimitives.ReadUInt64LittleEndian(kick.AsSpan(0, 8));
+            ulong tagHi = BinaryPrimitives.ReadUInt64LittleEndian(kick.AsSpan(8, 8));
+            int nloop = (int)(tagLo & 0x7FFFu);
+            int flg = (int)((tagLo >> 58) & 0x3u);
+            int nreg = (int)((tagLo >> 60) & 0xFu);
+            if (nreg == 0) nreg = 16;
+            summary.Append($"[len={kick.Length},nloop={nloop},flg={flg},nreg={nreg},regs=0x{tagHi:X}] ");
+
+            int off = 16;
+            for (int loop = 0; loop < nloop; loop++)
+            {
+                if (flg == 0) // PACKED
+                {
+                    for (int r = 0; r < nreg && off + 16 <= kick.Length; r++, off += 16)
+                    {
+                        byte reg = (byte)((tagHi >> (r * 4)) & 0xFu);
+                        if (reg == 0x0E) // A+D
+                        {
+                            byte adReg = kick[off + 8];
+                            if (adReg == 0x04 || adReg == 0x05)
+                            {
+                                xs.Add(BinaryPrimitives.ReadUInt16LittleEndian(kick.AsSpan(off, 2)) / 16.0f);
+                                ys.Add(BinaryPrimitives.ReadUInt16LittleEndian(kick.AsSpan(off + 4, 2)) / 16.0f);
+                            }
+                        }
+                        else if (reg == 0x04 || reg == 0x05) // XYZF2 / XYZ2
+                        {
+                            xs.Add(BinaryPrimitives.ReadUInt16LittleEndian(kick.AsSpan(off, 2)) / 16.0f);
+                            ys.Add(BinaryPrimitives.ReadUInt16LittleEndian(kick.AsSpan(off + 4, 2)) / 16.0f);
+                        }
+                    }
+                }
+                else if (flg == 1) // REGLIST (64-bit per reg)
+                {
+                    for (int r = 0; r < nreg && off + 8 <= kick.Length; r++, off += 8)
+                    {
+                        byte reg = (byte)((tagHi >> (r * 4)) & 0xFu);
+                        if (reg == 0x04 || reg == 0x05)
+                        {
+                            xs.Add(BinaryPrimitives.ReadUInt16LittleEndian(kick.AsSpan(off, 2)) / 16.0f);
+                            ys.Add(BinaryPrimitives.ReadUInt16LittleEndian(kick.AsSpan(off + 2, 2)) / 16.0f);
+                        }
+                    }
+                }
+            }
+        }
+        Assert.True(xs.Count >= expectedParticles * 2, $"Too few XYZ vertices ({xs.Count}): {summary}");
+        float minX = xs.Min();
+        float maxX = xs.Max();
+        Assert.True(maxX - minX > 20f, $"Particle quads collapsed horizontally! minX={minX}, maxX={maxX}, xs=[{string.Join(", ", xs.Take(16))}], info={summary}");
+    }
+
+    [Fact]
+    public void EeFastParticle_RealSpawnCode_Produces3DSpread_AcrossEmitterShapes()
+    {
+        Castaway.Generated.RecompiledFunctions.RegisterAll();
+        byte[] ramManaged = new byte[CpuContext.RamSize];
+        byte[] spManaged = new byte[CpuContext.ScratchpadSize];
+
+        fixed (byte* ram = ramManaged)
+        fixed (byte* sp = spManaged)
+        {
+            CpuContext ctx = default;
+            ctx.Initialize(sp);
+            using var runtime = new CastawayRuntime();
+            runtime.Install(&ctx, ram, installHleHooks: true);
+
+            string elfPath = Ps2ElfReader.FindDefaultElfPath();
+            CastawayRuntime.LoadElfSegmentsToRam(elfPath, ram);
+
+            // Init RNG: sub_003E9338(seed) + sub_003E92B8()
+            ctx.SetU64(4, 0x12345678UL);
+            RuntimeDispatcher.Call(0x003E9338u, &ctx, ram);
+            RuntimeDispatcher.Call(0x003E92B8u, &ctx, ram);
+
+            // Allocate guest scratch structs at 0x01200000..
+            uint typeAddr = 0x01200000u;
+            uint emitAddr = 0x01201000u;
+            uint matAddr = 0x01202000u;
+            uint partAddr = 0x01203000u;
+
+            // Rotated+translated 4x4 matrix at matAddr and store pointer at 0x0057B500
+            MemoryMarshal.Write(new Span<byte>(ram + matAddr + 0, 16), Vector128.Create(0.8f, 0f, 0.6f, 0f));
+            MemoryMarshal.Write(new Span<byte>(ram + matAddr + 16, 16), Vector128.Create(0f, 1f, 0f, 0f));
+            MemoryMarshal.Write(new Span<byte>(ram + matAddr + 32, 16), Vector128.Create(-0.6f, 0f, 0.8f, 0f));
+            MemoryMarshal.Write(new Span<byte>(ram + matAddr + 48, 16), Vector128.Create(10f, 20f, 30f, 1f));
+            Ps2Memory.Write32(&ctx, ram, 0x0057B500u, matAddr);
+
+            static void WriteF32(CpuContext* c, byte* r, uint addr, float val)
+                => Ps2Memory.Write32(c, r, addr, BitConverter.SingleToUInt32Bits(val));
+            static float ReadF32(CpuContext* c, byte* r, uint addr)
+                => BitConverter.UInt32BitsToSingle(Ps2Memory.Read32(c, r, addr));
+
+            // Emitter fields
+            WriteF32(&ctx, ram, emitAddr + 392u, 0.25f);
+            Ps2Memory.Write32(&ctx, ram, emitAddr + 400u, typeAddr);
+
+            // Run configurations of emitterType flags
+            (string name, uint f1, uint f2)[] cases =
+            [
+                ("ConeSphere", 0x0038u, 0x0040u),
+                ("AsinSphere", 0x0038u, 0x8040u),
+                ("BoxPlusCone", 0x0238u, 0x0040u),
+                ("MatrixBoxCone", 0x4638u, 0x0040u),
+                ("BoxDivSphere", 0x00010638u, 0x0040u),
+                ("Ring2D", 0x0000u, 0x0002u),
+            ];
+
+            foreach (var (name, f1, f2) in cases)
+            {
+                new Span<byte>(ram + typeAddr, 256).Clear();
+                WriteF32(&ctx, ram, typeAddr + 24u, 2.0f);         // speed min
+                WriteF32(&ctx, ram, typeAddr + 28u, 1.0f);         // speed range
+                WriteF32(&ctx, ram, typeAddr + 32u, 1.5f);         // ring radius
+                WriteF32(&ctx, ram, typeAddr + 36u, 2.0f);         // radius range
+                WriteF32(&ctx, ram, typeAddr + 40u, 0.0f);         // theta min
+                WriteF32(&ctx, ram, typeAddr + 44u, 1.5707964f);   // theta range (pi/2 so sin(pi/2)-sin(0)=1)
+                Ps2Memory.Write32(&ctx, ram, typeAddr + 72u, f1);  // flags1
+                Ps2Memory.Write32(&ctx, ram, typeAddr + 76u, f2);  // flags2
+                WriteF32(&ctx, ram, typeAddr + 80u, 1.5f);         // box x
+                WriteF32(&ctx, ram, typeAddr + 84u, 1.5f);         // box y
+                WriteF32(&ctx, ram, typeAddr + 88u, 1.5f);         // box z
+                WriteF32(&ctx, ram, typeAddr + 108u, 1.5f);        // phi cone
+
+                var xs = new List<float>();
+                var ys = new List<float>();
+                var zs = new List<float>();
+                for (int i = 0; i < 16; i++)
+                {
+                    new Span<byte>(ram + partAddr, 32).Clear();
+                    ctx.SetU64(4, emitAddr);
+                    ctx.SetU64(5, partAddr);
+                    ctx.F[12] = i / 16.0f;
+                    ctx.F[13] = 1.0f / 30.0f;
+                    RuntimeDispatcher.Call(0x003E62A0u, &ctx, ram);
+                    xs.Add(ReadF32(&ctx, ram, partAddr + 0u));
+                    ys.Add(ReadF32(&ctx, ram, partAddr + 4u));
+                    zs.Add(ReadF32(&ctx, ram, partAddr + 8u));
+                }
+
+                float spanX = xs.Max() - xs.Min();
+                float spanY = ys.Max() - ys.Min();
+                float spanZ = zs.Max() - zs.Min();
+                Assert.True(spanX > 0.5f && xs.All(float.IsFinite), $"{name} collapsed/NaN X: spanX={spanX}, xs=[{string.Join(", ", xs.Take(6))}]");
+                Assert.True(spanY > 0.5f && ys.All(float.IsFinite), $"{name} collapsed/NaN Y: spanY={spanY}, ys=[{string.Join(", ", ys.Take(6))}]");
+                if (name != "Ring2D")
+                    Assert.True(spanZ > 0.2f && zs.All(float.IsFinite), $"{name} collapsed/NaN Z: spanZ={spanZ}, zs=[{string.Join(", ", zs.Take(6))}]");
+            }
+        }
+    }
+
+    [Fact]
+    public void Cop0Count_SeedsFastParticleRng_AndPortalEmitterProducesHorizontalSpread()
+    {
+        Castaway.Generated.RecompiledFunctions.RegisterAll();
+        byte[] ramManaged = new byte[CpuContext.RamSize];
+        byte[] spManaged = new byte[CpuContext.ScratchpadSize];
+
+        fixed (byte* ram = ramManaged)
+        fixed (byte* sp = spManaged)
+        {
+            CpuContext ctx = default;
+            ctx.Initialize(sp);
+            using var runtime = new CastawayRuntime();
+            runtime.Install(&ctx, ram, installHleHooks: true);
+
+            string elfPath = Ps2ElfReader.FindDefaultElfPath();
+            CastawayRuntime.LoadElfSegmentsToRam(elfPath, ram);
+
+            // Real boot sequence calls 0x00431380 (mfc0 $v0, $c0_9) -> sub_003E9338(seed) -> sub_003E92B8().
+            RuntimeDispatcher.Call(0x00431380u, &ctx, ram);
+            uint seed = ctx.GetU32(2);
+            Assert.NotEqual(0u, seed);
+
+            ctx.SetU64(4, seed);
+            RuntimeDispatcher.Call(0x003E9338u, &ctx, ram);
+            RuntimeDispatcher.Call(0x003E92B8u, &ctx, ram);
+
+            uint nonZeroEntries = 0;
+            for (uint i = 0; i < 128; i++)
+            {
+                if (Ps2Memory.Read32(&ctx, ram, 0x0057B300u + i * 4u) != 0u)
+                    nonZeroEntries++;
+            }
+            Assert.True(nonZeroEntries > 100, $"Expected seeded RNG table at 0x0057B300, got only {nonZeroEntries}/128 non-zero");
+
+            uint typeAddr = 0x01204000u;
+            uint emitAddr = 0x01205000u;
+            uint partAddr = 0x01206000u;
+            static void WriteF32(CpuContext* c, byte* r, uint addr, float val)
+                => Ps2Memory.Write32(c, r, addr, BitConverter.SingleToUInt32Bits(val));
+            static float ReadF32(CpuContext* c, byte* r, uint addr)
+                => BitConverter.UInt32BitsToSingle(Ps2Memory.Read32(c, r, addr));
+
+            new Span<byte>(ram + typeAddr, 256).Clear();
+            WriteF32(&ctx, ram, typeAddr + 24u, -1.0f);       // spd min
+            WriteF32(&ctx, ram, typeAddr + 28u, 0.0f);        // spd range
+            WriteF32(&ctx, ram, typeAddr + 32u, 0.0f);        // radius
+            WriteF32(&ctx, ram, typeAddr + 36u, 0.0f);        // radius range
+            WriteF32(&ctx, ram, typeAddr + 40u, 1.5707964f);  // theta min
+            WriteF32(&ctx, ram, typeAddr + 44u, 0.0872665f);  // theta range
+            Ps2Memory.Write32(&ctx, ram, typeAddr + 72u, 0x042402AFu); // portal flags1
+            Ps2Memory.Write32(&ctx, ram, typeAddr + 76u, 0xC0000040u); // portal flags2
+            WriteF32(&ctx, ram, typeAddr + 80u, 0.4f);        // box x
+            WriteF32(&ctx, ram, typeAddr + 84u, 0.4f);        // box y
+            WriteF32(&ctx, ram, typeAddr + 88u, 0.0f);        // box z
+            WriteF32(&ctx, ram, typeAddr + 108u, 6.2831855f); // phi cone
+
+            Ps2Memory.Write32(&ctx, ram, emitAddr + 400u, typeAddr);
+
+            var xs = new List<float>();
+            var ys = new List<float>();
+            for (int i = 0; i < 16; i++)
+            {
+                new Span<byte>(ram + partAddr, 32).Clear();
+                ctx.SetU64(4, emitAddr);
+                ctx.SetU64(5, partAddr);
+                ctx.F[12] = i / 16.0f;
+                ctx.F[13] = 1.0f / 30.0f;
+                RuntimeDispatcher.Call(0x003E62A0u, &ctx, ram);
+                xs.Add(ReadF32(&ctx, ram, partAddr + 0u));
+                ys.Add(ReadF32(&ctx, ram, partAddr + 4u));
+            }
+
+            float spanX = xs.Max() - xs.Min();
+            float spanY = ys.Max() - ys.Min();
+            Assert.True(spanX > 0.25f, $"Portal emitter X still collapsed: spanX={spanX}, xs=[{string.Join(", ", xs.Take(6))}]");
+            Assert.True(spanY > 0.25f, $"Portal emitter Y still collapsed: spanY={spanY}, ys=[{string.Join(", ", ys.Take(6))}]");
+        }
+    }
+
+    [Fact]
+    public void EeFastParticle_FullSpawnAndTick_PopulatesValidPacket_WithSpreadAndBoundedSizes()
+    {
+        Castaway.Generated.RecompiledFunctions.RegisterAll();
+        byte[] ramManaged = new byte[CpuContext.RamSize];
+        byte[] spManaged = new byte[CpuContext.ScratchpadSize];
+
+        fixed (byte* ram = ramManaged)
+        fixed (byte* sp = spManaged)
+        {
+            CpuContext ctx = default;
+            ctx.Initialize(sp);
+            using var runtime = new CastawayRuntime();
+            runtime.Install(&ctx, ram, installHleHooks: true);
+
+            string elfPath = Ps2ElfReader.FindDefaultElfPath();
+            CastawayRuntime.LoadElfSegmentsToRam(elfPath, ram);
+
+            ctx.SetU64(4, 0x12345678UL);
+            RuntimeDispatcher.Call(0x003E9338u, &ctx, ram);
+            RuntimeDispatcher.Call(0x003E92B8u, &ctx, ram);
+
+            static void WriteF32(CpuContext* c, byte* r, uint addr, float val)
+                => Ps2Memory.Write32(c, r, addr, BitConverter.SingleToUInt32Bits(val));
+            static float ReadF32(CpuContext* c, byte* r, uint addr)
+                => BitConverter.UInt32BitsToSingle(Ps2Memory.Read32(c, r, addr));
+            static void WriteIdentity(byte* r, uint addr)
+            {
+                for (int i = 0; i < 4; i++)
+                    MemoryMarshal.Write(new Span<byte>(r + addr + i * 16, 16), Vector128.Create(i == 0 ? 1f : 0f, i == 1 ? 1f : 0f, i == 2 ? 1f : 0f, i == 3 ? 1f : 0f));
+            }
+
+            uint typeAddr = 0x01210000u;
+            uint emitAddr = 0x01211000u;
+            uint hdrAddr = 0x01212000u;
+            uint pktPtrArr = 0x01213000u;
+            uint pktAddr = 0x01214000u;
+            uint rgbaAddr = 0x01215000u;
+
+            new Span<byte>(ram + typeAddr, 0x6000).Clear();
+            WriteF32(&ctx, ram, typeAddr + 0u, 30.0f);       // emit rate
+            WriteF32(&ctx, ram, typeAddr + 4u, 0.0f);        // rot speed
+            WriteF32(&ctx, ram, typeAddr + 8u, 0.5f);        // size min
+            WriteF32(&ctx, ram, typeAddr + 12u, 0.25f);      // size range
+            WriteF32(&ctx, ram, typeAddr + 20u, 1.0f);       // lifetime
+            WriteF32(&ctx, ram, typeAddr + 24u, 2.0f);       // speed min
+            WriteF32(&ctx, ram, typeAddr + 28u, 1.0f);       // speed range
+            WriteF32(&ctx, ram, typeAddr + 32u, 1.5f);       // ring radius
+            WriteF32(&ctx, ram, typeAddr + 36u, 2.0f);       // radius range
+            WriteF32(&ctx, ram, typeAddr + 40u, 0.0f);       // theta min
+            WriteF32(&ctx, ram, typeAddr + 44u, 1.5707964f); // theta range
+            Ps2Memory.Write32(&ctx, ram, typeAddr + 72u, 0x0038u); // flags1: rand speed + sqrt radius
+            Ps2Memory.Write32(&ctx, ram, typeAddr + 76u, 0x8040u); // flags2: asin sphere + rand theta
+            WriteF32(&ctx, ram, typeAddr + 108u, 1.5f);      // phi cone
+
+            WriteIdentity(ram, emitAddr + 80u);  // local orient/mat
+            WriteIdentity(ram, emitAddr + 144u); // world mat
+            WriteIdentity(ram, emitAddr + 256u); // parent mat
+            WriteF32(&ctx, ram, emitAddr + 340u, 1.0f);      // opacity > 0.005f
+            WriteF32(&ctx, ram, emitAddr + 344u, 1.0f);      // age/scale
+            WriteF32(&ctx, ram, emitAddr + 348u, 1.0f);      // remain
+            Ps2Memory.Write16(&ctx, ram, emitAddr + 364u, 1);  // packetCount
+            Ps2Memory.Write16(&ctx, ram, emitAddr + 366u, 16); // capacity
+            WriteF32(&ctx, ram, emitAddr + 392u, 0.25f);     // inner radius
+            Ps2Memory.Write32(&ctx, ram, emitAddr + 400u, typeAddr);
+            Ps2Memory.Write32(&ctx, ram, emitAddr + 404u, hdrAddr);
+            Ps2Memory.Write32(&ctx, ram, emitAddr + 416u, pktPtrArr);
+            Ps2Memory.Write32(&ctx, ram, pktPtrArr, pktAddr);
+
+            WriteF32(&ctx, ram, hdrAddr + 44u, 0.0f);
+            WriteF32(&ctx, ram, hdrAddr + 116u, 0.5f);
+            WriteF32(&ctx, ram, rgbaAddr + 0u, 1f);
+            WriteF32(&ctx, ram, rgbaAddr + 4u, 1f);
+            WriteF32(&ctx, ram, rgbaAddr + 8u, 1f);
+            WriteF32(&ctx, ram, rgbaAddr + 12u, 1f);
+
+            // Init packet & header VIF tags via real SLUS_216.64 functions
+            ctx.SetU64(4, emitAddr);
+            RuntimeDispatcher.Call(0x003E9F48u, &ctx, ram);
+            ctx.SetU64(4, hdrAddr);
+            ctx.SetU64(5, 0x8040UL);
+            RuntimeDispatcher.Call(0x003E9ED0u, &ctx, ram);
+
+            // Spawn 16 particles via sub_003E4F78
+            ctx.SetU64(4, emitAddr);
+            ctx.SetU64(5, 16UL);
+            ctx.SetU64(6, rgbaAddr);
+            ctx.F[12] = 0.0f;
+            RuntimeDispatcher.Call(0x003E4F78u, &ctx, ram);
+            Assert.Equal(16, ctx.GetS32(2));
+
+            // Tick emitter once via sub_003E5C88(emitAddr, dt=0.05f)
+            ctx.SetU64(4, emitAddr);
+            ctx.SetU64(5, 0UL);
+            ctx.F[12] = 0.05f;
+            RuntimeDispatcher.Call(0x003E5C88u, &ctx, ram);
+
+            // Inspect spawned packet at pktAddr:
+            // offset 12..75: ages[16], 76..139: sizes[16], 208..719: pos+vel[16]
+            var xs = new List<float>();
+            var ys = new List<float>();
+            var zs = new List<float>();
+            var sizes = new List<float>();
+            for (int i = 0; i < 16; i++)
+            {
+                sizes.Add(ReadF32(&ctx, ram, pktAddr + 76u + (uint)(i * 4)));
+                xs.Add(ReadF32(&ctx, ram, pktAddr + 208u + (uint)(i * 32) + 0u));
+                ys.Add(ReadF32(&ctx, ram, pktAddr + 208u + (uint)(i * 32) + 4u));
+                zs.Add(ReadF32(&ctx, ram, pktAddr + 208u + (uint)(i * 32) + 8u));
+            }
+            Assert.True(xs.Max() - xs.Min() > 0.5f, $"Spawned X collapsed: xs=[{string.Join(", ", xs.Take(6))}]");
+            Assert.True(ys.Max() - ys.Min() > 0.5f, $"Spawned Y collapsed: ys=[{string.Join(", ", ys.Take(6))}]");
+            Assert.True(zs.Max() - zs.Min() > 0.2f, $"Spawned Z collapsed: zs=[{string.Join(", ", zs.Take(6))}]");
+            Assert.True(sizes.All(s => float.IsFinite(s) && s >= 0.49f && s <= 0.8f), $"Bad sizes: [{string.Join(", ", sizes.Take(6))}]");
+
+            // Now run real sub_003E8850 (emitter DMA/VIF1 packet builder) -> DmaController -> Vif1 -> Ovl2 -> GS!
+            using var pipeline = new GsGraphicsPipeline();
+            List<byte[]> kicks = [];
+            var prevKick = pipeline.Vu1.OnXgKick;
+            pipeline.Vu1.OnXgKick = s => { kicks.Add(s.ToArray()); prevKick?.Invoke(s); };
+            runtime.Dma.OnVif1Data = d => pipeline.Vif1.ProcessData(d);
+
+            // Preload Ovl2 into VU1 MicroMem and view->screen matrix at dm[0x43..0x46]
+            var vutext = new Ps2ElfReader(elfPath).FindSection(".vutext")!;
+            byte[] raw = File.ReadAllBytes(elfPath);
+            uint fileOff = vutext.FileOffset + (0x0048CFA8u - vutext.VAddr);
+            using (var ms = new MemoryStream())
+            using (var bw = new BinaryWriter(ms))
+            {
+                bw.Write(MakeVifCode(0x4A, 0, 0x15E0 / 8));
+                bw.Write(raw, (int)fileOff, 2048);
+                bw.Write(MakeVifCode(0x01, 0, 0x0101));
+                bw.Write(MakeVifCode(0x6C, 4, 0x0043));
+                bw.Write(500f); bw.Write(0f); bw.Write(0f); bw.Write(0f);
+                bw.Write(0f); bw.Write(500f); bw.Write(0f); bw.Write(0f);
+                bw.Write(0f); bw.Write(0f); bw.Write(1f); bw.Write(1f);
+                bw.Write(0f); bw.Write(0f); bw.Write(0f); bw.Write(0f);
+                pipeline.Vif1.ProcessData(ms.ToArray());
+            }
+
+            // Setup emitter matrix shifted +10 in Z so particles are in front of camera
+            WriteF32(&ctx, ram, emitAddr + 144u + 56u, 10.0f);
+            Ps2Memory.Write32(&ctx, ram, 0x00594FE8u, 640u);
+            Ps2Memory.Write32(&ctx, ram, 0x00594FECu, 480u);
+            RuntimeDispatcher.Call(0x003E9EB0u, &ctx, ram);
+
+            // Mock renderCtx (0x01216000) & rwDevice (0x01217000) & texStruct (0x01218000) + stub jr $ra; nop at 0x00480000
+            uint renderCtx = 0x01216000u;
+            uint rwDev = 0x01217000u;
+            uint texObj = 0x01218000u;
+            uint stubPc = 0x01219000u;
+            RuntimeDispatcher.RegisterHook(stubPc, (c, r) => { });
+            Ps2Memory.Write32(&ctx, ram, renderCtx + 96u, rwDev);
+            Ps2Memory.Write32(&ctx, ram, renderCtx + 1568u, 0x70000000u);
+            Ps2Memory.Write32(&ctx, ram, renderCtx + 1572u, 0x70000000u);
+            Ps2Memory.Write32(&ctx, ram, renderCtx + 1576u, 16368u);
+            Ps2Memory.Write32(&ctx, ram, renderCtx + 1580u, 1u);
+            Ps2Memory.Write16(&ctx, ram, rwDev + 296u, 0);
+            Ps2Memory.Write32(&ctx, ram, rwDev + 300u, stubPc);
+            Ps2Memory.Write16(&ctx, ram, rwDev + 528u, 0);
+            Ps2Memory.Write32(&ctx, ram, rwDev + 532u, stubPc);
+            Ps2Memory.Write32(&ctx, ram, emitAddr + 408u, texObj);
+
+            ctx.SetU64(4, emitAddr);
+            ctx.SetU64(5, renderCtx);
+            RuntimeDispatcher.Call(0x003E8850u, &ctx, ram);
+
+            // Terminate Scratchpad DMA chain at curPtr with DMA end (0x70000000) & run VIF1 DMA Ch1 (Chain + TTE)
+            uint curSpr = Ps2Memory.Read32(&ctx, ram, renderCtx + 1572u);
+            Assert.True(curSpr > 0x70000000u && curSpr < 0x70004000u, $"Unexpected SPR ptr 0x{curSpr:X8}");
+            Ps2Memory.Write64(&ctx, ram, curSpr, 0x70000000UL);
+            Ps2Memory.Write64(&ctx, ram, curSpr + 8u, 0UL);
+            runtime.Dma.WriteChannelRegister(&ctx, ram, 1, 0x20u, 0u); // D1_QWC = 0
+            runtime.Dma.WriteChannelRegister(&ctx, ram, 1, 0x30u, 0x70000000u); // D1_TADR
+            runtime.Dma.WriteChannelRegister(&ctx, ram, 1, 0x00u, 0x00000145u); // D1_CHCR: DIR=1, MODE=Chain, TTE=1, STR=1
+
+            Assert.NotEmpty(kicks);
+            AssertDistinctQuadXCoords(kicks, expectedParticles: 16);
+        }
+    }
+
+    [Fact]
+    public void Ovl4_And_Base_AotMatchesDecoded_AcrossAllLightingAndClippingFlags()
+    {
+        string elfPath = Ps2ElfReader.FindDefaultElfPath();
+        var elf = new Ps2ElfReader(elfPath);
+        var vutext = elf.FindSection(".vutext");
+        Assert.NotNull(vutext);
+
+        byte[] raw = File.ReadAllBytes(elfPath);
+        int start = (int)vutext!.FileOffset;
+        int end = Math.Min(raw.Length, start + (int)vutext.Size) - 8;
+
+        // Extract Base0/Base1 and Ovl4 MPG regions from .vutext
+        var coalesced = new List<(int Addr, List<byte> Bytes)>();
+        for (int i = start; i <= end; i += 4)
+        {
+            uint vifCode = BinaryPrimitives.ReadUInt32LittleEndian(raw.AsSpan(i, 4));
+            byte cmd = (byte)(vifCode >> 24);
+            byte num = (byte)(vifCode >> 16);
+            ushort addr = (ushort)(vifCode & 0xFFFF);
+            if ((cmd & 0x7F) != 0x4A || addr >= 0x0800) continue;
+            int insnCount = num == 0 ? 256 : num;
+            int mpgBytes = insnCount * 8;
+            if (i + 4 + mpgBytes > start + (int)vutext.Size) continue;
+            int byteAddr = addr * 8;
+            if (coalesced.Count > 0 && coalesced[^1].Addr + coalesced[^1].Bytes.Count == byteAddr)
+                coalesced[^1].Bytes.AddRange(raw.AsSpan(i + 4, mpgBytes).ToArray());
+            else
+                coalesced.Add((byteAddr, new List<byte>(raw.AsSpan(i + 4, mpgBytes).ToArray())));
+            i += 4 + mpgBytes - 4;
+        }
+
+        byte[] microMem = new byte[Vu1State.MicroMemSize];
+        // Load all Base regions (Addr < 0x15E0) and the last overlay (Ovl4, which contains 0x15E8 & 0x29A8)
+        int ovlCount = 0;
+        foreach (var reg in coalesced)
+        {
+            if (reg.Addr < 0x15E0)
+                Buffer.BlockCopy(reg.Bytes.ToArray(), 0, microMem, reg.Addr, reg.Bytes.Count);
+            else
+            {
+                ovlCount++;
+                if (ovlCount == 4)
+                    Buffer.BlockCopy(reg.Bytes.ToArray(), 0, microMem, reg.Addr, reg.Bytes.Count);
+            }
+        }
+
+        var aotCompiler = new Vu1Recompiler();
+        var decCompiler = new Vu1Recompiler();
+
+        static void WriteQw(byte[] dm, int q, float x, float y, float z, float w)
+        {
+            int o = (q & 0x3FF) << 4;
+            BinaryPrimitives.WriteSingleLittleEndian(dm.AsSpan(o + 0, 4), x);
+            BinaryPrimitives.WriteSingleLittleEndian(dm.AsSpan(o + 4, 4), y);
+            BinaryPrimitives.WriteSingleLittleEndian(dm.AsSpan(o + 8, 4), z);
+            BinaryPrimitives.WriteSingleLittleEndian(dm.AsSpan(o + 12, 4), w);
+        }
+
+        static void WriteQwInt(byte[] dm, int q, int x, int y, int z, int w)
+        {
+            int o = (q & 0x3FF) << 4;
+            BinaryPrimitives.WriteInt32LittleEndian(dm.AsSpan(o + 0, 4), x);
+            BinaryPrimitives.WriteInt32LittleEndian(dm.AsSpan(o + 4, 4), y);
+            BinaryPrimitives.WriteInt32LittleEndian(dm.AsSpan(o + 8, 4), z);
+            BinaryPrimitives.WriteInt32LittleEndian(dm.AsSpan(o + 12, 4), w);
+        }
+
+        ushort[] testFlags = [0x0000, 0x0008, 0x0408, 0x0028, 0x0088, 0x0128, 0x0428, 0x4000, 0x4400];
+        foreach (ushort flag in testFlags)
+        {
+            var aot = new Vu1State();
+            var dec = new Vu1State();
+            Buffer.BlockCopy(microMem, 0, aot.MicroMem, 0, microMem.Length);
+            Buffer.BlockCopy(microMem, 0, dec.MicroMem, 0, microMem.Length);
+
+            var rng = new Random(12345 + flag);
+            for (int r = 1; r < 32; r++)
+            {
+                var v = Vector128.Create(
+                    (float)(rng.NextDouble() * 4.0 - 2.0),
+                    (float)(rng.NextDouble() * 4.0 - 2.0),
+                    (float)(rng.NextDouble() * 4.0 - 2.0),
+                    (float)(rng.NextDouble() * 4.0 - 2.0));
+                aot.VF[r] = dec.VF[r] = v;
+            }
+            aot.ACC = dec.ACC = Vector128.Create(1.5f, -2.5f, 3.25f, 0.75f);
+            aot.Top = dec.Top = 0x50;
+
+            byte[] dm = aot.DataMem;
+            // GIF tags / constants
+            WriteQwInt(dm, 0x0, 0x8000, 0x30000000, 0x00000412, 0);
+            WriteQwInt(dm, 0x1, 0x0001, 0x10000000, 0x0000000E, 0);
+            WriteQw(dm, 0x2, 0f, 0f, 0f, 0f);
+            WriteQw(dm, 0x3, 4095f, 4095f, 16777215f, 0f);
+            WriteQw(dm, 0x4, 255f, 255f, 255f, 255f);
+            WriteQw(dm, 0x5, 255f, 255f, 255f, 255f);
+
+            // Object -> World & World -> Screen & Clip matrices
+            WriteQw(dm, 0x6, 0.01f, 0f, 0f, 0f);
+            WriteQw(dm, 0x7, 0f, 0.01f, 0f, 0f);
+            WriteQw(dm, 0x8, 0f, 0f, 0.01f, 0f);
+            WriteQw(dm, 0x9, 0f, 0f, 10f, 1f);
+
+            WriteQw(dm, 0x1E, 320f, 0f, 0f, 0f);
+            WriteQw(dm, 0x1F, 0f, 224f, 0f, 0f);
+            WriteQw(dm, 0x20, 0f, 0f, 65536f, 0f);
+            WriteQw(dm, 0x21, 2048f, 2048f, 0f, 1f);
+
+            WriteQw(dm, 0x3B, 0.007874f, 0f, 0f, 0f);
+            WriteQw(dm, 0x3C, 0f, 0.007874f, 0f, 0f);
+            WriteQw(dm, 0x3D, 0f, 0f, 0.007874f, 0f);
+
+            WriteQw(dm, 0x3F, 1f, 0f, 0f, 0f);
+            WriteQw(dm, 0x40, 0f, 1f, 0f, 0f);
+            WriteQw(dm, 0x41, 0f, 0f, 1f, 1f);
+            WriteQw(dm, 0x42, 0f, 0f, 0f, 0f);
+
+            WriteQw(dm, 0x43, 320f, 0f, 0f, 0f);
+            WriteQw(dm, 0x44, 0f, 224f, 0f, 0f);
+            WriteQw(dm, 0x45, 0f, 0f, 16777215f, 1f);
+            WriteQw(dm, 0x46, 2048f, 2048f, 0f, 0f);
+
+            // Lighting & Material
+            WriteQw(dm, 0x2E, 0.7f, 0.7f, 0.8f, 0f);
+            WriteQw(dm, 0x2F, 1.5f, 1.1f, 0.6f, 0f);
+            WriteQw(dm, 0x30, 0.3f, 0.2f, 0.1f, 0f);
+            WriteQw(dm, 0x31, 0f, 0f, 0f, 0f);
+            WriteQw(dm, 0x32, 0f, 0f, 0f, 1f);
+            WriteQw(dm, 0x33, 0.75f, 0.84f, 0f, 0f);
+            WriteQw(dm, 0x34, 0.25f, 0.54f, 0f, 0f);
+            WriteQw(dm, 0x35, 0.60f, 0.00f, 0f, 0f);
+            WriteQw(dm, 0x37, 128f, 128f, 128f, 128f);
+            WriteQw(dm, 0x38, 128f, 128f, 128f, 128f);
+            WriteQwInt(dm, 0x39, flag, 0x004A, 0x004E, 10);
+            WriteQw(dm, 0x3A, 0f, 0f, 0f, 0.5f);
+            WriteQwInt(dm, 0x48, 0, 0, 0, 613);
+
+            // Input vertex buffer at Top = 0x50 (count = 8 vertices, stride 5)
+            WriteQwInt(dm, 0x50, 8, 0, 0, 0);
+            for (int v = 0; v < 8; v++)
+            {
+                int b = 0x51 + v * 5;
+                int px = (v % 3 == 0) ? -2500 : (v * 300 - 900); // mix on-screen & frustum-clipping verts
+                int py = (v % 2 == 0) ? 200 : -200;
+                int pz = (v == 5) ? -1200 : (v * 100);
+                int adc = v < 2 ? 0x8000 : 0;
+                WriteQwInt(dm, b + 0, px, py, pz, adc);
+                WriteQwInt(dm, b + 1, 60 - v * 15, 80, 70, 127);
+                WriteQwInt(dm, b + 2, 1024 * v, 512 * v, 4096, 0);
+                WriteQwInt(dm, b + 3, 40 + v * 10, 50 + v * 5, 60, 127);
+                WriteQwInt(dm, b + 4, 40 + v * 10, 50 + v * 5, 60, 127);
+            }
+
+            Buffer.BlockCopy(aot.DataMem, 0, dec.DataMem, 0, dm.Length);
+
+            var aotKicks = new List<byte[]>();
+            var decKicks = new List<byte[]>();
+            aot.OnXgKick = s => aotKicks.Add(s.ToArray());
+            dec.OnXgKick = s => decKicks.Add(s.ToArray());
+
+            aotCompiler.Execute(aot, 0x15E8);
+            decCompiler.ExecuteDecodedOnly(dec, 0x15E8);
+
+            Assert.Equal(decKicks.Count, aotKicks.Count);
+            for (int k = 0; k < decKicks.Count; k++)
+            {
+                Assert.True(decKicks[k].AsSpan().SequenceEqual(aotKicks[k]),
+                    $"Ovl4 0x15E8 XGKICK #{k} mismatch for flag=0x{flag:X4} (len dec={decKicks[k].Length} aot={aotKicks[k].Length})");
+            }
+            Assert.True(dec.DataMem.AsSpan().SequenceEqual(aot.DataMem),
+                $"Ovl4 0x15E8 DataMem mismatch for flag=0x{flag:X4}");
+            for (int r = 1; r < 32; r++)
+                Assert.Equal(dec.VF[r], aot.VF[r]);
+            for (int r = 1; r < 16; r++)
+                Assert.Equal(dec.VI[r], aot.VI[r]);
+        }
+    }
+
+    [Fact]
+    public void AllBaseAndOvl4EntryPoints_AotMatchesDecoded_BitExact()
+    {
+        string elfPath = Ps2ElfReader.FindDefaultElfPath();
+        var elf = new Ps2ElfReader(elfPath);
+        var vutext = elf.FindSection(".vutext");
+        Assert.NotNull(vutext);
+
+        byte[] raw = File.ReadAllBytes(elfPath);
+        int start = (int)vutext!.FileOffset;
+        int end = Math.Min(raw.Length, start + (int)vutext.Size) - 8;
+
+        var coalesced = new List<(int Addr, List<byte> Bytes)>();
+        for (int i = start; i <= end; i += 4)
+        {
+            uint vifCode = BinaryPrimitives.ReadUInt32LittleEndian(raw.AsSpan(i, 4));
+            byte cmd = (byte)(vifCode >> 24);
+            byte num = (byte)(vifCode >> 16);
+            ushort addr = (ushort)(vifCode & 0xFFFF);
+            if ((cmd & 0x7F) != 0x4A || addr >= 0x0800) continue;
+            int insnCount = num == 0 ? 256 : num;
+            int mpgBytes = insnCount * 8;
+            if (i + 4 + mpgBytes > start + (int)vutext.Size) continue;
+            int byteAddr = addr * 8;
+            if (coalesced.Count > 0 && coalesced[^1].Addr + coalesced[^1].Bytes.Count == byteAddr)
+                coalesced[^1].Bytes.AddRange(raw.AsSpan(i + 4, mpgBytes).ToArray());
+            else
+                coalesced.Add((byteAddr, new List<byte>(raw.AsSpan(i + 4, mpgBytes).ToArray())));
+            i += 4 + mpgBytes - 4;
+        }
+
+        byte[] microMem = new byte[Vu1State.MicroMemSize];
+        int ovlCount = 0;
+        foreach (var reg in coalesced)
+        {
+            if (reg.Addr < 0x15E0)
+                Buffer.BlockCopy(reg.Bytes.ToArray(), 0, microMem, reg.Addr, reg.Bytes.Count);
+            else
+            {
+                ovlCount++;
+                if (ovlCount == 4)
+                    Buffer.BlockCopy(reg.Bytes.ToArray(), 0, microMem, reg.Addr, reg.Bytes.Count);
+            }
+        }
+
+        ushort[] entries =
+        [
+            0x0010, 0x0108, 0x03C0, 0x0438, 0x04C8, 0x04F8, 0x0548,
+            0x0598, 0x05E8, 0x06B0, 0x0728, 0x07F0,
+            0x15E8
+        ];
+
+        static void WriteQw(byte[] dm, int qw, float x, float y, float z, float w)
+        {
+            int o = qw * 16;
+            BinaryPrimitives.WriteSingleLittleEndian(dm.AsSpan(o + 0, 4), x);
+            BinaryPrimitives.WriteSingleLittleEndian(dm.AsSpan(o + 4, 4), y);
+            BinaryPrimitives.WriteSingleLittleEndian(dm.AsSpan(o + 8, 4), z);
+            BinaryPrimitives.WriteSingleLittleEndian(dm.AsSpan(o + 12, 4), w);
+        }
+
+        static void WriteQwInt(byte[] dm, int qw, int x, int y, int z, int w)
+        {
+            int o = qw * 16;
+            BinaryPrimitives.WriteInt32LittleEndian(dm.AsSpan(o + 0, 4), x);
+            BinaryPrimitives.WriteInt32LittleEndian(dm.AsSpan(o + 4, 4), y);
+            BinaryPrimitives.WriteInt32LittleEndian(dm.AsSpan(o + 8, 4), z);
+            BinaryPrimitives.WriteInt32LittleEndian(dm.AsSpan(o + 12, 4), w);
+        }
+
+        var aotCompiler = new Vu1Recompiler();
+        var decCompiler = new Vu1Recompiler();
+        var rng = new Random(1337);
+
+        var failures = new List<string>();
+        foreach (ushort entry in entries)
+        {
+            for (int trial = 0; trial < 3; trial++)
+            {
+                var aot = new Vu1State();
+                var dec = new Vu1State();
+                Buffer.BlockCopy(microMem, 0, aot.MicroMem, 0, microMem.Length);
+                Buffer.BlockCopy(microMem, 0, dec.MicroMem, 0, microMem.Length);
+
+                aot.Top = 0x50;
+                aot.Itop = 0x50;
+                dec.Top = 0x50;
+                dec.Itop = 0x50;
+
+                // Seed VF/VI/Q/P/R/I/ACC identically to test live-in preservation & math
+                for (int r = 1; r < 32; r++)
+                {
+                    var v = Vector128.Create(
+                        (float)(rng.NextDouble() * 4.0 - 2.0),
+                        (float)(rng.NextDouble() * 4.0 - 2.0),
+                        (float)(rng.NextDouble() * 4.0 - 2.0),
+                        (float)(rng.NextDouble() * 4.0 - 2.0));
+                    aot.VF[r] = v;
+                    dec.VF[r] = v;
+                }
+                for (int r = 1; r < 16; r++)
+                {
+                    ushort vi = (ushort)(r == 1 ? 0x50 : (r * 3 + trial));
+                    aot.VI[r] = vi;
+                    dec.VI[r] = vi;
+                }
+
+                byte[] dm = aot.DataMem;
+                for (int qw = 0; qw < 128; qw++)
+                {
+                    WriteQw(dm, qw,
+                        (float)(rng.NextDouble() * 2.0 - 1.0),
+                        (float)(rng.NextDouble() * 2.0 - 1.0),
+                        (float)(rng.NextDouble() * 2.0 - 1.0),
+                        1.0f);
+                }
+
+                // Set valid matrices & headers at standard RenderWare/Castaway slots
+                WriteQw(dm, 0x00, 1f, 0f, 0f, 0f);
+                WriteQw(dm, 0x01, 0f, 1f, 0f, 0f);
+                WriteQw(dm, 0x02, 0f, 0f, 1f, 0f);
+                WriteQw(dm, 0x03, 0f, 0f, -10f, 1f);
+                WriteQw(dm, 0x08, 1f, 0f, 0f, 0f);
+                WriteQw(dm, 0x09, 0f, 1f, 0f, 0f);
+                WriteQw(dm, 0x0A, 0f, 0f, 1f, 0f);
+                WriteQw(dm, 0x0B, 0f, 0f, 10f, 1f);
+                WriteQw(dm, 0x10, 1f, 0f, 0f, 0f);
+                WriteQw(dm, 0x11, 0f, 1f, 0f, 0f);
+                WriteQw(dm, 0x12, 0f, 0f, 1f, 0f);
+                WriteQw(dm, 0x13, 0f, 0f, 0f, 1f);
+                WriteQw(dm, 0x14, 1f, 0f, 0f, 0f);
+                WriteQw(dm, 0x15, 0f, 1f, 0f, 0f);
+                WriteQw(dm, 0x16, 0f, 0f, 1f, 0f);
+                WriteQw(dm, 0x17, 0f, 0f, 10f, 1f);
+                WriteQw(dm, 0x18, 1f, 0f, 0f, 0f);
+                WriteQw(dm, 0x19, 0f, 1f, 0f, 0f);
+                WriteQw(dm, 0x1A, 0f, 0f, 1f, 0f);
+                WriteQw(dm, 0x1B, 0f, 0f, 0f, 1f);
+                WriteQw(dm, 0x1C, 1f, 0f, 0f, 0f);
+                WriteQw(dm, 0x1D, 0f, 1f, 0f, 0f);
+                WriteQw(dm, 0x1E, 0f, 0f, 1f, 0f);
+                WriteQw(dm, 0x1F, 0f, 0f, 10f, 1f);
+
+                WriteQw(dm, 0x2E, 0.4f, 0.5f, 0.6f, 0f);
+                WriteQw(dm, 0x2F, 1.2f, 0.9f, 0.5f, 0f);
+                WriteQw(dm, 0x30, 0.3f, 0.2f, 0.1f, 0f);
+                WriteQw(dm, 0x37, 128f, 128f, 128f, 128f);
+                WriteQw(dm, 0x38, 128f, 128f, 128f, 128f);
+                int flag = trial == 0 ? 0x0028 : (trial == 1 ? 0x0408 : 0x0088);
+                WriteQwInt(dm, 0x39, flag, 0x004A, 0x004E, 10);
+                WriteQw(dm, 0x3A, 0f, 0f, 0f, 1f);
+                WriteQw(dm, 0x3F, 1f, 0f, 0f, 0f);
+                WriteQw(dm, 0x40, 0f, 1f, 0f, 0f);
+                WriteQw(dm, 0x41, 0f, 0f, 1f, 1f);
+                WriteQw(dm, 0x42, 0f, 0f, 0f, 0f);
+                WriteQw(dm, 0x43, 320f, 0f, 0f, 0f);
+                WriteQw(dm, 0x44, 0f, 224f, 0f, 0f);
+                WriteQw(dm, 0x45, 0f, 0f, 16777215f, 1f);
+                WriteQw(dm, 0x46, 2048f, 2048f, 0f, 0f);
+                WriteQwInt(dm, 0x48, 0, 0, 0, 613);
+
+                // Small valid input buffer at 0x50
+                if (entry is 0x0010 or 0x0108 or 0x0438 or 0x04C8 or 0x04F8 or 0x0548 or 0x0598 or 0x05E8 or 0x06B0 or 0x0728 or 0x07F0 or 0x15E0)
+                {
+                    // Setup/matrix/lighting microprograms expect normal floats at Top (0x50..0x5F)
+                    for (int q = 0x50; q < 0x60; q++)
+                    {
+                        WriteQw(dm, q,
+                            (float)(rng.NextDouble() * 2.0 - 1.0) + 0.1f,
+                            (float)(rng.NextDouble() * 2.0 - 1.0) + 0.2f,
+                            (float)(rng.NextDouble() * 2.0 - 1.0) + 0.3f,
+                            1.0f);
+                    }
+                }
+                else
+                {
+                    WriteQwInt(dm, 0x50, 6, 0x100, 2, 0);
+                    for (int v = 0; v < 6; v++)
+                    {
+                        int b = 0x51 + v * 5;
+                        WriteQwInt(dm, b + 0, v * 200 - 400, (v % 2 == 0) ? 150 : -150, v * 50, v < 2 ? 0x8000 : 0);
+                        WriteQwInt(dm, b + 1, 50, 80, 60, 127);
+                        WriteQwInt(dm, b + 2, 512 * v, 256 * v, 4096, 0);
+                        WriteQwInt(dm, b + 3, 64, 64, 64, 128);
+                        WriteQwInt(dm, b + 4, 64, 64, 64, 128);
+                    }
+                }
+
+                // Also populate skinning bone table at 0x180..0x1FF so 0x29A8 doesn't read garbage bone indices
+                if (entry == 0x29A8)
+                {
+                    WriteQwInt(dm, 0x50, 4, 0, 0, 0);
+                    for (int v = 0; v < 4; v++)
+                    {
+                        int b = 0x51 + v * 4;
+                        WriteQw(dm, b + 0, v * 0.5f, 0.2f, 0.1f, 0f);
+                        BinaryPrimitives.WriteInt32LittleEndian(dm.AsSpan((b + 0) * 16 + 12, 4), 0x180);
+                        WriteQw(dm, b + 1, 0.5f, 0.5f, 0.5f, 1.0f);
+                        WriteQw(dm, b + 2, 0.25f * v, 0.5f, 1.0f, 0.0f);
+                        WriteQwInt(dm, b + 3, 80, 90, 100, 128);
+                    }
+                    for (int q = 0x180; q < 0x200; q += 4)
+                    {
+                        WriteQw(dm, q + 0, 1f, 0f, 0f, 0f);
+                        WriteQw(dm, q + 1, 0f, 1f, 0f, 0f);
+                        WriteQw(dm, q + 2, 0f, 0f, 1f, 0f);
+                        WriteQw(dm, q + 3, 0f, 0f, 0f, 1f);
+                    }
+                }
+
+                Buffer.BlockCopy(aot.DataMem, 0, dec.DataMem, 0, dm.Length);
+
+                var aotKicks = new List<byte[]>();
+                var decKicks = new List<byte[]>();
+                aot.OnXgKick = s => aotKicks.Add(s.ToArray());
+                dec.OnXgKick = s => decKicks.Add(s.ToArray());
+
+                aotCompiler.Execute(aot, entry);
+                decCompiler.ExecuteDecodedOnly(dec, entry);
+
+                string? err = null;
+                if (decKicks.Count != aotKicks.Count)
+                    err = $"XGKICK count dec={decKicks.Count} aot={aotKicks.Count}";
+                for (int k = 0; err == null && k < decKicks.Count; k++)
+                {
+                    if (!decKicks[k].AsSpan().SequenceEqual(aotKicks[k]))
+                    {
+                        int len = Math.Min(decKicks[k].Length, aotKicks[k].Length);
+                        for (int off = 0; off < len; off += 16)
+                        {
+                            if (!decKicks[k].AsSpan(off, Math.Min(16, len - off)).SequenceEqual(aotKicks[k].AsSpan(off, Math.Min(16, len - off))))
+                            {
+                                var dv = MemoryMarshal.Read<Vector128<uint>>(decKicks[k].AsSpan(off, 16));
+                                var av = MemoryMarshal.Read<Vector128<uint>>(aotKicks[k].AsSpan(off, 16));
+                                err = $"XGKICK #{k} qw={off / 16} dec=0x{dv.GetElement(0):X8},{dv.GetElement(1):X8},{dv.GetElement(2):X8},{dv.GetElement(3):X8} aot=0x{av.GetElement(0):X8},{av.GetElement(1):X8},{av.GetElement(2):X8},{av.GetElement(3):X8}";
+                                break;
+                            }
+                        }
+                        err ??= $"XGKICK #{k} len dec={decKicks[k].Length} aot={aotKicks[k].Length}";
+                    }
+                }
+                if (err == null && !dec.DataMem.AsSpan().SequenceEqual(aot.DataMem))
+                {
+                    for (int qw = 0; qw < 1024; qw++)
+                    {
+                        int o = qw * 16;
+                        if (!dec.DataMem.AsSpan(o, 16).SequenceEqual(aot.DataMem.AsSpan(o, 16)))
+                        {
+                            var dv = MemoryMarshal.Read<Vector128<float>>(dec.DataMem.AsSpan(o, 16));
+                            var av = MemoryMarshal.Read<Vector128<float>>(aot.DataMem.AsSpan(o, 16));
+                            err = $"DM[0x{qw:X2}] dec={dv} aot={av}";
+                            break;
+                        }
+                    }
+                }
+                for (int r = 1; err == null && r < 32; r++)
+                {
+                    if (!dec.VF[r].AsUInt32().Equals(aot.VF[r].AsUInt32()))
+                        err = $"VF{r} dec={dec.VF[r]} aot={aot.VF[r]}";
+                }
+                for (int r = 1; err == null && r < 16; r++)
+                {
+                    if (dec.VI[r] != aot.VI[r])
+                        err = $"VI{r} dec=0x{dec.VI[r]:X4} aot=0x{aot.VI[r]:X4}";
+                }
+                if (err != null)
+                {
+                    failures.Add($"0x{entry:X4} t{trial}: {err}");
+                    break;
+                }
+            }
+        }
+        Assert.True(failures.Count == 0, string.Join("\n", failures));
+    }
+
+    [Fact]
+    public void Ovl4_15E8_UnusedLightSlotGarbageBits_CompareAotVsDecoded()
+    {
+        string elfPath = Ps2ElfReader.FindDefaultElfPath();
+        var elf = new Ps2ElfReader(elfPath);
+        var vutext = elf.FindSection(".vutext");
+        Assert.NotNull(vutext);
+
+        byte[] raw = File.ReadAllBytes(elfPath);
+        int start = (int)vutext!.FileOffset;
+        int end = Math.Min(raw.Length, start + (int)vutext.Size) - 8;
+
+        var coalesced = new List<(int Addr, List<byte> Bytes)>();
+        for (int i = start; i <= end; i += 4)
+        {
+            uint vifCode = BinaryPrimitives.ReadUInt32LittleEndian(raw.AsSpan(i, 4));
+            byte cmd = (byte)(vifCode >> 24);
+            byte num = (byte)(vifCode >> 16);
+            ushort addr = (ushort)(vifCode & 0xFFFF);
+            if ((cmd & 0x7F) != 0x4A || addr >= 0x0800) continue;
+            int insnCount = num == 0 ? 256 : num;
+            int mpgBytes = insnCount * 8;
+            if (i + 4 + mpgBytes > start + (int)vutext.Size) continue;
+            int byteAddr = addr * 8;
+            if (coalesced.Count > 0 && coalesced[^1].Addr + coalesced[^1].Bytes.Count == byteAddr)
+                coalesced[^1].Bytes.AddRange(raw.AsSpan(i + 4, mpgBytes).ToArray());
+            else
+                coalesced.Add((byteAddr, new List<byte>(raw.AsSpan(i + 4, mpgBytes).ToArray())));
+            i += 4 + mpgBytes - 4;
+        }
+
+        byte[] microMem = new byte[Vu1State.MicroMemSize];
+        int ovlCount = 0;
+        foreach (var reg in coalesced)
+        {
+            if (reg.Addr < 0x15E0)
+                Buffer.BlockCopy(reg.Bytes.ToArray(), 0, microMem, reg.Addr, reg.Bytes.Count);
+            else if (++ovlCount == 4)
+                Buffer.BlockCopy(reg.Bytes.ToArray(), 0, microMem, reg.Addr, reg.Bytes.Count);
+        }
+
+        static void WriteQw(byte[] dm, int q, float x, float y, float z, float w)
+        {
+            int o = (q & 0x3FF) << 4;
+            BinaryPrimitives.WriteSingleLittleEndian(dm.AsSpan(o + 0, 4), x);
+            BinaryPrimitives.WriteSingleLittleEndian(dm.AsSpan(o + 4, 4), y);
+            BinaryPrimitives.WriteSingleLittleEndian(dm.AsSpan(o + 8, 4), z);
+            BinaryPrimitives.WriteSingleLittleEndian(dm.AsSpan(o + 12, 4), w);
+        }
+        static void WriteQwInt(byte[] dm, int q, int x, int y, int z, int w)
+        {
+            int o = (q & 0x3FF) << 4;
+            BinaryPrimitives.WriteInt32LittleEndian(dm.AsSpan(o + 0, 4), x);
+            BinaryPrimitives.WriteInt32LittleEndian(dm.AsSpan(o + 4, 4), y);
+            BinaryPrimitives.WriteInt32LittleEndian(dm.AsSpan(o + 8, 4), z);
+            BinaryPrimitives.WriteInt32LittleEndian(dm.AsSpan(o + 12, 4), w);
+        }
+
+        uint[] badPatterns = [0xFFFFFFFFu, 0x7FC00000u, 0x7F800000u, 0xFF800000u];
+        var aotCompiler = new Vu1Recompiler();
+        var decCompiler = new Vu1Recompiler();
+        var diffs = new List<string>();
+
+        foreach (uint pat in badPatterns)
+        {
+            for (int mode = 0; mode < 2; mode++)
+            {
+                var aot = new Vu1State();
+                var dec = new Vu1State();
+                Buffer.BlockCopy(microMem, 0, aot.MicroMem, 0, microMem.Length);
+                Buffer.BlockCopy(microMem, 0, dec.MicroMem, 0, microMem.Length);
+                aot.Top = dec.Top = 0x50;
+                byte[] dm = aot.DataMem;
+
+                WriteQwInt(dm, 0x0, 0x8000, 0x30000000, 0x00000412, 0);
+                WriteQwInt(dm, 0x1, 0x0001, 0x10000000, 0x0000000E, 0);
+                WriteQw(dm, 0x3, 4095f, 4095f, 16777215f, 0f);
+                WriteQw(dm, 0x4, 255f, 255f, 255f, 255f);
+                WriteQw(dm, 0x5, 255f, 255f, 255f, 255f);
+                WriteQw(dm, 0x6, 0.01f, 0f, 0f, 0f);
+                WriteQw(dm, 0x7, 0f, 0.01f, 0f, 0f);
+                WriteQw(dm, 0x8, 0f, 0f, 0.01f, 0f);
+                WriteQw(dm, 0x9, 0f, 0f, 10f, 1f);
+                WriteQw(dm, 0x3B, 0.007874f, 0f, 0f, 0f);
+                WriteQw(dm, 0x3C, 0f, 0.007874f, 0f, 0f);
+                WriteQw(dm, 0x3D, 0f, 0f, 0.007874f, 0f);
+                WriteQw(dm, 0x43, 320f, 0f, 0f, 0f);
+                WriteQw(dm, 0x44, 0f, 224f, 0f, 0f);
+                WriteQw(dm, 0x45, 0f, 0f, 16777215f, 1f);
+                WriteQw(dm, 0x46, 2048f, 2048f, 0f, 0f);
+
+                WriteQw(dm, 0x2E, 0.7f, 0.7f, 0.8f, 0f);
+                WriteQw(dm, 0x2F, 1.5f, 1.1f, 0.6f, 0f);
+                WriteQw(dm, 0x30, 0f, 0f, 0f, 0f);
+                WriteQw(dm, 0x31, 0f, 0f, 0f, 0f);
+                WriteQw(dm, 0x32, 0f, 0f, 0f, 0f);
+                WriteQw(dm, 0x33, 0.75f, 0f, 0f, 0f);
+                WriteQw(dm, 0x34, 0.25f, 0f, 0f, 0f);
+                WriteQw(dm, 0x35, 0.60f, 0f, 0f, 0f);
+
+                float badF = BitConverter.UInt32BitsToSingle(pat);
+                if (mode == 0)
+                    WriteQw(dm, 0x32, badF, badF, badF, 0f); // unused light 3 color has heap garbage, dir=0
+                else
+                    WriteQw(dm, 0x33, 0.75f, 0f, 0f, badF);  // unused light 3 dir has heap garbage, color=0
+
+                WriteQw(dm, 0x37, 128f, 128f, 128f, 128f);
+                WriteQw(dm, 0x38, 128f, 128f, 128f, 128f);
+                WriteQwInt(dm, 0x39, 0x0008, 0x004A, 0x004E, 10);
+                WriteQw(dm, 0x3A, 0f, 0f, 0f, 0.5f);
+                WriteQwInt(dm, 0x48, 0, 0, 0, 613);
+                WriteQwInt(dm, 0x50, 4, 0, 0, 0);
+                for (int v = 0; v < 4; v++)
+                {
+                    int b = 0x51 + v * 5;
+                    WriteQwInt(dm, b + 0, v * 200, 100, 50, v < 2 ? 0x8000 : 0);
+                    WriteQwInt(dm, b + 1, 60, 80, 70, 127);
+                    WriteQwInt(dm, b + 2, 1024, 512, 4096, 0);
+                }
+                Buffer.BlockCopy(aot.DataMem, 0, dec.DataMem, 0, dm.Length);
+
+                aotCompiler.Execute(aot, 0x15E8);
+                decCompiler.ExecuteDecodedOnly(dec, 0x15E8);
+
+                int outOff = (613 + 4) * 16;
+                var dCol = MemoryMarshal.Read<Vector128<int>>(dec.DataMem.AsSpan(outOff, 16));
+                var aCol = MemoryMarshal.Read<Vector128<int>>(aot.DataMem.AsSpan(outOff, 16));
+                if (!dCol.Equals(aCol))
+                    diffs.Add($"pat=0x{pat:X8} mode={mode}: dec={dCol} aot={aCol}");
+            }
+        }
+        Assert.True(diffs.Count == 0, string.Join("\n", diffs));
+    }
+
     private static uint MakeVifCode(byte cmd, byte num, ushort imm)
         => ((uint)cmd << 24) | ((uint)num << 16) | imm;
 }

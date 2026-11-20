@@ -243,7 +243,7 @@ internal sealed class Vu1DecodedExecutor
                 steps++;
                 if (linkReg != 0 && vu.LastWrittenAnyViReg != (linkReg & 15))
                     vu.VI[linkReg & 15] = linkVal;
-                vu.Tpc = (ushort)(((delaySlot + 1) & 0x7FF) << 3);
+                vu.Tpc = (ushort)(branchTaken ? (branchTargetSlot << 3) : (((delaySlot + 1) & 0x7FF) << 3));
                 break;
             }
 

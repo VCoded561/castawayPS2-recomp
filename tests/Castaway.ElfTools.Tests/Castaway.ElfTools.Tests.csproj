@@ -25,6 +25,7 @@
     <ProjectReference Include="..\..\src\Castaway.Generated\Castaway.Generated.csproj" />
     <ProjectReference Include="..\..\src\Castaway.Runtime\Castaway.Runtime.csproj" />
     <ProjectReference Include="..\..\src\Castaway.GsRenderer\Castaway.GsRenderer.csproj" />
+    <ProjectReference Include="..\..\src\Castaway.Overrides\Castaway.Overrides.csproj" />
   </ItemGroup>
 
 </Project>

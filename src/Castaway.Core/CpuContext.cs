@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
 using System.Runtime.Intrinsics;
@@ -121,6 +122,8 @@ public unsafe struct CpuContext
     public byte* Scratchpad;
     public byte* Vu0DataMem;
 
+    private static readonly long s_bootTimestamp = Stopwatch.GetTimestamp();
+
     public void Initialize(byte* scratchpadPtr = null, byte* vu0DataPtr = null)
     {
         this = default;
@@ -133,6 +136,29 @@ public unsafe struct CpuContext
         Cop0[1] = 47u; // Random
         // COP0 Status: CU0|CU1|CU2 (0x70000000) | EIE (0x10000) | IM2/IM3 (0x0C00) | IE (0x1)
         Cop0[12] = 0x70010C01u;
+    }
+
+    /// <summary>
+    /// Reads the Emotion Engine COP0 Count register ($9) advancing at 294.912 MHz.
+    /// Includes a non-zero boot offset so software seeding PRNGs from Count never receives 0.
+    /// </summary>
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    public readonly uint ReadCop0Count()
+    {
+        long elapsed = Stopwatch.GetTimestamp() - s_bootTimestamp;
+        uint cycles = unchecked((uint)((ulong)(elapsed * (294_912_000.0 / Stopwatch.Frequency)) + 0x12345679UL + Cop0[9]));
+        return cycles == 0u ? 1u : cycles;
+    }
+
+    /// <summary>
+    /// Writes the Emotion Engine COP0 Count register ($9) by storing the relative offset to the monotonic counter.
+    /// </summary>
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    public void WriteCop0Count(uint value)
+    {
+        long elapsed = Stopwatch.GetTimestamp() - s_bootTimestamp;
+        uint baseCycles = unchecked((uint)((ulong)(elapsed * (294_912_000.0 / Stopwatch.Frequency)) + 0x12345679UL));
+        Cop0[9] = unchecked(value - baseCycles);
     }
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]

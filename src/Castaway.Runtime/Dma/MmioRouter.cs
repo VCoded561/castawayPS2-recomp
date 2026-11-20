@@ -60,7 +60,19 @@ public sealed unsafe class MmioRouter
     public ulong GsCsr => _gsCsr;
     public void SetGsCsrFinish() => _gsCsr |= 0x0002ul;
 
-    public CpuContext* ActiveContext { get; set; }
+    [ThreadStatic] private static CpuContext* s_activeContext;
+    private CpuContext* _defaultContext;
+
+    public CpuContext* ActiveContext
+    {
+        get => s_activeContext != null ? s_activeContext : _defaultContext;
+        set
+        {
+            s_activeContext = value;
+            if (_defaultContext == null && value != null)
+                _defaultContext = value;
+        }
+    }
     public byte* ActiveRam { get; set; }
 
     public MmioRouter(EeKernel kernel, DmaController dma)
@@ -348,7 +360,7 @@ public sealed unsafe class MmioRouter
             {
                 uint clearStat = value & 0x0000FFFFu;
                 uint invertMask = value & 0xFFFF0000u;
-                _kernel.DmacStat = (_kernel.DmacStat & ~clearStat) ^ invertMask;
+                _kernel.WriteDmacStatRegister(clearStat, invertMask);
                 break;
             }
 
@@ -359,11 +371,11 @@ public sealed unsafe class MmioRouter
             case 0x1000E060u: _dma.Stadr = value; break;
 
             case 0x1000F000u: // INTC_STAT: write 1 to clear
-                _kernel.IntcStat &= ~value;
+                _kernel.ClearIntcStatBits(value);
                 break;
 
             case 0x1000F010u: // INTC_MASK: write 1 to invert mask bit
-                _kernel.IntcMask ^= value;
+                _kernel.ToggleIntcMaskBits(value);
                 break;
 
             case 0x1000F200u: _sifMscom = value; break;

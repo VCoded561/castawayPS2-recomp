@@ -71,6 +71,7 @@ public sealed class VifUnit
     }
 
     // Diagnostics
+    public bool EnableProfiling { get; set; }
     public long TotalCommandsProcessed { get; private set; }
     public long TotalUnpackQuadwordsWritten { get; private set; }
     public long TotalMpgBytesUploaded { get; private set; }
@@ -147,7 +148,7 @@ public sealed class VifUnit
             return;
 
         TotalBytesReceived += data.Length;
-        long t0 = Stopwatch.GetTimestamp();
+        long t0 = EnableProfiling ? Stopwatch.GetTimestamp() : 0;
         try
         {
             int dataOffset = 0;
@@ -206,7 +207,8 @@ public sealed class VifUnit
         }
         finally
         {
-            TotalProcessingTicks += Stopwatch.GetTimestamp() - t0;
+            if (t0 != 0)
+                TotalProcessingTicks += Stopwatch.GetTimestamp() - t0;
             TotalTransfers++;
         }
     }
@@ -481,9 +483,10 @@ public sealed class VifUnit
             case 0x51: // DIRECTHL
                 if (IsVif1 && OnDirectGifData != null)
                 {
-                    long td = Stopwatch.GetTimestamp();
+                    long td = EnableProfiling ? Stopwatch.GetTimestamp() : 0;
                     OnDirectGifData(payload);
-                    TotalDirectGifTicks += Stopwatch.GetTimestamp() - td;
+                    if (td != 0)
+                        TotalDirectGifTicks += Stopwatch.GetTimestamp() - td;
                 }
                 break;
         }
@@ -505,15 +508,16 @@ public sealed class VifUnit
 
         if (OnMicroProgramCall != null)
         {
-            long tm = Stopwatch.GetTimestamp();
+            long tm = EnableProfiling ? Stopwatch.GetTimestamp() : 0;
             OnMicroProgramCall(startByteAddr, isContinue);
-            TotalMicroCallbackTicks += Stopwatch.GetTimestamp() - tm;
+            if (tm != 0)
+                TotalMicroCallbackTicks += Stopwatch.GetTimestamp() - tm;
         }
     }
 
     private void ExecuteUnpack(byte cmd, byte num, ushort imm, ReadOnlySpan<byte> payload)
     {
-        long tu = Stopwatch.GetTimestamp();
+        long tu = EnableProfiling ? Stopwatch.GetTimestamp() : 0;
         bool useMask = (cmd & 0x10) != 0;
         int vn = (cmd >> 2) & 0x3; // 0=S, 1=V2, 2=V3, 3=V4
         int vl = cmd & 0x3;        // 0=32, 1=16, 2=8, 3=5 (V4-5)
@@ -546,7 +550,8 @@ public sealed class VifUnit
                 TotalUnpackFastCalls++;
                 uint effectiveMode = (vn == 3 && vl == 3) ? 0u : (Mode & 0x3u);
                 ExecuteUnpackFast(payload, dstQwordAddr, dstVectors, cl, wl, vn, vl, usn, useMask, effectiveMode);
-                TotalUnpackTicks += Stopwatch.GetTimestamp() - tu;
+                if (tu != 0)
+                    TotalUnpackTicks += Stopwatch.GetTimestamp() - tu;
                 return;
             }
         }
@@ -594,7 +599,8 @@ public sealed class VifUnit
                 }
             }
         }
-        TotalUnpackTicks += Stopwatch.GetTimestamp() - tu;
+        if (tu != 0)
+            TotalUnpackTicks += Stopwatch.GetTimestamp() - tu;
     }
 
     private static void ReadSourceVector(

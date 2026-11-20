@@ -6,6 +6,8 @@ namespace Castaway.Runtime;
 
 public sealed unsafe class SifRpcRouter
 {
+    public static bool EnableDebugLogging { get; set; } = false;
+
     public const uint SidFileIo      = 0x80000001u;
     public const uint SidIopHeap     = 0x80000003u;
     public const uint SidLoadFile    = 0x80000006u;
@@ -95,8 +97,11 @@ public sealed unsafe class SifRpcRouter
             }
         }
 
-        string sName = GetServerName(sid);
-        Console.WriteLine($"[SIF RPC] {sName} (SID=0x{sid:X8}) rpc=0x{rpcNum:X2} mode={mode} client=0x{clientPtr:X8} sendBuf=0x{sendBuf:X8}({sendSize}) recvBuf=0x{recvBuf:X8}({recvSize}) endFunc=0x{endFunc:X8} endParam=0x{endParam:X8}");
+        if (EnableDebugLogging)
+        {
+            string sName = GetServerName(sid);
+            Console.WriteLine($"[SIF RPC] {sName} (SID=0x{sid:X8}) rpc=0x{rpcNum:X2} mode={mode} client=0x{clientPtr:X8} sendBuf=0x{sendBuf:X8}({sendSize}) recvBuf=0x{recvBuf:X8}({recvSize}) endFunc=0x{endFunc:X8} endParam=0x{endParam:X8}");
+        }
 
         int status = DispatchRpcBySid(sid, rpcNum, ram, sendBuf, sendSize, recvBuf, recvSize, endParam);
 

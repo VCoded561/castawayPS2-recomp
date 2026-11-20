@@ -121,6 +121,242 @@ public static class Vu1AotCommand
     [ThreadStatic]
     private static int _efuRemainCycles;
 
+    private struct MethodRegUsage
+    {
+        public uint UsedVf;
+        public uint WrittenVf;
+        public ushort UsedVi;
+        public ushort WrittenVi;
+        public bool UsesQ;
+        public bool WritesQ;
+        public bool UsesI;
+        public bool WritesI;
+    }
+
+    [ThreadStatic]
+    private static MethodRegUsage _curUsage;
+    [ThreadStatic]
+    private static bool _useLocalRegs;
+    [ThreadStatic]
+    private static byte _curAccLiveAfter;
+    [ThreadStatic]
+    private static byte _curUpperVfLiveAfter;
+    [ThreadStatic]
+    private static byte _curLowerVfLiveAfter;
+    [ThreadStatic]
+    private static byte _curLqSanitizeMask;
+    [ThreadStatic]
+    private static bool _curUsesStatusFlags;
+
+    private static void ScanSlotUsage(in DecodedSlot s, ref MethodRegUsage u)
+    {
+        if (s.UpperOp != UpperOp.Nop)
+        {
+            if (s.Fs != 0) u.UsedVf |= 1u << (s.Fs & 31);
+            if (s.Ft != 0) u.UsedVf |= 1u << (s.Ft & 31);
+            if (!IsAccOp(s.UpperOp) && s.UpperOp != UpperOp.Clip)
+            {
+                int outReg = (UsesFtDestUpper(s.UpperOp) ? s.Ft : s.Fd) & 31;
+                uint outMask = s.UpperOp == UpperOp.Opmsub ? 0xEu : s.Dest;
+                if (outReg != 0 && outMask != 0)
+                {
+                    u.WrittenVf |= 1u << outReg;
+                    if (outMask != 0xFu) u.UsedVf |= 1u << outReg;
+                }
+            }
+            switch (s.UpperOp)
+            {
+                case UpperOp.MulQ or UpperOp.AddQ or UpperOp.MaddQ or UpperOp.SubQ or UpperOp.MsubQ or
+                     UpperOp.MulAq or UpperOp.AddAq or UpperOp.MaddAq or UpperOp.SubAq or UpperOp.MsubAq:
+                    u.UsesQ = true;
+                    break;
+                case UpperOp.MulI or UpperOp.MaxI or UpperOp.MinI or UpperOp.AddI or UpperOp.MaddI or UpperOp.SubI or UpperOp.MsubI or
+                     UpperOp.MulAi or UpperOp.AddAi or UpperOp.MaddAi or UpperOp.SubAi or UpperOp.MsubAi:
+                    u.UsesI = true;
+                    break;
+            }
+        }
+
+        if (s.IsImm)
+        {
+            u.WritesI = true;
+        }
+        else if (s.LowerOp != LowerOp.Nop)
+        {
+            int isVf = s.Is & 31, itVf = s.It & 31;
+            int isVi = s.Is & 15, itVi = s.It & 15, idVi = s.Id & 15;
+            switch (s.LowerOp)
+            {
+                case LowerOp.Lq:
+                    if (isVi != 0) u.UsedVi |= (ushort)(1u << isVi);
+                    if (itVf != 0 && s.LowerDest != 0) { u.WrittenVf |= 1u << itVf; if (s.LowerDest != 0xFu) u.UsedVf |= 1u << itVf; }
+                    break;
+                case LowerOp.Sq:
+                    if (isVf != 0) u.UsedVf |= 1u << isVf;
+                    if (itVi != 0) u.UsedVi |= (ushort)(1u << itVi);
+                    break;
+                case LowerOp.Lqi or LowerOp.Lqd:
+                    if (isVi != 0) { u.UsedVi |= (ushort)(1u << isVi); u.WrittenVi |= (ushort)(1u << isVi); }
+                    if (itVf != 0 && s.LowerDest != 0) { u.WrittenVf |= 1u << itVf; if (s.LowerDest != 0xFu) u.UsedVf |= 1u << itVf; }
+                    break;
+                case LowerOp.Sqi or LowerOp.Sqd:
+                    if (isVf != 0) u.UsedVf |= 1u << isVf;
+                    if (itVi != 0) { u.UsedVi |= (ushort)(1u << itVi); u.WrittenVi |= (ushort)(1u << itVi); }
+                    break;
+                case LowerOp.Ilw or LowerOp.Ilwr or LowerOp.Iaddiu or LowerOp.Isubiu or LowerOp.Iaddi or LowerOp.Fmeq or LowerOp.Fmand or LowerOp.Fmor:
+                    if (isVi != 0) u.UsedVi |= (ushort)(1u << isVi);
+                    if (itVi != 0) u.WrittenVi |= (ushort)(1u << itVi);
+                    break;
+                case LowerOp.Isw or LowerOp.Iswr:
+                    if (isVi != 0) u.UsedVi |= (ushort)(1u << isVi);
+                    if (itVi != 0) u.UsedVi |= (ushort)(1u << itVi);
+                    break;
+                case LowerOp.Fceq or LowerOp.Fcand or LowerOp.Fcor:
+                    u.WrittenVi |= 2;
+                    break;
+                case LowerOp.Fsand or LowerOp.Fsor or LowerOp.Fcget or LowerOp.Xtop or LowerOp.Xitop:
+                    if (itVi != 0) u.WrittenVi |= (ushort)(1u << itVi);
+                    break;
+                case LowerOp.Iadd or LowerOp.Isub or LowerOp.Iand or LowerOp.Ior:
+                    if (isVi != 0) u.UsedVi |= (ushort)(1u << isVi);
+                    if (itVi != 0) u.UsedVi |= (ushort)(1u << itVi);
+                    if (idVi != 0) u.WrittenVi |= (ushort)(1u << idVi);
+                    break;
+                case LowerOp.Move or LowerOp.Mr32:
+                    if (isVf != 0) u.UsedVf |= 1u << isVf;
+                    if (itVf != 0 && s.LowerDest != 0) { u.WrittenVf |= 1u << itVf; if (s.LowerDest != 0xFu) u.UsedVf |= 1u << itVf; }
+                    break;
+                case LowerOp.Div or LowerOp.Rsqrt:
+                    if (isVf != 0) u.UsedVf |= 1u << isVf;
+                    if (itVf != 0) u.UsedVf |= 1u << itVf;
+                    u.WritesQ = true;
+                    break;
+                case LowerOp.Sqrt:
+                    if (itVf != 0) u.UsedVf |= 1u << itVf;
+                    u.WritesQ = true;
+                    break;
+                case LowerOp.Mtir:
+                    if (isVf != 0) u.UsedVf |= 1u << isVf;
+                    if (itVi != 0) u.WrittenVi |= (ushort)(1u << itVi);
+                    break;
+                case LowerOp.Mfir:
+                    if (isVi != 0) u.UsedVi |= (ushort)(1u << isVi);
+                    if (itVf != 0 && s.LowerDest != 0) { u.WrittenVf |= 1u << itVf; if (s.LowerDest != 0xFu) u.UsedVf |= 1u << itVf; }
+                    break;
+                case LowerOp.Rnext or LowerOp.Rget or LowerOp.Mfp:
+                    if (itVf != 0 && s.LowerDest != 0) { u.WrittenVf |= 1u << itVf; if (s.LowerDest != 0xFu) u.UsedVf |= 1u << itVf; }
+                    break;
+                case LowerOp.Rinit or LowerOp.Rxor or
+                     LowerOp.Esadd or LowerOp.Ersadd or LowerOp.Eleng or LowerOp.Erleng or LowerOp.Eatanxy or LowerOp.Eatanxz or
+                     LowerOp.Esum or LowerOp.Ercpr or LowerOp.Esqrt or LowerOp.Ersqrt or LowerOp.Esin or LowerOp.Eatan or LowerOp.Eexp:
+                    if (isVf != 0) u.UsedVf |= 1u << isVf;
+                    break;
+                case LowerOp.Xgkick:
+                    if (isVi != 0) u.UsedVi |= (ushort)(1u << isVi);
+                    break;
+            }
+        }
+
+        if (s.BranchOp != BranchOp.None)
+        {
+            int isVi = s.Is & 15, itVi = s.It & 15;
+            switch (s.BranchOp)
+            {
+                case BranchOp.Ibeq or BranchOp.Ibne:
+                    if (isVi != 0) u.UsedVi |= (ushort)(1u << isVi);
+                    if (itVi != 0) u.UsedVi |= (ushort)(1u << itVi);
+                    break;
+                case BranchOp.Ibltz or BranchOp.Ibgtz or BranchOp.Iblez or BranchOp.Ibgez or BranchOp.Jr:
+                    if (isVi != 0) u.UsedVi |= (ushort)(1u << isVi);
+                    break;
+                case BranchOp.Bal:
+                    if (itVi != 0) u.WrittenVi |= (ushort)(1u << itVi);
+                    break;
+                case BranchOp.Jalr:
+                    if (isVi != 0) u.UsedVi |= (ushort)(1u << isVi);
+                    if (itVi != 0) u.WrittenVi |= (ushort)(1u << itVi);
+                    break;
+            }
+        }
+    }
+
+    private static MethodRegUsage ScanMethodUsage(VuImageSpec img, List<int> nodes)
+    {
+        MethodRegUsage u = default;
+        foreach (int cur in nodes)
+        {
+            ref readonly var s = ref img.Slots[cur];
+            ScanSlotUsage(in s, ref u);
+            if (s.IsE || s.BranchOp != BranchOp.None)
+            {
+                ScanSlotUsage(in img.Slots[(cur + 1) & 0x7FF], ref u);
+            }
+        }
+        u.UsedVf &= ~1u;
+        u.WrittenVf &= ~1u;
+        u.UsedVi &= 0xFFFE;
+        u.WrittenVi &= 0xFFFE;
+        return u;
+    }
+
+    private static void EmitDeclareAndLoadLocals(in MethodRegUsage u, StringBuilder sb, string pad)
+    {
+        uint allVf = u.UsedVf | u.WrittenVf;
+        for (int r = 1; r < 32; r++)
+        {
+            if ((allVf & (1u << r)) != 0)
+                sb.AppendLine($"{pad}Vector128<float> vf{r} = Unsafe.Add(ref vf, {r});");
+        }
+        ushort allVi = (ushort)(u.UsedVi | u.WrittenVi);
+        for (int r = 1; r < 16; r++)
+        {
+            if ((allVi & (1u << r)) != 0)
+                sb.AppendLine($"{pad}ushort vi{r} = Unsafe.Add(ref vi, {r});");
+        }
+        if (u.UsesQ || u.WritesQ)
+            sb.AppendLine($"{pad}float regQ = vu.Q;");
+        if (u.UsesI || u.WritesI)
+            sb.AppendLine($"{pad}float regI = vu.I;");
+    }
+
+    private static void EmitReloadLocals(in MethodRegUsage u, StringBuilder sb, string pad)
+    {
+        uint allVf = u.UsedVf | u.WrittenVf;
+        for (int r = 1; r < 32; r++)
+        {
+            if ((allVf & (1u << r)) != 0)
+                sb.AppendLine($"{pad}vf{r} = Unsafe.Add(ref vf, {r});");
+        }
+        ushort allVi = (ushort)(u.UsedVi | u.WrittenVi);
+        for (int r = 1; r < 16; r++)
+        {
+            if ((allVi & (1u << r)) != 0)
+                sb.AppendLine($"{pad}vi{r} = Unsafe.Add(ref vi, {r});");
+        }
+        if (u.UsesQ || u.WritesQ)
+            sb.AppendLine($"{pad}regQ = vu.Q;");
+        if (u.UsesI || u.WritesI)
+            sb.AppendLine($"{pad}regI = vu.I;");
+    }
+
+    private static void EmitFlushLocals(in MethodRegUsage u, StringBuilder sb, string pad)
+    {
+        for (int r = 1; r < 32; r++)
+        {
+            if ((u.WrittenVf & (1u << r)) != 0)
+                sb.AppendLine($"{pad}Unsafe.Add(ref vf, {r}) = vf{r};");
+        }
+        for (int r = 1; r < 16; r++)
+        {
+            if ((u.WrittenVi & (1u << r)) != 0)
+                sb.AppendLine($"{pad}Unsafe.Add(ref vi, {r}) = vi{r};");
+        }
+        if (u.WritesQ)
+            sb.AppendLine($"{pad}vu.Q = regQ;");
+        if (u.WritesI)
+            sb.AppendLine($"{pad}vu.I = regI;");
+    }
+
     public static int Run(string[] args)
     {
         string? elfPath = null;
@@ -159,41 +395,81 @@ public static class Vu1AotCommand
         sb.AppendLine("using System.Runtime.CompilerServices;");
         sb.AppendLine("using System.Runtime.InteropServices;");
         sb.AppendLine("using System.Runtime.Intrinsics;");
+        sb.AppendLine("using System.Runtime.Intrinsics.X86;");
         sb.AppendLine("using Castaway.Core;");
         sb.AppendLine();
         sb.AppendLine("namespace Castaway.GsRenderer.Vu1;");
         sb.AppendLine();
         sb.AppendLine("internal static class Vu1AotPrograms");
         sb.AppendLine("{");
+        sb.AppendLine("    private static readonly Vector128<float> Vf0 = Vector128.Create(0.0f, 0.0f, 0.0f, 1.0f);");
+        sb.AppendLine("    private static readonly Vector128<float> Vf0Mr32 = Vector128.Create(0.0f, 0.0f, 1.0f, 0.0f);");
+        sb.AppendLine("    private static readonly Vector128<uint> ExpMaskVec = Vector128.Create(0x7F800000u);");
+        sb.AppendLine("    private static readonly Vector128<uint> SignMaskVec = Vector128.Create(0x80000000u);");
+        sb.AppendLine("    private static readonly Vector128<uint> SafeHugeVec = Vector128.Create(0x5DDE0B6Bu); // 1.0e18f: finite, x*0=0, x*x<3.4e38");
+        sb.AppendLine("    private static readonly Vector128<uint>[] SanMaskTable =");
+        sb.AppendLine("    [");
+        for (int m = 0; m < 16; m++)
+        {
+            uint m0 = (m & 8) != 0 ? 0x7F800000u : 0u;
+            uint m1 = (m & 4) != 0 ? 0x7F800000u : 0u;
+            uint m2 = (m & 2) != 0 ? 0x7F800000u : 0u;
+            uint m3 = (m & 1) != 0 ? 0x7F800000u : 0u;
+            sb.AppendLine($"        Vector128.Create(0x{m0:X8}u, 0x{m1:X8}u, 0x{m2:X8}u, 0x{m3:X8}u),");
+        }
+        sb.AppendLine("    ];");
+        sb.AppendLine();
+        sb.AppendLine("    // Branchless PS2 exp-255 sanitizer (3 SSE ops, 0 branches, 0 calls): replaces IEEE NaN/Inf bit patterns");
+        sb.AppendLine("    // in float DataMem loads with finite +/-1e18f so 0.0f * uninitialized_garbage == 0.0f as on PS2 VU1.");
+        sb.AppendLine("    [MethodImpl(MethodImplOptions.AggressiveInlining)]");
+        sb.AppendLine("    private static Vector128<float> SanitizeFloat(Vector128<float> v)");
+        sb.AppendLine("    {");
+        sb.AppendLine("        Vector128<uint> u = v.AsUInt32();");
+        sb.AppendLine("        Vector128<uint> isExp255 = Vector128.Equals(u & ExpMaskVec, ExpMaskVec);");
+        sb.AppendLine("        return Vector128.ConditionalSelect(isExp255, (u & SignMaskVec) | SafeHugeVec, u).AsSingle();");
+        sb.AppendLine("    }");
+        sb.AppendLine();
+        sb.AppendLine("    [MethodImpl(MethodImplOptions.AggressiveInlining)]");
+        sb.AppendLine("    private static Vector128<float> SanitizeFloatMask(Vector128<float> v, int mask)");
+        sb.AppendLine("    {");
+        sb.AppendLine("        Vector128<uint> u = v.AsUInt32();");
+        sb.AppendLine("        Vector128<uint> isExp255 = Vector128.Equals(u & SanMaskTable[mask], ExpMaskVec);");
+        sb.AppendLine("        return Vector128.ConditionalSelect(isExp255, (u & SignMaskVec) | SafeHugeVec, u).AsSingle();");
+        sb.AppendLine("    }");
+        sb.AppendLine();
+        sb.AppendLine("    [MethodImpl(MethodImplOptions.AggressiveInlining)]");
+        sb.AppendLine("    private static Vector128<float> FmaAdd(Vector128<float> a, Vector128<float> b, Vector128<float> acc)");
+        sb.AppendLine("        => acc + (a * b);");
+        sb.AppendLine();
+        sb.AppendLine("    [MethodImpl(MethodImplOptions.AggressiveInlining)]");
+        sb.AppendLine("    private static Vector128<float> FmaSub(Vector128<float> a, Vector128<float> b, Vector128<float> acc)");
+        sb.AppendLine("        => acc - (a * b);");
+        sb.AppendLine();
+        sb.AppendLine("    [MethodImpl(MethodImplOptions.AggressiveInlining)]");
+        sb.AppendLine("    private static Vector128<float> VuMax(Vector128<float> a, Vector128<float> b)");
+        sb.AppendLine("        => Sse.IsSupported ? Sse.Max(a, b) : Vector128.Max(a, b);");
+        sb.AppendLine();
+        sb.AppendLine("    [MethodImpl(MethodImplOptions.AggressiveInlining)]");
+        sb.AppendLine("    private static Vector128<float> VuMin(Vector128<float> a, Vector128<float> b)");
+        sb.AppendLine("        => Sse.IsSupported ? Sse.Min(a, b) : Vector128.Min(a, b);");
+        sb.AppendLine();
 
         foreach (var r in regions)
         {
             int midOff = r.Bytes.Length >= 72 ? 64 : 8;
+            int tailOff = r.Bytes.Length >= 16 ? (r.Bytes.Length - 8) : 0;
             ulong headQ0 = BinaryPrimitives.ReadUInt64LittleEndian(r.Bytes.AsSpan(0, 8));
             ulong midQ0 = BinaryPrimitives.ReadUInt64LittleEndian(r.Bytes.AsSpan(midOff, 8));
+            ulong tailQ0 = BinaryPrimitives.ReadUInt64LittleEndian(r.Bytes.AsSpan(tailOff, 8));
             sb.AppendLine($"    public const int {r.Name}StartByte = 0x{r.StartByteAddr:X4};");
             sb.AppendLine($"    public const int {r.Name}ByteLength = {r.Bytes.Length};");
             sb.AppendLine($"    public const uint {r.Name}Crc32 = 0x{r.Crc32:X8}u;");
             sb.AppendLine($"    public const int {r.Name}MidOffset = {midOff};");
+            sb.AppendLine($"    public const int {r.Name}TailOffset = {tailOff};");
             sb.AppendLine($"    public const ulong {r.Name}HeadQ0 = 0x{headQ0:X16}ul;");
             sb.AppendLine($"    public const ulong {r.Name}MidQ0 = 0x{midQ0:X16}ul;");
+            sb.AppendLine($"    public const ulong {r.Name}TailQ0 = 0x{tailQ0:X16}ul;");
         }
-        sb.AppendLine();
-
-        sb.AppendLine("    private static readonly uint[] Crc32Table = BuildCrc32Table();");
-        sb.AppendLine();
-        sb.AppendLine("    private static uint[] BuildCrc32Table()");
-        sb.AppendLine("    {");
-        sb.AppendLine("        var tbl = new uint[256];");
-        sb.AppendLine("        for (uint i = 0; i < 256; i++)");
-        sb.AppendLine("        {");
-        sb.AppendLine("            uint c = i;");
-        sb.AppendLine("            for (int k = 0; k < 8; k++)");
-        sb.AppendLine("                c = (c & 1u) != 0 ? (c >> 1) ^ 0xEDB88320u : (c >> 1);");
-        sb.AppendLine("            tbl[i] = c;");
-        sb.AppendLine("        }");
-        sb.AppendLine("        return tbl;");
-        sb.AppendLine("    }");
         sb.AppendLine();
 
         sb.AppendLine("    [MethodImpl(MethodImplOptions.AggressiveInlining)]");
@@ -235,24 +511,11 @@ public static class Vu1AotCommand
             sb.AppendLine($"            mask &= ~0x{bit:X}u;");
             sb.AppendLine($"            if (Unsafe.ReadUnaligned<ulong>(ref Unsafe.Add(ref mm, {r.Name}StartByte)) == {r.Name}HeadQ0");
             sb.AppendLine($"                && Unsafe.ReadUnaligned<ulong>(ref Unsafe.Add(ref mm, {r.Name}StartByte + {r.Name}MidOffset)) == {r.Name}MidQ0");
-            sb.AppendLine($"                && ComputeCrc32(microMem.AsSpan({r.Name}StartByte, {r.Name}ByteLength)) == {r.Name}Crc32)");
+            sb.AppendLine($"                && Unsafe.ReadUnaligned<ulong>(ref Unsafe.Add(ref mm, {r.Name}StartByte + {r.Name}TailOffset)) == {r.Name}TailQ0)");
             sb.AppendLine($"                mask |= 0x{bit:X}u;");
             sb.AppendLine("        }");
         }
         sb.AppendLine("        return mask;");
-        sb.AppendLine("    }");
-        sb.AppendLine();
-        sb.AppendLine("    private static uint ComputeCrc32(ReadOnlySpan<byte> data)");
-        sb.AppendLine("    {");
-        sb.AppendLine("        uint crc = 0xFFFFFFFFu;");
-        sb.AppendLine("        ref uint tbl = ref MemoryMarshal.GetArrayDataReference(Crc32Table);");
-        sb.AppendLine("        ref byte p = ref MemoryMarshal.GetReference(data);");
-        sb.AppendLine("        int len = data.Length;");
-        sb.AppendLine("        for (int i = 0; i < len; i++)");
-        sb.AppendLine("        {");
-        sb.AppendLine("            crc = (crc >> 8) ^ Unsafe.Add(ref tbl, (byte)(crc ^ Unsafe.Add(ref p, i)));");
-        sb.AppendLine("        }");
-        sb.AppendLine("        return ~crc;");
         sb.AppendLine("    }");
         sb.AppendLine();
 
@@ -786,6 +1049,11 @@ public static class Vu1AotCommand
         sb.AppendLine("        ref Vector128<float> vf = ref MemoryMarshal.GetArrayDataReference(vu.VF);");
         sb.AppendLine("        ref ushort vi = ref MemoryMarshal.GetArrayDataReference(vu.VI);");
         sb.AppendLine("        ref byte dm = ref MemoryMarshal.GetArrayDataReference(vu.DataMem);");
+        sb.AppendLine("        Vector128<float> tmp = default;");
+        sb.AppendLine("        ushort idxTmp = 0;");
+        sb.AppendLine("        bool btTmp = false;");
+        sb.AppendLine("        int jtTmp = 0;");
+        sb.AppendLine("        _ = (tmp, idxTmp, btTmp, jtTmp);");
 
         if (sub.MethodName == "Sub_Base0_0330")
         {
@@ -814,6 +1082,10 @@ public static class Vu1AotCommand
             sb.AppendLine("        }");
         }
 
+        _curUsage = ScanMethodUsage(img, sub.Nodes);
+        _useLocalRegs = true;
+        EmitDeclareAndLoadLocals(in _curUsage, sb, "        ");
+
         var nodeSet = new HashSet<int>(sub.Nodes);
         var labelNeeded = CollectJumpTargets(img, sub.Nodes, null);
 
@@ -825,6 +1097,7 @@ public static class Vu1AotCommand
 
         int indent = 8;
         EmitNodeList(img, sub.Nodes, nodeSet, labelNeeded, null, null, sub.UsesFlags, isSubroutine: true, sub.LinkReg, sb, indent);
+        _useLocalRegs = false;
         sb.AppendLine("    }");
         sb.AppendLine();
     }
@@ -845,8 +1118,17 @@ public static class Vu1AotCommand
         sb.AppendLine("        ref Vector128<float> vf = ref MemoryMarshal.GetArrayDataReference(vu.VF);");
         sb.AppendLine("        ref ushort vi = ref MemoryMarshal.GetArrayDataReference(vu.VI);");
         sb.AppendLine("        ref byte dm = ref MemoryMarshal.GetArrayDataReference(vu.DataMem);");
+        sb.AppendLine("        Vector128<float> tmp = default;");
+        sb.AppendLine("        ushort idxTmp = 0;");
+        sb.AppendLine("        bool btTmp = false;");
+        sb.AppendLine("        int jtTmp = 0;");
+        sb.AppendLine("        _ = (tmp, idxTmp, btTmp, jtTmp);");
         sb.AppendLine("        Vector128<float> acc = vu.ACC;");
         sb.AppendLine("        int steps = 0;");
+
+        _curUsage = ScanMethodUsage(img, nodes);
+        _useLocalRegs = true;
+        EmitDeclareAndLoadLocals(in _curUsage, sb, "        ");
 
         var nodeSet = new HashSet<int>(nodes);
         var labelNeeded = CollectJumpTargets(img, nodes, cleanSubs);
@@ -867,6 +1149,7 @@ public static class Vu1AotCommand
         }
 
         EmitNodeList(img, nodes, nodeSet, labelNeeded, cleanSubs, jrTargetsByReg, usesFlags, isSubroutine: false, linkRegFilter: 0, sb, 8);
+        _useLocalRegs = false;
         sb.AppendLine("    }");
         sb.AppendLine();
     }
@@ -950,9 +1233,12 @@ public static class Vu1AotCommand
             }
         }
 
-        string StepCapStmt() => isSubroutine
-            ? "if (steps >= 65536) return;"
-            : "if (steps >= 65536) { vu.ACC = acc; vu.TotalInstructionsExecuted += steps; return; }";
+        bool usedStepCap = false;
+        string StepCapStmt()
+        {
+            usedStepCap = true;
+            return "if (steps >= 65536) goto exit_stepcap;";
+        }
 
         var macProducerSlots = new HashSet<int>();
         void AddMacProducer(int readSlot)
@@ -968,14 +1254,369 @@ public static class Vu1AotCommand
                 }
             }
         }
+        bool methodUsesStatusFlags = false;
         foreach (int r in nodes)
         {
             ref readonly var sr = ref img.Slots[r];
             if (SlotReadsFlags(in sr))
                 AddMacProducer(r);
-            if ((sr.IsE || sr.BranchOp != BranchOp.None) && SlotReadsFlags(in img.Slots[(r + 1) & 0x7FF]))
-                AddMacProducer((r + 1) & 0x7FF);
+            if (!sr.IsImm && sr.LowerOp is LowerOp.Fsand or LowerOp.Fsor or LowerOp.Fsset)
+                methodUsesStatusFlags = true;
+            if (sr.IsE || sr.BranchOp != BranchOp.None)
+            {
+                ref readonly var sd = ref img.Slots[(r + 1) & 0x7FF];
+                if (SlotReadsFlags(in sd))
+                    AddMacProducer((r + 1) & 0x7FF);
+                if (!sd.IsImm && sd.LowerOp is LowerOp.Fsand or LowerOp.Fsor or LowerOp.Fsset)
+                    methodUsesStatusFlags = true;
+            }
         }
+        _curUsesStatusFlags = methodUsesStatusFlags;
+
+        // Backward CFG dataflow for per-lane FP-vs-raw-int usage (used to sanitize exp-255 NaN/Inf on pure-float LQ/LQI/LQD)
+        // plus backward basic-block lane liveness for ACC and VF1..VF31.
+        var slotToIdx = new Dictionary<int, int>(nodes.Count);
+        for (int i = 0; i < nodes.Count; i++) slotToIdx[nodes[i]] = i;
+
+        static void TransferSlotFpRaw(in DecodedSlot s, byte[] fp, byte[] raw)
+        {
+            bool hasUpper = s.UpperOp != UpperOp.Nop;
+            bool hasLower = !s.IsImm && s.LowerOp != LowerOp.Nop;
+            int upperOutReg = 0;
+            uint upperOutMask = 0;
+            if (hasUpper && !IsAccOp(s.UpperOp) && s.UpperOp != UpperOp.Clip)
+            {
+                upperOutReg = (UsesFtDestUpper(s.UpperOp) ? s.Ft : s.Fd) & 31;
+                upperOutMask = s.UpperOp == UpperOp.Opmsub ? 0xEu : (s.Dest & 0xFu);
+            }
+            int lowerOutReg = 0;
+            uint lowerOutMask = 0;
+            if (hasLower && s.LowerOp is LowerOp.Lq or LowerOp.Lqi or LowerOp.Lqd or LowerOp.Move or LowerOp.Mr32 or LowerOp.Mfir or LowerOp.Rnext or LowerOp.Rget or LowerOp.Mfp)
+            {
+                lowerOutReg = s.It & 31;
+                lowerOutMask = s.LowerDest & 0xFu;
+            }
+            bool conflict = upperOutReg != 0 && hasLower && LowerTouchesVf(in s, upperOutReg);
+
+            if (lowerOutReg != 0 && !conflict)
+            {
+                fp[lowerOutReg] = (byte)(fp[lowerOutReg] & ~lowerOutMask);
+                raw[lowerOutReg] = (byte)(raw[lowerOutReg] & ~lowerOutMask);
+            }
+            if (hasLower)
+            {
+                switch (s.LowerOp)
+                {
+                    case LowerOp.Sq or LowerOp.Sqi or LowerOp.Sqd:
+                        raw[s.Is & 31] = (byte)(raw[s.Is & 31] | (s.LowerDest & 0xFu));
+                        break;
+                    case LowerOp.Move:
+                        fp[s.Is & 31] = (byte)(fp[s.Is & 31] | (fp[s.It & 31] & (s.LowerDest & 0xFu)));
+                        raw[s.Is & 31] = (byte)(raw[s.Is & 31] | (raw[s.It & 31] & (s.LowerDest & 0xFu)));
+                        break;
+                    case LowerOp.Mr32 or LowerOp.Mtir or LowerOp.Rinit or LowerOp.Rxor:
+                        raw[s.Is & 31] = 0xF;
+                        break;
+                    case LowerOp.Sqrt:
+                        fp[s.It & 31] = (byte)(fp[s.It & 31] | (byte)(8 >> (s.Ftf & 3)));
+                        break;
+                    case LowerOp.Esadd or LowerOp.Ersadd or LowerOp.Eleng or LowerOp.Erleng or
+                         LowerOp.Eatanxy or LowerOp.Eatanxz or LowerOp.Esum or LowerOp.Ercpr or
+                         LowerOp.Esqrt or LowerOp.Ersqrt or LowerOp.Esin or LowerOp.Eatan or LowerOp.Eexp:
+                        fp[s.Is & 31] = 0xF;
+                        break;
+                    case LowerOp.Div or LowerOp.Rsqrt:
+                        fp[s.Is & 31] = (byte)(fp[s.Is & 31] | (byte)(8 >> (s.Fsf & 3)));
+                        fp[s.It & 31] = (byte)(fp[s.It & 31] | (byte)(8 >> (s.Ftf & 3)));
+                        break;
+                }
+            }
+            if (hasUpper)
+            {
+                if (upperOutReg != 0 && !conflict)
+                {
+                    fp[upperOutReg] = (byte)(fp[upperOutReg] & ~upperOutMask);
+                    raw[upperOutReg] = (byte)(raw[upperOutReg] & ~upperOutMask);
+                }
+                if (s.UpperOp is UpperOp.AddBc or UpperOp.SubBc or UpperOp.MaddBc or UpperOp.MsubBc or
+                    UpperOp.MaxBc or UpperOp.MinBc or UpperOp.MulBc or
+                    UpperOp.AddABc or UpperOp.SubABc or UpperOp.MaddABc or UpperOp.MsubABc or UpperOp.MulABc)
+                {
+                    fp[s.Fs & 31] = (byte)(fp[s.Fs & 31] | (s.Dest & 0xFu));
+                    fp[s.Ft & 31] = (byte)(fp[s.Ft & 31] | (byte)(8 >> (s.Bc & 3)));
+                }
+                else if (s.UpperOp == UpperOp.Clip)
+                {
+                    fp[s.Fs & 31] = (byte)(fp[s.Fs & 31] | 0xE);
+                    fp[s.Ft & 31] = (byte)(fp[s.Ft & 31] | 0x1);
+                }
+                else if (s.UpperOp is UpperOp.Opmula or UpperOp.Opmsub)
+                {
+                    fp[s.Fs & 31] = (byte)(fp[s.Fs & 31] | 0xE);
+                    fp[s.Ft & 31] = (byte)(fp[s.Ft & 31] | 0xE);
+                }
+                else if (s.UpperOp is UpperOp.Itof0 or UpperOp.Itof4 or UpperOp.Itof12 or UpperOp.Itof15)
+                {
+                    raw[s.Fs & 31] = (byte)(raw[s.Fs & 31] | (s.Dest & 0xFu));
+                }
+                else if (s.UpperOp is UpperOp.Ftoi0 or UpperOp.Ftoi4 or UpperOp.Ftoi12 or UpperOp.Ftoi15 or
+                         UpperOp.Abs or UpperOp.MulQ or UpperOp.AddQ or UpperOp.MaddQ or UpperOp.SubQ or UpperOp.MsubQ or
+                         UpperOp.MulI or UpperOp.AddI or UpperOp.MaddI or UpperOp.SubI or UpperOp.MsubI or
+                         UpperOp.MaxI or UpperOp.MinI or
+                         UpperOp.MulAq or UpperOp.AddAq or UpperOp.MaddAq or UpperOp.SubAq or UpperOp.MsubAq or
+                         UpperOp.MulAi or UpperOp.AddAi or UpperOp.MaddAi or UpperOp.SubAi or UpperOp.MsubAi)
+                {
+                    fp[s.Fs & 31] = (byte)(fp[s.Fs & 31] | (s.Dest & 0xFu));
+                }
+                else
+                {
+                    fp[s.Fs & 31] = (byte)(fp[s.Fs & 31] | (s.Dest & 0xFu));
+                    fp[s.Ft & 31] = (byte)(fp[s.Ft & 31] | (s.Dest & 0xFu));
+                }
+            }
+            fp[0] = 0;
+            raw[0] = 0;
+        }
+
+        byte[][] fpIn = new byte[nodes.Count][];
+        byte[][] rawIn = new byte[nodes.Count][];
+        for (int i = 0; i < nodes.Count; i++) { fpIn[i] = new byte[32]; rawIn[i] = new byte[32]; }
+        byte[] fpTmp = new byte[32];
+        byte[] rawTmp = new byte[32];
+        byte[] lqSanitizeMask = new byte[nodes.Count];
+        byte[] lqDelaySanitizeMask = new byte[nodes.Count];
+
+        bool changed = true;
+        int iterCap = 32;
+        while (changed && iterCap-- > 0)
+        {
+            changed = false;
+            for (int idx = nodes.Count - 1; idx >= 0; idx--)
+            {
+                int cur = nodes[idx];
+                ref readonly var s = ref img.Slots[cur];
+                Array.Clear(fpTmp);
+                Array.Clear(rawTmp);
+
+                void MergeSucc(int targetSlot)
+                {
+                    if (slotToIdx.TryGetValue(targetSlot & 0x7FF, out int si))
+                    {
+                        byte[] sf = fpIn[si], sr = rawIn[si];
+                        for (int r = 1; r < 32; r++) { fpTmp[r] |= sf[r]; rawTmp[r] |= sr[r]; }
+                    }
+                    else
+                    {
+                        for (int r = 1; r < 32; r++) rawTmp[r] = 0xF;
+                    }
+                }
+
+                if (s.IsE && s.BranchOp == BranchOp.None)
+                {
+                    for (int r = 1; r < 32; r++) rawTmp[r] = 0xF; // exit: preserve all live-out registers raw
+                }
+                else if (s.BranchOp != BranchOp.None)
+                {
+                    int d = (cur + 1) & 0x7FF;
+                    ref readonly var ds = ref img.Slots[d];
+                    if (s.IsE || ds.IsE || (s.BranchOp == BranchOp.Jr && isSubroutine))
+                    {
+                        for (int r = 1; r < 32; r++) rawTmp[r] = 0xF;
+                    }
+                    else if (s.BranchOp == BranchOp.Jr && jrTargetsByReg != null)
+                    {
+                        foreach (int t in jrTargetsByReg[s.Is & 15]) MergeSucc(t);
+                    }
+                    else if (s.BranchOp == BranchOp.Bal && cleanSubs != null && cleanSubs.ContainsKey(s.BranchTargetSlot))
+                    {
+                        for (int r = 1; r < 32; r++) rawTmp[r] = 0xF;
+                    }
+                    else
+                    {
+                        MergeSucc(s.BranchTargetSlot);
+                        if (s.BranchOp is not (BranchOp.B or BranchOp.Bal or BranchOp.Jr or BranchOp.Jalr))
+                            MergeSucc((cur + 2) & 0x7FF);
+                    }
+                    if (!ds.IsImm && ds.LowerOp is LowerOp.Lq or LowerOp.Lqi or LowerOp.Lqd && (ds.It & 31) != 0)
+                    {
+                        int lr = ds.It & 31;
+                        lqDelaySanitizeMask[idx] = (byte)((ds.LowerDest & 0xFu) & fpTmp[lr] & ~rawTmp[lr]);
+                    }
+                    TransferSlotFpRaw(in ds, fpTmp, rawTmp);
+                }
+                else
+                {
+                    MergeSucc((cur + 1) & 0x7FF);
+                }
+
+                if (!s.IsImm && s.LowerOp is LowerOp.Lq or LowerOp.Lqi or LowerOp.Lqd && (s.It & 31) != 0)
+                {
+                    int lr = s.It & 31;
+                    lqSanitizeMask[idx] = (byte)((s.LowerDest & 0xFu) & fpTmp[lr] & ~rawTmp[lr]);
+                }
+                TransferSlotFpRaw(in s, fpTmp, rawTmp);
+
+                byte[] cf = fpIn[idx], cr = rawIn[idx];
+                for (int r = 1; r < 32; r++)
+                {
+                    if (cf[r] != fpTmp[r] || cr[r] != rawTmp[r])
+                    {
+                        cf[r] = fpTmp[r];
+                        cr[r] = rawTmp[r];
+                        changed = true;
+                    }
+                }
+            }
+        }
+
+        byte[] accLiveAfter = new byte[nodes.Count];
+        byte[] upperVfLiveAfter = new byte[nodes.Count];
+        byte[] lowerVfLiveAfter = new byte[nodes.Count];
+        byte accLive = 0xF;
+        Span<byte> vfLive = stackalloc byte[32];
+        vfLive.Fill(0xF);
+
+        for (int idx = nodes.Count - 1; idx >= 0; idx--)
+        {
+            int cur = nodes[idx];
+            ref readonly var s = ref img.Slots[cur];
+            bool fallthrough = idx + 1 < nodes.Count && nodes[idx + 1] == ((cur + 1) & 0x7FF) && !labelNeeded.Contains(nodes[idx + 1]);
+            bool isLinear = !s.IsE && s.BranchOp == BranchOp.None && (s.IsImm || s.LowerOp != LowerOp.Xgkick);
+
+            if (!fallthrough || !isLinear)
+            {
+                accLive = 0xF;
+                vfLive.Fill(0xF);
+                accLiveAfter[idx] = 0xF;
+                upperVfLiveAfter[idx] = 0xF;
+                lowerVfLiveAfter[idx] = 0xF;
+                continue;
+            }
+
+            bool hasUpper = s.UpperOp != UpperOp.Nop;
+            bool hasLower = !s.IsImm && s.LowerOp != LowerOp.Nop;
+
+            int upperOutReg = 0;
+            uint upperOutMask = 0;
+            if (hasUpper && !IsAccOp(s.UpperOp) && s.UpperOp != UpperOp.Clip)
+            {
+                upperOutReg = (UsesFtDestUpper(s.UpperOp) ? s.Ft : s.Fd) & 31;
+                upperOutMask = s.UpperOp == UpperOp.Opmsub ? 0xEu : (s.Dest & 0xFu);
+            }
+
+            int lowerOutReg = 0;
+            uint lowerOutMask = 0;
+            if (hasLower && s.LowerOp is LowerOp.Lq or LowerOp.Lqi or LowerOp.Lqd or LowerOp.Move or LowerOp.Mr32 or LowerOp.Mfir or LowerOp.Rnext or LowerOp.Rget or LowerOp.Mfp)
+            {
+                lowerOutReg = s.It & 31;
+                lowerOutMask = s.LowerDest & 0xFu;
+            }
+
+            bool upperLowerConflict = upperOutReg != 0 && hasLower && LowerTouchesVf(in s, upperOutReg);
+
+            accLiveAfter[idx] = accLive;
+            lowerVfLiveAfter[idx] = (lowerOutReg != 0 && !upperLowerConflict) ? vfLive[lowerOutReg] : (byte)0xF;
+
+            // Update vfLive backwards through Lower first (Lower executes after Upper in EmitBundle)
+            if (lowerOutReg != 0 && !upperLowerConflict)
+                vfLive[lowerOutReg] = (byte)(vfLive[lowerOutReg] & ~lowerOutMask);
+            if (hasLower)
+            {
+                switch (s.LowerOp)
+                {
+                    case LowerOp.Sq or LowerOp.Sqi or LowerOp.Sqd or LowerOp.Move:
+                        vfLive[s.Is & 31] = (byte)(vfLive[s.Is & 31] | (s.LowerDest & 0xFu));
+                        break;
+                    case LowerOp.Mr32 or LowerOp.Mtir or LowerOp.Rinit or LowerOp.Rxor or LowerOp.Sqrt or
+                         LowerOp.Esadd or LowerOp.Ersadd or LowerOp.Eleng or LowerOp.Erleng or
+                         LowerOp.Eatanxy or LowerOp.Eatanxz or LowerOp.Esum or LowerOp.Ercpr or
+                         LowerOp.Esqrt or LowerOp.Ersqrt or LowerOp.Esin or LowerOp.Eatan or LowerOp.Eexp:
+                        vfLive[s.Is & 31] = 0xF;
+                        vfLive[s.It & 31] = 0xF;
+                        break;
+                    case LowerOp.Div or LowerOp.Rsqrt:
+                        vfLive[s.Is & 31] = (byte)(vfLive[s.Is & 31] | (byte)(8 >> (s.Fsf & 3)));
+                        vfLive[s.It & 31] = (byte)(vfLive[s.It & 31] | (byte)(8 >> (s.Ftf & 3)));
+                        break;
+                }
+            }
+
+            upperVfLiveAfter[idx] = (upperOutReg != 0 && !upperLowerConflict) ? vfLive[upperOutReg] : (byte)0xF;
+
+            // Update accLive & vfLive backwards through Upper
+            if (hasUpper)
+            {
+                if (IsAccOp(s.UpperOp))
+                {
+                    uint wMask = s.UpperOp == UpperOp.Opmula ? 0xEu : (s.Dest & 0xFu);
+                    accLive = (byte)(accLive & ~wMask);
+                    if (s.UpperOp is UpperOp.MaddA or UpperOp.MaddABc or UpperOp.MaddAi or UpperOp.MaddAq or
+                        UpperOp.MsubA or UpperOp.MsubABc or UpperOp.MsubAi or UpperOp.MsubAq)
+                    {
+                        accLive = (byte)(accLive | wMask);
+                    }
+                }
+                else
+                {
+                    if (upperOutReg != 0)
+                    {
+                        if (!upperLowerConflict)
+                            vfLive[upperOutReg] = (byte)(vfLive[upperOutReg] & ~upperOutMask);
+                        else
+                            vfLive[upperOutReg] = 0xF;
+                    }
+                    if (s.UpperOp is UpperOp.Madd or UpperOp.MaddBc or UpperOp.MaddI or UpperOp.MaddQ or
+                        UpperOp.Msub or UpperOp.MsubBc or UpperOp.MsubI or UpperOp.MsubQ)
+                    {
+                        accLive = (byte)(accLive | (s.Dest & 0xFu));
+                    }
+                    else if (s.UpperOp == UpperOp.Opmsub)
+                    {
+                        accLive = (byte)(accLive | 0xE);
+                    }
+                }
+
+                // Mark Upper source lanes live
+                if (s.UpperOp is UpperOp.AddBc or UpperOp.SubBc or UpperOp.MaddBc or UpperOp.MsubBc or
+                    UpperOp.MaxBc or UpperOp.MinBc or UpperOp.MulBc or
+                    UpperOp.AddABc or UpperOp.SubABc or UpperOp.MaddABc or UpperOp.MsubABc or UpperOp.MulABc)
+                {
+                    vfLive[s.Fs & 31] = (byte)(vfLive[s.Fs & 31] | (s.Dest & 0xFu));
+                    vfLive[s.Ft & 31] = (byte)(vfLive[s.Ft & 31] | (byte)(8 >> (s.Bc & 3)));
+                }
+                else if (s.UpperOp == UpperOp.Clip)
+                {
+                    vfLive[s.Fs & 31] = (byte)(vfLive[s.Fs & 31] | 0xE);
+                    vfLive[s.Ft & 31] = (byte)(vfLive[s.Ft & 31] | 0x1);
+                }
+                else if (s.UpperOp is UpperOp.Opmula or UpperOp.Opmsub)
+                {
+                    vfLive[s.Fs & 31] = (byte)(vfLive[s.Fs & 31] | 0xE);
+                    vfLive[s.Ft & 31] = (byte)(vfLive[s.Ft & 31] | 0xE);
+                }
+                else if (s.UpperOp is UpperOp.Itof0 or UpperOp.Itof4 or UpperOp.Itof12 or UpperOp.Itof15 or
+                         UpperOp.Ftoi0 or UpperOp.Ftoi4 or UpperOp.Ftoi12 or UpperOp.Ftoi15 or
+                         UpperOp.Abs or UpperOp.MulQ or UpperOp.AddQ or UpperOp.MaddQ or UpperOp.SubQ or UpperOp.MsubQ or
+                         UpperOp.MulI or UpperOp.AddI or UpperOp.MaddI or UpperOp.SubI or UpperOp.MsubI or
+                         UpperOp.MaxI or UpperOp.MinI or
+                         UpperOp.MulAq or UpperOp.AddAq or UpperOp.MaddAq or UpperOp.SubAq or UpperOp.MsubAq or
+                         UpperOp.MulAi or UpperOp.AddAi or UpperOp.MaddAi or UpperOp.SubAi or UpperOp.MsubAi)
+                {
+                    vfLive[s.Fs & 31] = (byte)(vfLive[s.Fs & 31] | (s.Dest & 0xFu));
+                }
+                else
+                {
+                    vfLive[s.Fs & 31] = (byte)(vfLive[s.Fs & 31] | (s.Dest & 0xFu));
+                    vfLive[s.Ft & 31] = (byte)(vfLive[s.Ft & 31] | (s.Dest & 0xFu));
+                }
+            }
+            vfLive[0] = 0xF;
+        }
+
+        _curAccLiveAfter = 0xF;
+        _curUpperVfLiveAfter = 0xF;
+        _curLowerVfLiveAfter = 0xF;
+        _curLqSanitizeMask = 0;
 
         for (int idx = 0; idx < nodes.Count; idx++)
         {
@@ -992,7 +1633,7 @@ public static class Vu1AotCommand
             string curFlagsExpr = curProducesFlags ? (isSubroutine ? "updateFlags" : "true") : "false";
             bool? curConstFlags = curProducesFlags ? (isSubroutine ? (bool?)null : true) : false;
 
-            if (s.IsE)
+            if (s.IsE && s.BranchOp == BranchOp.None)
             {
                 int d = (cur + 1) & 0x7FF;
                 bool dProducesFlags = macProducerSlots.Contains(d);
@@ -1003,6 +1644,7 @@ public static class Vu1AotCommand
                 pendingStepRun += 2;
                 FlushSteps();
                 int exitAddr = ((cur + 2) & 0x7FF) << 3;
+                EmitFlushLocals(in _curUsage, sb, pad);
                 sb.AppendLine($"{pad}vu.ACC = acc;");
                 sb.AppendLine($"{pad}vu.Tpc = 0x{exitAddr:X4};");
                 sb.AppendLine($"{pad}vu.TotalInstructionsExecuted += steps;");
@@ -1030,19 +1672,22 @@ public static class Vu1AotCommand
                     _ => null
                 };
 
-                string condVar = $"bt_{cur}";
+                string condVar = "btTmp";
                 if (condExpr != null)
-                    sb.AppendLine($"{pad}bool {condVar} = {condExpr};");
+                    sb.AppendLine($"{pad}{condVar} = {condExpr};");
 
                 string? jrVar = null;
                 if (s.BranchOp is BranchOp.Jr or BranchOp.Jalr)
                 {
-                    jrVar = $"jt_{cur}";
-                    sb.AppendLine($"{pad}int {jrVar} = {ReadViExpr(s.Is)} & 0x7FF;");
+                    jrVar = "jtTmp";
+                    sb.AppendLine($"{pad}{jrVar} = {ReadViExpr(s.Is)} & 0x7FF;");
                 }
 
+                _curLqSanitizeMask = lqSanitizeMask[idx];
                 EmitBundle(img, $"{cur}", in s, curFlagsExpr, curConstFlags, sb, pad);
+                _curLqSanitizeMask = lqDelaySanitizeMask[idx];
                 EmitBundle(img, $"{d}_d{cur}", in ds, dFlagsExpr, dConstFlags, sb, pad);
+                _curLqSanitizeMask = 0;
                 pendingStepRun += 2;
 
                 if (s.BranchOp is BranchOp.Bal or BranchOp.Jalr)
@@ -1051,17 +1696,20 @@ public static class Vu1AotCommand
                     if (lr != 0 && !SlotWritesVi(in ds, lr))
                     {
                         int retSlot = (cur + 2) & 0x7FF;
-                        sb.AppendLine($"{pad}Unsafe.Add(ref vi, {lr}) = {retSlot};");
+                        EmitWriteVi(lr, $"{retSlot}", sb, pad);
                     }
                 }
 
                 FlushSteps();
 
-                if (ds.IsE)
+                if (s.IsE || ds.IsE)
                 {
+                    EmitFlushLocals(in _curUsage, sb, pad);
                     sb.AppendLine($"{pad}vu.ACC = acc;");
                     if (condExpr != null)
                         sb.AppendLine($"{pad}vu.Tpc = (ushort)(({condVar} ? {s.BranchTargetSlot} : {(cur + 2) & 0x7FF}) << 3);");
+                    else if (jrVar != null)
+                        sb.AppendLine($"{pad}vu.Tpc = (ushort)({jrVar} << 3);");
                     else
                         sb.AppendLine($"{pad}vu.Tpc = 0x{(s.BranchTargetSlot << 3):X4};");
                     sb.AppendLine($"{pad}vu.TotalInstructionsExecuted += steps;");
@@ -1074,15 +1722,17 @@ public static class Vu1AotCommand
                 {
                     if (isSubroutine)
                     {
+                        EmitFlushLocals(in _curUsage, sb, pad);
                         sb.AppendLine($"{pad}return;");
                     }
                     else
                     {
+                        usedStepCap = true;
                         sb.AppendLine($"{pad}switch ({jrVar})");
                         sb.AppendLine($"{pad}{{");
                         foreach (int t in jrTargetsByReg![s.Is & 15])
                             sb.AppendLine($"{pad}    case {t}: goto slot_{t};");
-                        sb.AppendLine($"{pad}    default: vu.ACC = acc; vu.TotalInstructionsExecuted += steps; return;");
+                        sb.AppendLine($"{pad}    default: goto exit_stepcap;");
                         sb.AppendLine($"{pad}}}");
                     }
                     terminated = true;
@@ -1092,8 +1742,13 @@ public static class Vu1AotCommand
                 if (s.BranchOp == BranchOp.Bal && cleanSubs != null && cleanSubs.TryGetValue(s.BranchTargetSlot, out var sub))
                 {
                     string subFlags = usesFlags ? "true" : "false";
+                    EmitFlushLocals(in _curUsage, sb, pad);
                     sb.AppendLine($"{pad}{sub.MethodName}(vu, ref steps, ref acc, {subFlags});");
-                    sb.AppendLine($"{pad}{StepCapStmt()}");
+                    if (isSubroutine)
+                        sb.AppendLine($"{pad}if (steps >= 65536) return;");
+                    else
+                        sb.AppendLine($"{pad}if (steps >= 65536) {{ vu.ACC = acc; vu.TotalInstructionsExecuted += steps; return; }}");
+                    EmitReloadLocals(in _curUsage, sb, pad);
                     int fall = (cur + 2) & 0x7FF;
                     if (idx + 1 >= nodes.Count || nodes[idx + 1] != fall)
                     {
@@ -1137,7 +1792,15 @@ public static class Vu1AotCommand
             }
 
             // Normal linear slot
+            _curAccLiveAfter = accLiveAfter[idx];
+            _curUpperVfLiveAfter = upperVfLiveAfter[idx];
+            _curLowerVfLiveAfter = lowerVfLiveAfter[idx];
+            _curLqSanitizeMask = lqSanitizeMask[idx];
             EmitBundle(img, $"{cur}", in s, curFlagsExpr, curConstFlags, sb, pad);
+            _curAccLiveAfter = 0xF;
+            _curUpperVfLiveAfter = 0xF;
+            _curLowerVfLiveAfter = 0xF;
+            _curLqSanitizeMask = 0;
             pendingStepRun++;
 
             int next = (cur + 1) & 0x7FF;
@@ -1158,11 +1821,26 @@ public static class Vu1AotCommand
         if (!terminated)
         {
             FlushSteps();
+            EmitFlushLocals(in _curUsage, sb, pad);
             if (!isSubroutine)
             {
                 sb.AppendLine($"{pad}vu.ACC = acc;");
                 sb.AppendLine($"{pad}vu.TotalInstructionsExecuted += steps;");
             }
+            if (usedStepCap)
+                sb.AppendLine($"{pad}return;");
+        }
+
+        if (usedStepCap)
+        {
+            sb.AppendLine("    exit_stepcap:");
+            EmitFlushLocals(in _curUsage, sb, pad);
+            if (!isSubroutine)
+            {
+                sb.AppendLine($"{pad}vu.ACC = acc;");
+                sb.AppendLine($"{pad}vu.TotalInstructionsExecuted += steps;");
+            }
+            sb.AppendLine($"{pad}return;");
         }
     }
 
@@ -1203,31 +1881,43 @@ public static class Vu1AotCommand
                 uint outMask = s.UpperOp == UpperOp.Opmsub ? 0xEu : s.Dest;
                 string resExpr = BuildUpperResultExpr(in s);
 
-                bool needResultVar = (updatesFlags && constFlags != false) || outReg != 0;
+                bool needFlags = updatesFlags && constFlags != false;
+                bool isSelfNoOp = !needFlags && outReg != 0 && resExpr == ReadVfExpr(outReg) &&
+                    (!hasLower || !LowerWritesVf(in s, outReg));
+                bool needResultVar = !isSelfNoOp && (needFlags || outReg != 0);
                 if (needResultVar)
                 {
-                    string tmp = $"up_{tag}";
-                    sb.AppendLine($"{pad}Vector128<float> {tmp} = {resExpr};");
-                    if (updatesFlags)
+                    bool deferWrite = outReg != 0 && outMask != 0 && hasLower && LowerTouchesVf(in s, outReg);
+                    byte liveAfter = deferWrite ? (byte)0xF : _curUpperVfLiveAfter;
+                    if (!needFlags && !deferWrite && outReg != 0 && outMask != 0)
                     {
-                        if (constFlags == true)
-                            sb.AppendLine($"{pad}vu.UpdateMacAndStatusFlags({tmp}, 0x{outMask:X}u);");
-                        else if (constFlags == null)
-                            sb.AppendLine($"{pad}if ({flagsExpr}) vu.UpdateMacAndStatusFlags({tmp}, 0x{outMask:X}u);");
+                        EmitWriteVf(outReg, resExpr, outMask, sb, pad, liveAfter);
                     }
-
-                    if (outReg != 0 && outMask != 0)
+                    else
                     {
-                        if (hasLower && LowerTouchesVf(in s, outReg))
+                        sb.AppendLine($"{pad}tmp = {resExpr};");
+                        if (updatesFlags)
                         {
-                            upperWritesPendingVf = true;
-                            pendingReg = outReg;
-                            pendingMask = outMask;
-                            pendingTemp = tmp;
+                            string flagMethod = _curUsesStatusFlags ? "UpdateMacAndStatusFlags" : "UpdateMacFlagsOnly";
+                            if (constFlags == true)
+                                sb.AppendLine($"{pad}vu.{flagMethod}(tmp, 0x{outMask:X}u);");
+                            else if (constFlags == null)
+                                sb.AppendLine($"{pad}if ({flagsExpr}) vu.{flagMethod}(tmp, 0x{outMask:X}u);");
                         }
-                        else
+
+                        if (outReg != 0 && outMask != 0)
                         {
-                            EmitWriteVf(outReg, tmp, outMask, sb, pad);
+                            if (deferWrite)
+                            {
+                                upperWritesPendingVf = true;
+                                pendingReg = outReg;
+                                pendingMask = outMask;
+                                pendingTemp = "tmp";
+                            }
+                            else
+                            {
+                                EmitWriteVf(outReg, "tmp", outMask, sb, pad, liveAfter);
+                            }
                         }
                     }
                 }
@@ -1246,96 +1936,156 @@ public static class Vu1AotCommand
 
         if (s.IsImm)
         {
-            sb.AppendLine($"{pad}vu.I = BitConverter.UInt32BitsToSingle(0x{s.LoiBits:X8}u);");
+            string iTarget = _useLocalRegs ? "regI" : "vu.I";
+            sb.AppendLine($"{pad}{iTarget} = BitConverter.UInt32BitsToSingle(0x{s.LoiBits:X8}u);");
         }
+    }
+
+    private static string BroadcastExpr(int reg, int bc)
+    {
+        if ((reg & 31) == 0)
+            return bc == 3 ? "Vector128<float>.One" : "Vector128<float>.Zero";
+        return $"Ps2Vu0.BroadcastBc({ReadVfExpr(reg)}, {bc}u)";
+    }
+
+    private static string EmitAddBcExpr(int fsReg, int ftReg, int bc)
+    {
+        string fs = ReadVfExpr(fsReg);
+        if ((ftReg & 31) == 0 && bc < 3) return fs;
+        return $"({fs} + {BroadcastExpr(ftReg, bc)})";
+    }
+
+    private static string EmitSubBcExpr(int fsReg, int ftReg, int bc)
+    {
+        string fs = ReadVfExpr(fsReg);
+        if ((ftReg & 31) == 0 && bc < 3) return fs;
+        return $"({fs} - {BroadcastExpr(ftReg, bc)})";
+    }
+
+    private static string EmitMulBcExpr(int fsReg, int ftReg, int bc)
+    {
+        string fs = ReadVfExpr(fsReg);
+        if ((ftReg & 31) == 0)
+            return bc == 3 ? fs : "Vector128<float>.Zero";
+        return $"({fs} * {BroadcastExpr(ftReg, bc)})";
+    }
+
+    private static string EmitMaddBcExpr(int fsReg, int ftReg, int bc)
+    {
+        string fs = ReadVfExpr(fsReg);
+        if ((ftReg & 31) == 0)
+            return bc == 3 ? $"(acc + {fs})" : "acc";
+        return $"FmaAdd({fs}, {BroadcastExpr(ftReg, bc)}, acc)";
+    }
+
+    private static string EmitMsubBcExpr(int fsReg, int ftReg, int bc)
+    {
+        string fs = ReadVfExpr(fsReg);
+        if ((ftReg & 31) == 0)
+            return bc == 3 ? $"(acc - {fs})" : "acc";
+        return $"FmaSub({fs}, {BroadcastExpr(ftReg, bc)}, acc)";
     }
 
     private static void EmitAccUpper(in DecodedSlot s, string tag, string flagsExpr, bool? constFlags, StringBuilder sb, string pad)
     {
         if (s.UpperOp == UpperOp.Opmula)
         {
-            sb.AppendLine($"{pad}vu.ExecOpmula(ref acc, {ReadVfExpr(s.Fs)}, {ReadVfExpr(s.Ft)}, {flagsExpr});");
+            sb.AppendLine($"{pad}vu.ExecOpmulaFast(ref acc, {ReadVfExpr(s.Fs)}, {ReadVfExpr(s.Ft)}, {flagsExpr});");
             return;
         }
 
         string fs = ReadVfExpr(s.Fs);
         string ft = ReadVfExpr(s.Ft);
+        string qExpr = _useLocalRegs ? "regQ" : "vu.Q";
+        string iExpr = _useLocalRegs ? "regI" : "vu.I";
         string expr = s.UpperOp switch
         {
-            UpperOp.AddABc => $"Ps2Float.VecAdd({fs}, Ps2Vu0.BroadcastBc({ft}, {s.Bc}u))",
-            UpperOp.SubABc => $"Ps2Float.VecSub({fs}, Ps2Vu0.BroadcastBc({ft}, {s.Bc}u))",
-            UpperOp.MaddABc => $"Ps2Float.VecAdd(acc, Ps2Float.VecMul({fs}, Ps2Vu0.BroadcastBc({ft}, {s.Bc}u)))",
-            UpperOp.MsubABc => $"Ps2Float.VecSub(acc, Ps2Float.VecMul({fs}, Ps2Vu0.BroadcastBc({ft}, {s.Bc}u)))",
-            UpperOp.MulABc => $"Ps2Float.VecMul({fs}, Ps2Vu0.BroadcastBc({ft}, {s.Bc}u))",
-            UpperOp.MulAq => $"Ps2Float.VecMul({fs}, Vector128.Create(vu.Q))",
-            UpperOp.MulAi => $"Ps2Float.VecMul({fs}, Vector128.Create(vu.I))",
-            UpperOp.AddAq => $"Ps2Float.VecAdd({fs}, Vector128.Create(vu.Q))",
-            UpperOp.MaddAq => $"Ps2Float.VecAdd(acc, Ps2Float.VecMul({fs}, Vector128.Create(vu.Q)))",
-            UpperOp.AddAi => $"Ps2Float.VecAdd({fs}, Vector128.Create(vu.I))",
-            UpperOp.MaddAi => $"Ps2Float.VecAdd(acc, Ps2Float.VecMul({fs}, Vector128.Create(vu.I)))",
-            UpperOp.SubAq => $"Ps2Float.VecSub({fs}, Vector128.Create(vu.Q))",
-            UpperOp.MsubAq => $"Ps2Float.VecSub(acc, Ps2Float.VecMul({fs}, Vector128.Create(vu.Q)))",
-            UpperOp.SubAi => $"Ps2Float.VecSub({fs}, Vector128.Create(vu.I))",
-            UpperOp.MsubAi => $"Ps2Float.VecSub(acc, Ps2Float.VecMul({fs}, Vector128.Create(vu.I)))",
-            UpperOp.AddA => $"Ps2Float.VecAdd({fs}, {ft})",
-            UpperOp.MaddA => $"Ps2Float.VecAdd(acc, Ps2Float.VecMul({fs}, {ft}))",
-            UpperOp.MulA => $"Ps2Float.VecMul({fs}, {ft})",
-            UpperOp.SubA => $"Ps2Float.VecSub({fs}, {ft})",
-            UpperOp.MsubA => $"Ps2Float.VecSub(acc, Ps2Float.VecMul({fs}, {ft}))",
+            UpperOp.AddABc => EmitAddBcExpr(s.Fs, s.Ft, s.Bc),
+            UpperOp.SubABc => EmitSubBcExpr(s.Fs, s.Ft, s.Bc),
+            UpperOp.MaddABc => EmitMaddBcExpr(s.Fs, s.Ft, s.Bc),
+            UpperOp.MsubABc => EmitMsubBcExpr(s.Fs, s.Ft, s.Bc),
+            UpperOp.MulABc => EmitMulBcExpr(s.Fs, s.Ft, s.Bc),
+            UpperOp.MulAq => $"({fs} * Vector128.Create({qExpr}))",
+            UpperOp.MulAi => $"({fs} * Vector128.Create({iExpr}))",
+            UpperOp.AddAq => $"({fs} + Vector128.Create({qExpr}))",
+            UpperOp.MaddAq => $"FmaAdd({fs}, Vector128.Create({qExpr}), acc)",
+            UpperOp.AddAi => $"({fs} + Vector128.Create({iExpr}))",
+            UpperOp.MaddAi => $"FmaAdd({fs}, Vector128.Create({iExpr}), acc)",
+            UpperOp.SubAq => $"({fs} - Vector128.Create({qExpr}))",
+            UpperOp.MsubAq => $"FmaSub({fs}, Vector128.Create({qExpr}), acc)",
+            UpperOp.SubAi => $"({fs} - Vector128.Create({iExpr}))",
+            UpperOp.MsubAi => $"FmaSub({fs}, Vector128.Create({iExpr}), acc)",
+            UpperOp.AddA => $"({fs} + {ft})",
+            UpperOp.MaddA => $"FmaAdd({fs}, {ft}, acc)",
+            UpperOp.MulA => $"({fs} * {ft})",
+            UpperOp.SubA => (s.Fs == 0 && s.Ft == 0) ? "Vector128<float>.Zero" : $"({fs} - {ft})",
+            UpperOp.MsubA => $"FmaSub({fs}, {ft}, acc)",
             _ => "acc"
         };
 
-        string tmp = $"acc_{tag}";
-        sb.AppendLine($"{pad}Vector128<float> {tmp} = {expr};");
-        if (constFlags == true)
-            sb.AppendLine($"{pad}vu.UpdateMacAndStatusFlags({tmp}, 0x{s.Dest:X}u);");
-        else if (constFlags == null)
-            sb.AppendLine($"{pad}if ({flagsExpr}) vu.UpdateMacAndStatusFlags({tmp}, 0x{s.Dest:X}u);");
+        bool canOverwriteAcc = s.Dest == 0xFu || (_curAccLiveAfter & ~s.Dest) == 0;
+        if (constFlags == false)
+        {
+            if (canOverwriteAcc && s.Dest != 0)
+                sb.AppendLine($"{pad}acc = {expr};");
+            else if (s.Dest != 0)
+                sb.AppendLine($"{pad}acc = Ps2Vu0.BlendMask(acc, {expr}, 0x{s.Dest:X}u);");
+            return;
+        }
 
-        if (s.Dest == 0xFu)
-            sb.AppendLine($"{pad}acc = {tmp};");
+        sb.AppendLine($"{pad}tmp = {expr};");
+        string flagMethod = _curUsesStatusFlags ? "UpdateMacAndStatusFlags" : "UpdateMacFlagsOnly";
+        if (constFlags == true)
+            sb.AppendLine($"{pad}vu.{flagMethod}(tmp, 0x{s.Dest:X}u);");
+        else if (constFlags == null)
+            sb.AppendLine($"{pad}if ({flagsExpr}) vu.{flagMethod}(tmp, 0x{s.Dest:X}u);");
+
+        if (canOverwriteAcc && s.Dest != 0)
+            sb.AppendLine($"{pad}acc = tmp;");
         else if (s.Dest != 0)
-            sb.AppendLine($"{pad}acc = Ps2Vu0.BlendMask(acc, {tmp}, 0x{s.Dest:X}u);");
+            sb.AppendLine($"{pad}acc = Ps2Vu0.BlendMask(acc, tmp, 0x{s.Dest:X}u);");
     }
 
     private static string BuildUpperResultExpr(in DecodedSlot s)
     {
         string fs = ReadVfExpr(s.Fs);
         string ft = ReadVfExpr(s.Ft);
+        string qExpr = _useLocalRegs ? "regQ" : "vu.Q";
+        string iExpr = _useLocalRegs ? "regI" : "vu.I";
         return s.UpperOp switch
         {
-            UpperOp.AddBc => $"Ps2Float.VecAdd({fs}, Ps2Vu0.BroadcastBc({ft}, {s.Bc}u))",
-            UpperOp.SubBc => $"Ps2Float.VecSub({fs}, Ps2Vu0.BroadcastBc({ft}, {s.Bc}u))",
-            UpperOp.MaddBc => $"Ps2Float.VecAdd(acc, Ps2Float.VecMul({fs}, Ps2Vu0.BroadcastBc({ft}, {s.Bc}u)))",
-            UpperOp.MsubBc => $"Ps2Float.VecSub(acc, Ps2Float.VecMul({fs}, Ps2Vu0.BroadcastBc({ft}, {s.Bc}u)))",
-            UpperOp.MaxBc => $"Ps2Vu0.VecMax({fs}, Ps2Vu0.BroadcastBc({ft}, {s.Bc}u))",
-            UpperOp.MinBc => $"Ps2Vu0.VecMin({fs}, Ps2Vu0.BroadcastBc({ft}, {s.Bc}u))",
-            UpperOp.MulBc => $"Ps2Float.VecMul({fs}, Ps2Vu0.BroadcastBc({ft}, {s.Bc}u))",
-            UpperOp.MulQ => $"Ps2Float.VecMul({fs}, Vector128.Create(vu.Q))",
-            UpperOp.MaxI => $"Ps2Vu0.VecMax({fs}, Vector128.Create(vu.I))",
-            UpperOp.MulI => $"Ps2Float.VecMul({fs}, Vector128.Create(vu.I))",
-            UpperOp.MinI => $"Ps2Vu0.VecMin({fs}, Vector128.Create(vu.I))",
-            UpperOp.AddQ => $"Ps2Float.VecAdd({fs}, Vector128.Create(vu.Q))",
-            UpperOp.MaddQ => $"Ps2Float.VecAdd(acc, Ps2Float.VecMul({fs}, Vector128.Create(vu.Q)))",
-            UpperOp.AddI => $"Ps2Float.VecAdd({fs}, Vector128.Create(vu.I))",
-            UpperOp.MaddI => $"Ps2Float.VecAdd(acc, Ps2Float.VecMul({fs}, Vector128.Create(vu.I)))",
-            UpperOp.SubQ => $"Ps2Float.VecSub({fs}, Vector128.Create(vu.Q))",
-            UpperOp.MsubQ => $"Ps2Float.VecSub(acc, Ps2Float.VecMul({fs}, Vector128.Create(vu.Q)))",
-            UpperOp.SubI => $"Ps2Float.VecSub({fs}, Vector128.Create(vu.I))",
-            UpperOp.MsubI => $"Ps2Float.VecSub(acc, Ps2Float.VecMul({fs}, Vector128.Create(vu.I)))",
-            UpperOp.Add => $"Ps2Float.VecAdd({fs}, {ft})",
-            UpperOp.Madd => $"Ps2Float.VecAdd(acc, Ps2Float.VecMul({fs}, {ft}))",
-            UpperOp.Mul => $"Ps2Float.VecMul({fs}, {ft})",
-            UpperOp.Max => s.Fs == s.Ft ? fs : $"Ps2Vu0.VecMax({fs}, {ft})",
-            UpperOp.Sub => $"Ps2Float.VecSub({fs}, {ft})",
-            UpperOp.Msub => $"Ps2Float.VecSub(acc, Ps2Float.VecMul({fs}, {ft}))",
-            UpperOp.Opmsub => $"Vu1State.ExecOpmsub(acc, {fs}, {ft})",
-            UpperOp.Min => s.Fs == s.Ft ? fs : $"Ps2Vu0.VecMin({fs}, {ft})",
-            UpperOp.Itof0 => $"Vu1State.ExecItof({fs}, 0)",
+            UpperOp.AddBc => EmitAddBcExpr(s.Fs, s.Ft, s.Bc),
+            UpperOp.SubBc => EmitSubBcExpr(s.Fs, s.Ft, s.Bc),
+            UpperOp.MaddBc => EmitMaddBcExpr(s.Fs, s.Ft, s.Bc),
+            UpperOp.MsubBc => EmitMsubBcExpr(s.Fs, s.Ft, s.Bc),
+            UpperOp.MaxBc => $"VuMax({fs}, {BroadcastExpr(s.Ft, s.Bc)})",
+            UpperOp.MinBc => $"VuMin({fs}, {BroadcastExpr(s.Ft, s.Bc)})",
+            UpperOp.MulBc => EmitMulBcExpr(s.Fs, s.Ft, s.Bc),
+            UpperOp.MulQ => $"({fs} * Vector128.Create({qExpr}))",
+            UpperOp.MaxI => $"VuMax({fs}, Vector128.Create({iExpr}))",
+            UpperOp.MulI => $"({fs} * Vector128.Create({iExpr}))",
+            UpperOp.MinI => $"VuMin({fs}, Vector128.Create({iExpr}))",
+            UpperOp.AddQ => $"({fs} + Vector128.Create({qExpr}))",
+            UpperOp.MaddQ => $"FmaAdd({fs}, Vector128.Create({qExpr}), acc)",
+            UpperOp.AddI => $"({fs} + Vector128.Create({iExpr}))",
+            UpperOp.MaddI => $"FmaAdd({fs}, Vector128.Create({iExpr}), acc)",
+            UpperOp.SubQ => $"({fs} - Vector128.Create({qExpr}))",
+            UpperOp.MsubQ => $"FmaSub({fs}, Vector128.Create({qExpr}), acc)",
+            UpperOp.SubI => $"({fs} - Vector128.Create({iExpr}))",
+            UpperOp.MsubI => $"FmaSub({fs}, Vector128.Create({iExpr}), acc)",
+            UpperOp.Add => $"({fs} + {ft})",
+            UpperOp.Madd => $"FmaAdd({fs}, {ft}, acc)",
+            UpperOp.Mul => $"({fs} * {ft})",
+            UpperOp.Max => s.Fs == s.Ft ? fs : $"VuMax({fs}, {ft})",
+            UpperOp.Sub => (s.Fs == 0 && s.Ft == 0) ? "Vector128<float>.Zero" : $"({fs} - {ft})",
+            UpperOp.Msub => $"FmaSub({fs}, {ft}, acc)",
+            UpperOp.Opmsub => $"Vu1State.ExecOpmsubFast(acc, {fs}, {ft})",
+            UpperOp.Min => s.Fs == s.Ft ? fs : $"VuMin({fs}, {ft})",
+            UpperOp.Itof0 => $"Vector128.ConvertToSingle({fs}.AsInt32())",
             UpperOp.Itof4 => $"Vu1State.ExecItof({fs}, 4)",
             UpperOp.Itof12 => $"Vu1State.ExecItof({fs}, 12)",
             UpperOp.Itof15 => $"Vu1State.ExecItof({fs}, 15)",
-            UpperOp.Ftoi0 => $"Vu1State.ExecFtoi({fs}, 0)",
+            UpperOp.Ftoi0 => $"Vu1State.ExecFtoi0({fs})",
             UpperOp.Ftoi4 => $"Vu1State.ExecFtoi({fs}, 4)",
             UpperOp.Ftoi12 => $"Vu1State.ExecFtoi({fs}, 12)",
             UpperOp.Ftoi15 => $"Vu1State.ExecFtoi({fs}, 15)",
@@ -1351,17 +2101,17 @@ public static class Vu1AotCommand
             case LowerOp.Lq:
             {
                 if (s.It != 0 && s.LowerDest != 0)
-                    EmitWriteVf(s.It, LoadQwExpr(AddrExpr(s.Is, s.Imm11)), s.LowerDest, sb, pad);
+                    EmitWriteVf(s.It, LoadSanitizedQwExpr(AddrExpr(s.Is, s.Imm11), s.LowerDest), s.LowerDest, sb, pad, _curLowerVfLiveAfter);
                 break;
             }
             case LowerOp.Sq:
                 EmitStoreQw(AddrExpr(s.It, s.Imm11), ReadVfExpr(s.Is), s.LowerDest, tag, sb, pad);
                 break;
             case LowerOp.Ilw:
-                EmitWriteVi(s.It, $"vu.LoadInt16({AddrExpr(s.Is, s.Imm11)}, 0x{s.LowerDest:X}u)", sb, pad);
+                EmitWriteVi(s.It, LoadInt16DirectExpr(AddrExpr(s.Is, s.Imm11), s.LowerDest), sb, pad);
                 break;
             case LowerOp.Isw:
-                sb.AppendLine($"{pad}vu.StoreInt16({AddrExpr(s.Is, s.Imm11)}, {ReadViExpr(s.It)}, 0x{s.LowerDest:X}u);");
+                EmitStoreInt16Direct(AddrExpr(s.Is, s.Imm11), ReadViExpr(s.It), s.LowerDest, sb, pad);
                 break;
             case LowerOp.Iaddiu:
                 EmitWriteVi(s.It, $"unchecked((ushort)({ReadViExpr(s.Is)} + {s.Uimm15}u))", sb, pad);
@@ -1419,55 +2169,60 @@ public static class Vu1AotCommand
                 break;
             case LowerOp.Move:
                 if (s.It != 0 && s.LowerDest != 0)
-                    EmitWriteVf(s.It, ReadVfExpr(s.Is), s.LowerDest, sb, pad);
+                    EmitWriteVf(s.It, ReadVfExpr(s.Is), s.LowerDest, sb, pad, _curLowerVfLiveAfter);
                 break;
             case LowerOp.Mr32:
                 if (s.It != 0 && s.LowerDest != 0)
-                    EmitWriteVf(s.It, $"Vu1State.ExecMr32({ReadVfExpr(s.Is)})", s.LowerDest, sb, pad);
+                    EmitWriteVf(s.It, (s.Is & 31) == 0 ? "Vf0Mr32" : $"Vu1State.ExecMr32({ReadVfExpr(s.Is)})", s.LowerDest, sb, pad, _curLowerVfLiveAfter);
                 break;
             case LowerOp.Lqi:
             {
-                string idxVar = $"idx_{tag}";
-                sb.AppendLine($"{pad}ushort {idxVar} = {ReadViExpr(s.Is)};");
+                sb.AppendLine($"{pad}idxTmp = {ReadViExpr(s.Is)};");
                 if (s.It != 0 && s.LowerDest != 0)
-                    EmitWriteVf(s.It, LoadQwExpr($"({idxVar} & 0x3FF)"), s.LowerDest, sb, pad);
-                EmitWriteVi(s.Is, $"(ushort)(({idxVar} + 1) & 0x3FF)", sb, pad);
+                    EmitWriteVf(s.It, LoadSanitizedQwExpr("(idxTmp & 0x3FF)", s.LowerDest), s.LowerDest, sb, pad, _curLowerVfLiveAfter);
+                EmitWriteVi(s.Is, "(ushort)((idxTmp + 1) & 0x3FF)", sb, pad);
                 break;
             }
             case LowerOp.Sqi:
             {
-                string idxVar = $"idx_{tag}";
-                sb.AppendLine($"{pad}ushort {idxVar} = {ReadViExpr(s.It)};");
-                EmitStoreQw($"({idxVar} & 0x3FF)", ReadVfExpr(s.Is), s.LowerDest, tag, sb, pad);
-                EmitWriteVi(s.It, $"(ushort)(({idxVar} + 1) & 0x3FF)", sb, pad);
+                sb.AppendLine($"{pad}idxTmp = {ReadViExpr(s.It)};");
+                EmitStoreQw("(idxTmp & 0x3FF)", ReadVfExpr(s.Is), s.LowerDest, tag, sb, pad);
+                EmitWriteVi(s.It, "(ushort)((idxTmp + 1) & 0x3FF)", sb, pad);
                 break;
             }
             case LowerOp.Lqd:
             {
-                string idxVar = $"idx_{tag}";
-                sb.AppendLine($"{pad}ushort {idxVar} = (ushort)(({ReadViExpr(s.Is)} - 1) & 0x3FF);");
-                EmitWriteVi(s.Is, idxVar, sb, pad);
+                sb.AppendLine($"{pad}idxTmp = (ushort)(({ReadViExpr(s.Is)} - 1) & 0x3FF);");
+                EmitWriteVi(s.Is, "idxTmp", sb, pad);
                 if (s.It != 0 && s.LowerDest != 0)
-                    EmitWriteVf(s.It, LoadQwExpr(idxVar), s.LowerDest, sb, pad);
+                    EmitWriteVf(s.It, LoadSanitizedQwExpr("idxTmp", s.LowerDest), s.LowerDest, sb, pad, _curLowerVfLiveAfter);
                 break;
             }
             case LowerOp.Sqd:
             {
-                string idxVar = $"idx_{tag}";
-                sb.AppendLine($"{pad}ushort {idxVar} = (ushort)(({ReadViExpr(s.It)} - 1) & 0x3FF);");
-                EmitWriteVi(s.It, idxVar, sb, pad);
-                EmitStoreQw(idxVar, ReadVfExpr(s.Is), s.LowerDest, tag, sb, pad);
+                sb.AppendLine($"{pad}idxTmp = (ushort)(({ReadViExpr(s.It)} - 1) & 0x3FF);");
+                EmitWriteVi(s.It, "idxTmp", sb, pad);
+                EmitStoreQw("idxTmp", ReadVfExpr(s.Is), s.LowerDest, tag, sb, pad);
                 break;
             }
             case LowerOp.Div:
-                sb.AppendLine($"{pad}vu.Q = Ps2Float.Div({ReadVfExpr(s.Is)}.GetElement({s.Fsf}), {ReadVfExpr(s.It)}.GetElement({s.Ftf}));");
+            {
+                string qTarget = _useLocalRegs ? "regQ" : "vu.Q";
+                sb.AppendLine($"{pad}{qTarget} = Vu1State.VuDivFast({ReadVfElemExpr(s.Is, s.Fsf)}, {ReadVfElemExpr(s.It, s.Ftf)});");
                 break;
+            }
             case LowerOp.Sqrt:
-                sb.AppendLine($"{pad}vu.Q = Ps2Float.Sqrt({ReadVfExpr(s.It)}.GetElement({s.Ftf}));");
+            {
+                string qTarget = _useLocalRegs ? "regQ" : "vu.Q";
+                sb.AppendLine($"{pad}{qTarget} = Ps2Float.Sqrt({ReadVfElemExpr(s.It, s.Ftf)});");
                 break;
+            }
             case LowerOp.Rsqrt:
-                sb.AppendLine($"{pad}vu.Q = Ps2Float.Rsqrt({ReadVfExpr(s.Is)}.GetElement({s.Fsf}), {ReadVfExpr(s.It)}.GetElement({s.Ftf}));");
+            {
+                string qTarget = _useLocalRegs ? "regQ" : "vu.Q";
+                sb.AppendLine($"{pad}{qTarget} = Vu1State.VuRsqrtFast({ReadVfElemExpr(s.Is, s.Fsf)}, {ReadVfElemExpr(s.It, s.Ftf)});");
                 break;
+            }
             case LowerOp.WaitQ:
                 break;
             case LowerOp.WaitP:
@@ -1485,10 +2240,10 @@ public static class Vu1AotCommand
                     EmitWriteVf(s.It, $"Vector128.Create((int)(short){ReadViExpr(s.Is)}).AsSingle()", s.LowerDest, sb, pad);
                 break;
             case LowerOp.Ilwr:
-                EmitWriteVi(s.It, $"vu.LoadInt16({ReadViExpr(s.Is)} & 0x3FF, 0x{s.LowerDest:X}u)", sb, pad);
+                EmitWriteVi(s.It, LoadInt16DirectExpr($"({ReadViExpr(s.Is)} & 0x3FF)", s.LowerDest), sb, pad);
                 break;
             case LowerOp.Iswr:
-                sb.AppendLine($"{pad}vu.StoreInt16({ReadViExpr(s.Is)} & 0x3FF, {ReadViExpr(s.It)}, 0x{s.LowerDest:X}u);");
+                EmitStoreInt16Direct($"({ReadViExpr(s.Is)} & 0x3FF)", ReadViExpr(s.It), s.LowerDest, sb, pad);
                 break;
             case LowerOp.Rnext:
                 EmitWriteVfOrCall(s.It, "vu.ExecRnext()", s.LowerDest, sb, pad);
@@ -1514,7 +2269,7 @@ public static class Vu1AotCommand
                 EmitWriteVi(s.It, "vu.Itop", sb, pad);
                 break;
             case LowerOp.Xgkick:
-                sb.AppendLine($"{pad}vu.ExecXgKick({s.Is});");
+                sb.AppendLine($"{pad}vu.ExecXgKickAddr({ReadViExpr(s.Is)});");
                 break;
             case LowerOp.Esadd:
                 sb.AppendLine($"{pad}{{");
@@ -1525,7 +2280,7 @@ public static class Vu1AotCommand
             case LowerOp.Ersadd:
                 sb.AppendLine($"{pad}{{");
                 sb.AppendLine($"{pad}    var v = {ReadVfExpr(s.Is)};");
-                EmitEfuWrite("Ps2Float.Div(1.0f, v.GetElement(0) * v.GetElement(0) + v.GetElement(1) * v.GetElement(1) + v.GetElement(2) * v.GetElement(2))", sb, pad + "    ");
+                EmitEfuWrite("Vu1State.VuDivFast(1.0f, v.GetElement(0) * v.GetElement(0) + v.GetElement(1) * v.GetElement(1) + v.GetElement(2) * v.GetElement(2))", sb, pad + "    ");
                 sb.AppendLine($"{pad}}}");
                 break;
             case LowerOp.Eleng:
@@ -1537,7 +2292,7 @@ public static class Vu1AotCommand
             case LowerOp.Erleng:
                 sb.AppendLine($"{pad}{{");
                 sb.AppendLine($"{pad}    var v = {ReadVfExpr(s.Is)};");
-                EmitEfuWrite("Ps2Float.Rsqrt(1.0f, v.GetElement(0) * v.GetElement(0) + v.GetElement(1) * v.GetElement(1) + v.GetElement(2) * v.GetElement(2))", sb, pad + "    ");
+                EmitEfuWrite("Vu1State.VuRsqrtFast(1.0f, v.GetElement(0) * v.GetElement(0) + v.GetElement(1) * v.GetElement(1) + v.GetElement(2) * v.GetElement(2))", sb, pad + "    ");
                 sb.AppendLine($"{pad}}}");
                 break;
             case LowerOp.Eatanxy:
@@ -1559,13 +2314,13 @@ public static class Vu1AotCommand
                 sb.AppendLine($"{pad}}}");
                 break;
             case LowerOp.Ercpr:
-                EmitEfuWrite($"Ps2Float.Div(1.0f, {ReadVfExpr(s.Is)}.GetElement({s.Fsf}))", sb, pad);
+                EmitEfuWrite($"Vu1State.VuDivFast(1.0f, {ReadVfExpr(s.Is)}.GetElement({s.Fsf}))", sb, pad);
                 break;
             case LowerOp.Esqrt:
                 EmitEfuWrite($"Ps2Float.Sqrt({ReadVfExpr(s.Is)}.GetElement({s.Fsf}))", sb, pad);
                 break;
             case LowerOp.Ersqrt:
-                EmitEfuWrite($"Ps2Float.Rsqrt(1.0f, {ReadVfExpr(s.Is)}.GetElement({s.Fsf}))", sb, pad);
+                EmitEfuWrite($"Vu1State.VuRsqrtFast(1.0f, {ReadVfExpr(s.Is)}.GetElement({s.Fsf}))", sb, pad);
                 break;
             case LowerOp.Esin:
                 EmitEfuWrite($"MathF.Sin({ReadVfExpr(s.Is)}.GetElement({s.Fsf}))", sb, pad);
@@ -1593,16 +2348,42 @@ public static class Vu1AotCommand
         _efuRemainCycles = 12;
     }
 
+    private static string LoadInt16DirectExpr(string addrExpr, uint destMask)
+    {
+        int lane = (destMask & 8u) != 0 ? 0 : (destMask & 4u) != 0 ? 1 : (destMask & 2u) != 0 ? 2 : 3;
+        int laneByte = lane << 2;
+        return laneByte == 0
+            ? $"Unsafe.ReadUnaligned<ushort>(ref Unsafe.Add(ref dm, ({addrExpr}) << 4))"
+            : $"Unsafe.ReadUnaligned<ushort>(ref Unsafe.Add(ref dm, (({addrExpr}) << 4) + {laneByte}))";
+    }
+
+    private static void EmitStoreInt16Direct(string addrExpr, string valExpr, uint destMask, StringBuilder sb, string pad)
+    {
+        if (destMask == 0u) return;
+        int bits = System.Numerics.BitOperations.PopCount(destMask & 0xFu);
+        if (bits == 1)
+        {
+            int lane = (destMask & 8u) != 0 ? 0 : (destMask & 4u) != 0 ? 1 : (destMask & 2u) != 0 ? 2 : 3;
+            int laneByte = lane << 2;
+            string off = laneByte == 0 ? $"({addrExpr}) << 4" : $"(({addrExpr}) << 4) + {laneByte}";
+            sb.AppendLine($"{pad}Unsafe.WriteUnaligned(ref Unsafe.Add(ref dm, {off}), (uint){valExpr});");
+            return;
+        }
+        sb.AppendLine($"{pad}vu.StoreInt16({addrExpr}, {valExpr}, 0x{destMask:X}u);");
+    }
+
     private static string ReadVfExpr(int reg)
     {
         int r = reg & 31;
-        return r == 0 ? "vf" : $"Unsafe.Add(ref vf, {r})";
+        if (r == 0) return "Vf0";
+        return _useLocalRegs ? $"vf{r}" : $"Unsafe.Add(ref vf, {r})";
     }
 
     private static string ReadViExpr(int reg)
     {
         int r = reg & 15;
-        return r == 0 ? "((ushort)0)" : $"Unsafe.Add(ref vi, {r})";
+        if (r == 0) return "((ushort)0)";
+        return _useLocalRegs ? $"vi{r}" : $"Unsafe.Add(ref vi, {r})";
     }
 
     private static string AddrExpr(int reg, int imm11)
@@ -1613,29 +2394,82 @@ public static class Vu1AotCommand
         return $"(((short){ReadViExpr(r)} + ({imm11})) & 0x3FF)";
     }
 
+    private static string ReadVfElemExpr(int reg, int elem)
+    {
+        int r = reg & 31;
+        if (r == 0) return elem == 3 ? "1.0f" : "0.0f";
+        return $"{ReadVfExpr(r)}.GetElement({elem})";
+    }
+
+    private static bool LowerWritesVf(in DecodedSlot s, int reg)
+    {
+        return s.LowerOp is LowerOp.Lq or LowerOp.Lqi or LowerOp.Lqd or LowerOp.Move or LowerOp.Mr32
+            or LowerOp.Mfir or LowerOp.Rnext or LowerOp.Rget or LowerOp.Mfp
+            && (s.It & 31) == reg;
+    }
+
     private static string LoadQwExpr(string addrExpr)
         => $"Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, ({addrExpr}) << 4))";
 
+    private static string LoadSanitizedQwExpr(string addrExpr, uint destMask)
+    {
+        string raw = LoadQwExpr(addrExpr);
+        uint m = (uint)_curLqSanitizeMask & (destMask & 0xFu);
+        if (m == 0u) return raw;
+        return m == 0xFu ? $"SanitizeFloat({raw})" : $"SanitizeFloatMask({raw}, 0x{m:X})";
+    }
+
     private static void EmitStoreQw(string addrExpr, string valExpr, uint destMask, string tag, StringBuilder sb, string pad)
     {
-        if (destMask == 0u) return;
-        if (destMask == 0xFu)
+        uint m = destMask & 0xFu;
+        if (m == 0u) return;
+        if (m == 0xFu)
         {
             sb.AppendLine($"{pad}Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, ({addrExpr}) << 4)) = {valExpr};");
+        }
+        else if (m == 0xEu)
+        {
+            string dstVar = $"sq_{tag}";
+            sb.AppendLine($"{pad}{{ ref byte {dstVar} = ref Unsafe.Add(ref dm, ({addrExpr}) << 4); Unsafe.WriteUnaligned(ref {dstVar}, {valExpr}.AsUInt64().GetElement(0)); Unsafe.WriteUnaligned(ref Unsafe.Add(ref {dstVar}, 8), {valExpr}.GetElement(2)); }}");
+        }
+        else if (m == 0xCu)
+        {
+            sb.AppendLine($"{pad}Unsafe.WriteUnaligned(ref Unsafe.Add(ref dm, ({addrExpr}) << 4), {valExpr}.AsUInt64().GetElement(0));");
+        }
+        else if (m == 0x3u)
+        {
+            sb.AppendLine($"{pad}Unsafe.WriteUnaligned(ref Unsafe.Add(ref dm, (({addrExpr}) << 4) + 8), {valExpr}.AsUInt64().GetElement(1));");
+        }
+        else if (m == 0x8u)
+        {
+            sb.AppendLine($"{pad}Unsafe.WriteUnaligned(ref Unsafe.Add(ref dm, ({addrExpr}) << 4), {valExpr}.GetElement(0));");
+        }
+        else if (m == 0x4u)
+        {
+            sb.AppendLine($"{pad}Unsafe.WriteUnaligned(ref Unsafe.Add(ref dm, (({addrExpr}) << 4) + 4), {valExpr}.GetElement(1));");
+        }
+        else if (m == 0x2u)
+        {
+            sb.AppendLine($"{pad}Unsafe.WriteUnaligned(ref Unsafe.Add(ref dm, (({addrExpr}) << 4) + 8), {valExpr}.GetElement(2));");
+        }
+        else if (m == 0x1u)
+        {
+            sb.AppendLine($"{pad}Unsafe.WriteUnaligned(ref Unsafe.Add(ref dm, (({addrExpr}) << 4) + 12), {valExpr}.GetElement(3));");
         }
         else
         {
             string dstVar = $"st_{tag}";
-            sb.AppendLine($"{pad}{{ ref Vector128<float> {dstVar} = ref Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, ({addrExpr}) << 4)); {dstVar} = Ps2Vu0.BlendMask({dstVar}, {valExpr}, 0x{destMask:X}u); }}");
+            sb.AppendLine($"{pad}{{ ref Vector128<float> {dstVar} = ref Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, ({addrExpr}) << 4)); {dstVar} = Ps2Vu0.BlendMask({dstVar}, {valExpr}, 0x{m:X}u); }}");
         }
     }
 
-    private static void EmitWriteVf(int reg, string valExpr, uint destMask, StringBuilder sb, string pad)
+    private static void EmitWriteVf(int reg, string valExpr, uint destMask, StringBuilder sb, string pad, byte liveAfter = 0xF)
     {
         int r = reg & 31;
         if (r == 0 || destMask == 0u) return;
-        string target = $"Unsafe.Add(ref vf, {r})";
-        if (destMask == 0xFu)
+        string target = _useLocalRegs ? $"vf{r}" : $"Unsafe.Add(ref vf, {r})";
+        if (valExpr == target) return;
+        if (destMask == 0xFu || (liveAfter & ~destMask) == 0)
             sb.AppendLine($"{pad}{target} = {valExpr};");
         else
             sb.AppendLine($"{pad}{target} = Ps2Vu0.BlendMask({target}, {valExpr}, 0x{destMask:X}u);");
@@ -1654,7 +2488,8 @@ public static class Vu1AotCommand
     {
         int r = reg & 15;
         if (r == 0) return;
-        sb.AppendLine($"{pad}Unsafe.Add(ref vi, {r}) = {valExpr};");
+        string target = _useLocalRegs ? $"vi{r}" : $"Unsafe.Add(ref vi, {r})";
+        sb.AppendLine($"{pad}{target} = {valExpr};");
     }
 
     private static bool IsAccOp(UpperOp op) => op is

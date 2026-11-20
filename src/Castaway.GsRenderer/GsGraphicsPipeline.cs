@@ -311,8 +311,11 @@ public sealed unsafe class GsGraphicsPipeline : IDisposable
             BackBatch.Reset();
             Gs.ActiveBatch = BackBatch;
 
-            // Snapshot VRAM for thread-safe host presentation
-            Buffer.BlockCopy(Gs.Vram, 0, FrontVram, 0, GsSwizzle.VramByteSize);
+            // Snapshot VRAM for thread-safe host presentation when Software mode is active or GL batch uses VRAM fallback
+            if (Mode != GsRendererMode.OpenGl || FrontBatch.DrawCallCount <= 2)
+            {
+                Buffer.BlockCopy(Gs.Vram, 0, FrontVram, 0, GsSwizzle.VramByteSize);
+            }
         }
     }
 

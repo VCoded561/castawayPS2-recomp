@@ -69,8 +69,6 @@ public sealed unsafe class MemoryCardService : IDisposable
         Span<byte> send = new Span<byte>(ram + sendPhys, Math.Max(16, sendSize));
         Span<byte> recv = new Span<byte>(ram + recvPhys, Math.Max(4, recvSize));
 
-        Console.WriteLine($"[MC RPC] rpc=0x{rpcNum:X2} sendSize={sendSize} recvSize={recvSize} endParam=0x{endParam:X8}");
-
         int result = rpcNum switch
         {
             0xFE => HandleInit(recv),
@@ -131,9 +129,6 @@ public sealed unsafe class MemoryCardService : IDisposable
         int slot = send.Length >= 12 ? BinaryPrimitives.ReadInt32LittleEndian(send[8..12]) : 0;
         uint paramFromSend = send.Length >= 32 ? BinaryPrimitives.ReadUInt32LittleEndian(send[28..32]) : 0;
         uint targetEndParam = endParam != 0 ? endParam : (paramFromSend != 0 ? paramFromSend : 0x005AC0C0u);
-
-        Directory.CreateDirectory(GetSlotRootPath(port));
-        Console.WriteLine($"[MC GETINFO] port={port} slot={slot} targetEndParam=0x{targetEndParam:X8}");
 
         // 1. Write mcEndParam2 (unpacked by endFunc 0x00476E68)
         uint endPhys = targetEndParam & 0x01FFFFFFu;

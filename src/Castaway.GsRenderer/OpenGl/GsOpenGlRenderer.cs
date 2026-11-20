@@ -69,12 +69,16 @@ public sealed unsafe class GsOpenGlRenderer : IDisposable
     private uint _primitiveVao;
     private uint _drawParamsUbo;
     private uint _primitiveProgram;
+    private uint _primitiveMsaaProgram;
+    private uint _primitiveMsaaDateProgram;
     private uint _dummyWhiteTex;
     private uint _batchFbo;
     private uint _batchColorTex;
     private uint _batchDepthRbo;
     private int _batchFboWidth;
     private int _batchFboHeight;
+    private int _batchFboSamples;
+    private int _requestedMsaaSamples = 1;
 
     // FPS overlay resources (DSA)
     private uint _fpsFontTex;
@@ -93,6 +97,8 @@ public sealed unsafe class GsOpenGlRenderer : IDisposable
     public int ScaleMultiplier { get; private set; } = 1;
     public int OutputWidth => BaseDisplayWidth * ScaleMultiplier;
     public int OutputHeight => BaseDisplayHeight * ScaleMultiplier;
+    public int MaxSupportedMsaaSamples { get; private set; } = 1;
+    public int ActiveMsaaSamples => _batchFboSamples > 1 ? _batchFboSamples : 1;
     public bool IsInitialized { get; private set; }
 
     public uint VramSsboHandle => _vramSsbo;
@@ -121,12 +127,18 @@ public sealed unsafe class GsOpenGlRenderer : IDisposable
     /// <summary>
     /// Initializes all OpenGL 4.6 resources exclusively via Direct State Access (DSA).
     /// </summary>
-    public void Initialize(GL gl, int baseWidth = 640, int baseHeight = 448, int scaleMultiplier = 1)
+    public void Initialize(GL gl, int baseWidth = 640, int baseHeight = 448, int scaleMultiplier = 1, int msaaSamples = 1)
     {
         _gl = gl;
         BaseDisplayWidth = Math.Max(64, baseWidth);
         BaseDisplayHeight = Math.Max(64, baseHeight);
         ScaleMultiplier = Math.Clamp(scaleMultiplier, 1, 8);
+
+        gl.GetInteger(GLEnum.MaxSamples, out int maxRboSamples);
+        gl.GetInteger(GLEnum.MaxColorTextureSamples, out int maxColorTexSamples);
+        gl.GetInteger(GLEnum.MaxDepthTextureSamples, out int maxDepthSamples);
+        MaxSupportedMsaaSamples = Math.Max(1, Math.Min(maxRboSamples, Math.Min(maxColorTexSamples, maxDepthSamples)));
+        Volatile.Write(ref _requestedMsaaSamples, msaaSamples);
 
         // 1. Allocate 4 MB GS VRAM Shader Storage Buffer Object (SSBO) using DSA
         gl.CreateBuffers(1, out _vramSsbo);
@@ -193,8 +205,10 @@ public sealed unsafe class GsOpenGlRenderer : IDisposable
             null,
             BufferStorageMask.DynamicStorageBit);
 
-        // 8. Compile Primitive Graphics Program
-        _primitiveProgram = CompileGraphicsProgram(gl, PrimitiveVertexShaderSource, PrimitiveFragmentShaderSource);
+        // 8. Compile Primitive Graphics Programs (single-sample, MSAA fast path, and MSAA DATE)
+        _primitiveProgram = CompileGraphicsProgram(gl, PrimitiveVertexShaderSource, BuildPrimitiveFragmentShaderSource(msaa: false, msaaDate: false));
+        _primitiveMsaaProgram = CompileGraphicsProgram(gl, PrimitiveVertexShaderSource, BuildPrimitiveFragmentShaderSource(msaa: true, msaaDate: false));
+        _primitiveMsaaDateProgram = CompileGraphicsProgram(gl, PrimitiveVertexShaderSource, BuildPrimitiveFragmentShaderSource(msaa: true, msaaDate: true));
 
         // 9. Create 1x1 white dummy texture for untextured draws (DSA)
         gl.CreateTextures(TextureTarget.Texture2D, 1, out _dummyWhiteTex);
@@ -246,6 +260,23 @@ public sealed unsafe class GsOpenGlRenderer : IDisposable
         }
     }
 
+    public void SetMsaaSamples(int samples)
+    {
+        Volatile.Write(ref _requestedMsaaSamples, samples);
+    }
+
+    private int ResolveEffectiveMsaaSamples(int requested)
+    {
+        if (requested <= 1 || MaxSupportedMsaaSamples <= 1)
+            return 1;
+
+        int clamped = Math.Clamp(requested, 2, MaxSupportedMsaaSamples);
+        int pot = 1;
+        while ((pot << 1) <= clamped)
+            pot <<= 1;
+        return Math.Max(2, pot);
+    }
+
     private uint GetOrUploadBatchTexture(in GsBatchTexture tex)
     {
         var key = (tex.Hash64, tex.Width, tex.Height);
@@ -280,64 +311,118 @@ public sealed unsafe class GsOpenGlRenderer : IDisposable
         return glTex;
     }
 
-    private void EnsureBatchFramebuffer(int width, int height)
+    private void EnsureBatchFramebuffer(int width, int height, int samples)
     {
         int w = Math.Max(1, width);
         int h = Math.Max(1, height);
-        if (_batchFbo != 0 && _batchFboWidth == w && _batchFboHeight == h)
+        int s = samples > 1 ? samples : 1;
+        if (_batchFbo != 0 && _batchFboWidth == w && _batchFboHeight == h && _batchFboSamples == s)
             return;
 
         if (_batchFbo != 0) _gl!.DeleteFramebuffer(_batchFbo);
         if (_batchColorTex != 0) _gl!.DeleteTexture(_batchColorTex);
         if (_batchDepthRbo != 0) _gl!.DeleteRenderbuffer(_batchDepthRbo);
+        _batchFbo = 0;
+        _batchColorTex = 0;
+        _batchDepthRbo = 0;
 
-        _gl!.CreateTextures(TextureTarget.Texture2D, 1, out _batchColorTex);
-        _gl.TextureStorage2D(_batchColorTex, 1, SizedInternalFormat.Rgba8, (uint)w, (uint)h);
-        int nearest = (int)TextureMinFilter.Nearest;
-        int clampToEdge = (int)TextureWrapMode.ClampToEdge;
-        _gl.TextureParameter(_batchColorTex, TextureParameterName.TextureMinFilter, nearest);
-        _gl.TextureParameter(_batchColorTex, TextureParameterName.TextureMagFilter, nearest);
-        _gl.TextureParameter(_batchColorTex, TextureParameterName.TextureWrapS, clampToEdge);
-        _gl.TextureParameter(_batchColorTex, TextureParameterName.TextureWrapT, clampToEdge);
+        if (s > 1)
+        {
+            _gl!.CreateTextures(TextureTarget.Texture2DMultisample, 1, out _batchColorTex);
+            _gl.TextureStorage2DMultisample(_batchColorTex, (uint)s, SizedInternalFormat.Rgba8, (uint)w, (uint)h, true);
 
-        _gl.CreateRenderbuffers(1, out _batchDepthRbo);
-        _gl.NamedRenderbufferStorage(_batchDepthRbo, InternalFormat.DepthComponent24, (uint)w, (uint)h);
+            _gl.CreateRenderbuffers(1, out _batchDepthRbo);
+            _gl.NamedRenderbufferStorageMultisample(_batchDepthRbo, (uint)s, InternalFormat.DepthComponent24, (uint)w, (uint)h);
+        }
+        else
+        {
+            _gl!.CreateTextures(TextureTarget.Texture2D, 1, out _batchColorTex);
+            _gl.TextureStorage2D(_batchColorTex, 1, SizedInternalFormat.Rgba8, (uint)w, (uint)h);
+            int nearest = (int)TextureMinFilter.Nearest;
+            int clampToEdge = (int)TextureWrapMode.ClampToEdge;
+            _gl.TextureParameter(_batchColorTex, TextureParameterName.TextureMinFilter, nearest);
+            _gl.TextureParameter(_batchColorTex, TextureParameterName.TextureMagFilter, nearest);
+            _gl.TextureParameter(_batchColorTex, TextureParameterName.TextureWrapS, clampToEdge);
+            _gl.TextureParameter(_batchColorTex, TextureParameterName.TextureWrapT, clampToEdge);
+
+            _gl.CreateRenderbuffers(1, out _batchDepthRbo);
+            _gl.NamedRenderbufferStorage(_batchDepthRbo, InternalFormat.DepthComponent24, (uint)w, (uint)h);
+        }
 
         _gl.CreateFramebuffers(1, out _batchFbo);
         _gl.NamedFramebufferTexture(_batchFbo, FramebufferAttachment.ColorAttachment0, _batchColorTex, 0);
         _gl.NamedFramebufferRenderbuffer(_batchFbo, FramebufferAttachment.DepthAttachment, RenderbufferTarget.Renderbuffer, _batchDepthRbo);
 
+        if (s > 1 && _gl.CheckNamedFramebufferStatus(_batchFbo, FramebufferTarget.Framebuffer) != GLEnum.FramebufferComplete)
+        {
+            // Fall back cleanly to single-sampled FBO if driver rejects requested multisample config
+            _batchFboWidth = 0;
+            _batchFboHeight = 0;
+            _batchFboSamples = 0;
+            EnsureBatchFramebuffer(w, h, 1);
+            return;
+        }
+
         _batchFboWidth = w;
         _batchFboHeight = h;
+        _batchFboSamples = s;
+
+        // Initialize newly allocated FBO memory once; existing FBO color persists across frames like GS VRAM.
+        _gl.BindFramebuffer(FramebufferTarget.Framebuffer, _batchFbo);
+        _gl.Disable(EnableCap.ScissorTest);
+        _gl.ColorMask(true, true, true, true);
+        _gl.DepthMask(true);
+        _gl.ClearColor(0.0f, 0.0f, 0.0f, 1.0f);
+        _gl.ClearDepth(0.0f);
+        _gl.Clear(ClearBufferMask.ColorBufferBit | ClearBufferMask.DepthBufferBit);
     }
 
     /// <summary>
     /// Renders a batched stream of GS primitives directly on the GPU using OpenGL 4.6 DSA.
     /// Uses cached Texture2D snapshots for mid-frame VRAM overwrite accuracy and hardware texture L1/L2 caching.
     /// </summary>
-    public void RenderBatch(GsPrimitiveBatch batch, GsProcessor gs, int viewportWidth, int viewportHeight, byte[]? vramOverride = null)
+    public void RenderBatch(GsPrimitiveBatch batch, GsProcessor gs, int viewportWidth, int viewportHeight, byte[]? vramOverride = null, bool useDisplayTextureBackdrop = false)
     {
-        if (!IsInitialized || _gl == null)
+        if (!IsInitialized || _gl == null || viewportWidth <= 0 || viewportHeight <= 0)
             return;
 
         if (batch.VertexCount == 0)
             return;
 
-        // 1. Bind persistent offscreen FBO (Rgba8 + Depth24) so DATE reads exact destination alpha
-        EnsureBatchFramebuffer(viewportWidth, viewportHeight);
+        // 1. Bind persistent offscreen FBO (Rgba8 + Depth24, optionally MSAA) so DATE reads exact destination alpha
+        int requestedSamples = ResolveEffectiveMsaaSamples(Volatile.Read(ref _requestedMsaaSamples));
+        EnsureBatchFramebuffer(viewportWidth, viewportHeight, requestedSamples);
+        _gl.BindFramebuffer(FramebufferTarget.Framebuffer, _batchFbo);
         _gl.Disable(EnableCap.ScissorTest);
         _gl.ColorMask(true, true, true, true);
         _gl.DepthMask(true);
-        _gl.BlitNamedFramebuffer(
-            0, _batchFbo,
-            0, 0, viewportWidth, viewportHeight,
-            0, 0, viewportWidth, viewportHeight,
-            ClearBufferMask.ColorBufferBit, BlitFramebufferFilter.Nearest);
-        _gl.BindFramebuffer(FramebufferTarget.Framebuffer, _batchFbo);
+        _gl.Viewport(0, 0, (uint)viewportWidth, (uint)viewportHeight);
 
-        // Clear depth buffer for reverse-Z PS2 testing (ZTST: GEQUAL/GREATER)
-        _gl.ClearDepth(0.0f);
-        _gl.Clear(ClearBufferMask.DepthBufferBit);
+        if (useDisplayTextureBackdrop && _displayTexture != 0)
+        {
+            _gl.Disable(EnableCap.Blend);
+            _gl.Disable(EnableCap.CullFace);
+            _gl.Disable(EnableCap.DepthTest);
+            _gl.DepthMask(false);
+            _gl.UseProgram(_presentGraphicsProgram);
+            _gl.BindTextureUnit(0, _displayTexture);
+            _gl.BindVertexArray(_emptyVao);
+            _gl.DrawArrays(PrimitiveType.Triangles, 0, 3);
+            _gl.DepthMask(true);
+            _gl.ClearDepth(0.0f);
+            _gl.Clear(ClearBufferMask.DepthBufferBit);
+        }
+        else
+        {
+            // Preserve persistent GS framebuffer color across frames; clear only reverse-Z depth buffer (ZTST: GEQUAL/GREATER)
+            _gl.ClearDepth(0.0f);
+            _gl.Clear(ClearBufferMask.DepthBufferBit);
+        }
+
+        if (_batchFboSamples > 1)
+            _gl.Enable(EnableCap.Multisample);
+        else
+            _gl.Disable(EnableCap.Multisample);
 
         // 2. Upload dynamic vertex buffer via DSA NamedBufferSubData
         fixed (GsGlVertex* vtxPtr = batch.Vertices)
@@ -345,9 +430,9 @@ public sealed unsafe class GsOpenGlRenderer : IDisposable
             _gl.NamedBufferSubData(_primitiveVbo, 0, (nuint)(batch.VertexCount * sizeof(GsGlVertex)), vtxPtr);
         }
 
-        // 3. Set global OpenGL viewport and state bindings
-        _gl.Viewport(0, 0, (uint)viewportWidth, (uint)viewportHeight);
-        _gl.UseProgram(_primitiveProgram);
+        // 3. Set global OpenGL state bindings
+        uint activeProgram = _batchFboSamples > 1 ? _primitiveMsaaProgram : _primitiveProgram;
+        _gl.UseProgram(activeProgram);
         var displayParams = new GsComputeDisplayParams
         {
             DisplayWidth = Math.Max(1, BaseDisplayWidth),
@@ -370,13 +455,15 @@ public sealed unsafe class GsOpenGlRenderer : IDisposable
             ref var dc = ref call.DrawContext;
 
             // Scissor test
-            int scLeft = (int)(call.Scx0 * scaleX);
-            int scTop = (int)(call.Scy0 * scaleY);
-            int scW = Math.Max(1, (int)((call.Scx1 - call.Scx0 + 1) * scaleX));
-            int scH = Math.Max(1, (int)((call.Scy1 - call.Scy0 + 1) * scaleY));
-            int scBottom = viewportHeight - (scTop + scH);
+            int scLeft = Math.Max(0, (int)MathF.Floor(call.Scx0 * scaleX));
+            int scTop = Math.Max(0, (int)MathF.Floor(call.Scy0 * scaleY));
+            int scRight = Math.Min(viewportWidth, (int)MathF.Ceiling((call.Scx1 + 1) * scaleX));
+            int scBottomTop = Math.Min(viewportHeight, (int)MathF.Ceiling((call.Scy1 + 1) * scaleY));
+            int scW = Math.Max(1, scRight - scLeft);
+            int scH = Math.Max(1, scBottomTop - scTop);
+            int scBottom = Math.Max(0, viewportHeight - (scTop + scH));
             _gl.Enable(EnableCap.ScissorTest);
-            _gl.Scissor(Math.Max(0, scLeft), Math.Max(0, scBottom), (uint)scW, (uint)scH);
+            _gl.Scissor(scLeft, scBottom, (uint)scW, (uint)scH);
 
             // Framebuffer channel mask (FBMSK: 1 = protected, 0 = writable)
             // Protect bit 7 of alpha when bit 31 is masked (standard GS DATE stencil preservation).
@@ -517,6 +604,15 @@ public sealed unsafe class GsOpenGlRenderer : IDisposable
                     twoPassAfail = true;
             }
 
+            uint desiredProgram = _batchFboSamples > 1
+                ? (dc.Date ? _primitiveMsaaDateProgram : _primitiveMsaaProgram)
+                : _primitiveProgram;
+            if (desiredProgram != activeProgram)
+            {
+                _gl.UseProgram(desiredProgram);
+                activeProgram = desiredProgram;
+            }
+
             if (dc.Date)
             {
                 _gl.TextureBarrier();
@@ -580,6 +676,7 @@ public sealed unsafe class GsOpenGlRenderer : IDisposable
         _gl.DepthMask(true);
         _gl.Disable(EnableCap.Blend);
         _gl.Disable(EnableCap.ScissorTest);
+        _gl.Disable(EnableCap.Multisample);
 
         _gl.BindFramebuffer(FramebufferTarget.Framebuffer, 0);
         _gl.BlitNamedFramebuffer(
@@ -754,9 +851,9 @@ public sealed unsafe class GsOpenGlRenderer : IDisposable
             int uDispScaleMultiplier;
         } uDisplay;
 
-        out vec4 vColor;
-        out vec3 vStq;
-        out vec2 vUv;
+        centroid out vec4 vColor;
+        centroid out vec3 vStq;
+        centroid out vec2 vUv;
 
         void main() {
             vColor = aColor;
@@ -771,16 +868,28 @@ public sealed unsafe class GsOpenGlRenderer : IDisposable
         }
         """;
 
+    private static string BuildPrimitiveFragmentShaderSource(bool msaa, bool msaaDate)
+    {
+        string defines = msaaDate
+            ? "#version 460 core\n#define MSAA 1\n#define MSAA_DATE 1"
+            : (msaa ? "#version 460 core\n#define MSAA 1" : "#version 460 core");
+        return PrimitiveFragmentShaderSource.Replace("#version 460 core", defines, StringComparison.Ordinal);
+    }
+
     public const string PrimitiveFragmentShaderSource = """
         #version 460 core
-        in vec4 vColor;
-        in vec3 vStq;
-        in vec2 vUv;
+        centroid in vec4 vColor;
+        centroid in vec3 vStq;
+        centroid in vec2 vUv;
         layout(location = 0, index = 0) out vec4 fragColor;
         layout(location = 0, index = 1) out vec4 fragBlend;
 
         layout(binding = 0) uniform sampler2D uTex;
+        #if defined(MSAA_DATE)
+        layout(binding = 1) uniform sampler2DMS uDstTexMs;
+        #elif !defined(MSAA)
         layout(binding = 1) uniform sampler2D uDstTex;
+        #endif
 
         layout(std140, binding = 2) uniform GsDrawParams {
             int uTme;
@@ -865,12 +974,21 @@ public sealed unsafe class GsOpenGlRenderer : IDisposable
         }
 
         void main() {
+        #if defined(MSAA_DATE)
+            if (uDate != 0) {
+                int dstA = int(round(texelFetch(uDstTexMs, ivec2(gl_FragCoord.xy), gl_SampleID).a * 255.0));
+                if (((dstA >> 7) & 1) != uDatm) {
+                    discard;
+                }
+            }
+        #elif !defined(MSAA)
             if (uDate != 0) {
                 int dstA = int(round(texelFetch(uDstTex, ivec2(gl_FragCoord.xy), 0).a * 255.0));
                 if (((dstA >> 7) & 1) != uDatm) {
                     discard;
                 }
             }
+        #endif
 
             vec3 fragRgb = vColor.rgb;
             int fragA = int(round(vColor.a * 128.0));
@@ -1327,6 +1445,8 @@ public sealed unsafe class GsOpenGlRenderer : IDisposable
         if (_primitiveVao != 0) _gl.DeleteVertexArray(_primitiveVao);
         if (_drawParamsUbo != 0) _gl.DeleteBuffer(_drawParamsUbo);
         if (_primitiveProgram != 0) _gl.DeleteProgram(_primitiveProgram);
+        if (_primitiveMsaaProgram != 0) _gl.DeleteProgram(_primitiveMsaaProgram);
+        if (_primitiveMsaaDateProgram != 0) _gl.DeleteProgram(_primitiveMsaaDateProgram);
         if (_dummyWhiteTex != 0) _gl.DeleteTexture(_dummyWhiteTex);
         if (_batchFbo != 0) _gl.DeleteFramebuffer(_batchFbo);
         if (_batchColorTex != 0) _gl.DeleteTexture(_batchColorTex);

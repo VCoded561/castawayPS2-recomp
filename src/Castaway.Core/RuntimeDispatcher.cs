@@ -20,14 +20,20 @@ public static unsafe class RuntimeDispatcher
     // Direct lookup table for .text (0x00100000..0x005FFFFF -> 5 MB / 4 = 1,310,720 instruction slots)
     private const uint TextBase = 0x00100000u;
     private const uint TextLimit = 0x00600000u;
-    private static readonly nint[] FastTable = new nint[(TextLimit - TextBase) >> 2];
-    private static readonly byte[] HookTable = new byte[(TextLimit - TextBase) >> 2];
+    private const uint TextSize = TextLimit - TextBase;
+    private static readonly nint[] FastTable = new nint[TextSize >> 2];
+    // Two-level L1-friendly hook lookup: 640-byte page bitset (1 KiB pages) gates the 160 KiB exact bitset.
+    private static readonly ulong[] HookPageBits = new ulong[((TextSize >> 10) + 63) >> 6];
+    private static readonly ulong[] HookBitTable = new ulong[((TextSize >> 2) + 63) >> 6];
     private static readonly Dictionary<uint, nint> FallbackTable = new();
     private static readonly Dictionary<uint, HookDelegate> Hooks = new();
     [ThreadStatic] private static uint _activeHookBypassPc;
 
     public static bool SlowPathActive;
     public static bool TracingActive;
+    public static bool SamplingActive;
+    // 0=EE, 1=DmaVif1, 2=Vu1, 3=XgKickGif, 4=DmaGif, 5=DmaOther, 6=Syscall, 7=Audio
+    public static volatile int ActiveProfilePhase;
     public static SyscallHandlerDelegate? SyscallHandler;
     public static MmioRead32Delegate? CustomMmioRead32;
     public static MmioWrite32Delegate? CustomMmioWrite32;
@@ -60,9 +66,13 @@ public static unsafe class RuntimeDispatcher
     public static void RegisterHook(uint vaddr, HookDelegate hook)
     {
         Hooks[vaddr] = hook;
-        if (vaddr >= TextBase && vaddr < TextLimit && (vaddr & 3u) == 0)
+        uint off = vaddr - TextBase;
+        if (off < TextSize && (off & 3u) == 0)
         {
-            HookTable[(vaddr - TextBase) >> 2] = 1;
+            uint page = off >> 10;
+            HookPageBits[page >> 6] |= 1UL << (int)page;
+            uint idx = off >> 2;
+            HookBitTable[idx >> 6] |= 1UL << (int)idx;
         }
         SlowPathActive = Hooks.Count > 0 || TraceHandler != null;
     }
@@ -70,7 +80,8 @@ public static unsafe class RuntimeDispatcher
     public static void ClearHooks()
     {
         Hooks.Clear();
-        Array.Clear(HookTable);
+        Array.Clear(HookPageBits);
+        Array.Clear(HookBitTable);
         SlowPathActive = TraceHandler != null;
     }
 
@@ -84,24 +95,41 @@ public static unsafe class RuntimeDispatcher
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     private static bool HasHook(uint pc)
     {
-        if (pc >= TextBase && pc < TextLimit && (pc & 3u) == 0)
-            return HookTable[(pc - TextBase) >> 2] != 0;
-        return Hooks.ContainsKey(pc);
+        uint off = pc - TextBase;
+        if (off < TextSize)
+        {
+            uint page = off >> 10;
+            if ((HookPageBits[page >> 6] & (1UL << (int)page)) == 0)
+                return false;
+            if ((off & 3u) != 0)
+                return false;
+            uint idx = off >> 2;
+            return (HookBitTable[idx >> 6] & (1UL << (int)idx)) != 0;
+        }
+        return HasHookFallback(pc);
     }
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private static bool HasHookFallback(uint pc) => Hooks.ContainsKey(pc);
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public static delegate*<CpuContext*, byte*, void> Lookup(uint vaddr)
     {
-        if (vaddr >= TextBase && vaddr < TextLimit && (vaddr & 3u) == 0)
+        uint off = vaddr - TextBase;
+        if (off < TextSize && (off & 3u) == 0)
         {
-            nint ptr = FastTable[(vaddr - TextBase) >> 2];
+            nint ptr = FastTable[off >> 2];
             if (ptr != 0)
                 return (delegate*<CpuContext*, byte*, void>)ptr;
         }
-        return FallbackTable.TryGetValue(vaddr, out nint fb)
+        return LookupFallback(vaddr);
+    }
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private static delegate*<CpuContext*, byte*, void> LookupFallback(uint vaddr)
+        => FallbackTable.TryGetValue(vaddr, out nint fb)
             ? (delegate*<CpuContext*, byte*, void>)fb
             : null;
-    }
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public static bool CheckEntry(uint pc, CpuContext* ctx, byte* ram)
@@ -151,19 +179,9 @@ public static unsafe class RuntimeDispatcher
         if (fn != null)
         {
             fn(ctx, ram);
+            return;
         }
-        else
-        {
-            if (_missingDispatchLogs < 50)
-            {
-                _missingDispatchLogs++;
-                Console.WriteLine($"[DISPATCHER MISSING CALL #{_missingDispatchLogs}] targetPc=0x{targetPc:X8} RA=0x{(ctx != null ? ctx->GetU32(31) : 0):X8} a0=0x{(ctx != null ? ctx->GetU32(4) : 0):X8}");
-            }
-            if (SlowPathActive)
-            {
-                CheckEntrySlow(targetPc, ctx, ram);
-            }
-        }
+        CallMissing(targetPc, ctx, ram, isJump: false);
     }
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
@@ -175,18 +193,23 @@ public static unsafe class RuntimeDispatcher
         if (fn != null)
         {
             fn(ctx, ram);
+            return;
         }
-        else
+        CallMissing(targetPc, ctx, ram, isJump: true);
+    }
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private static void CallMissing(uint targetPc, CpuContext* ctx, byte* ram, bool isJump)
+    {
+        if (_missingDispatchLogs < 50)
         {
-            if (_missingDispatchLogs < 50)
-            {
-                _missingDispatchLogs++;
-                Console.WriteLine($"[DISPATCHER MISSING JUMP #{_missingDispatchLogs}] targetPc=0x{targetPc:X8} RA=0x{(ctx != null ? ctx->GetU32(31) : 0):X8} a0=0x{(ctx != null ? ctx->GetU32(4) : 0):X8}");
-            }
-            if (SlowPathActive)
-            {
-                CheckEntrySlow(targetPc, ctx, ram);
-            }
+            _missingDispatchLogs++;
+            string kind = isJump ? "JUMP" : "CALL";
+            Console.WriteLine($"[DISPATCHER MISSING {kind} #{_missingDispatchLogs}] targetPc=0x{targetPc:X8} RA=0x{(ctx != null ? ctx->GetU32(31) : 0):X8} a0=0x{(ctx != null ? ctx->GetU32(4) : 0):X8}");
+        }
+        if (SlowPathActive)
+        {
+            CheckEntrySlow(targetPc, ctx, ram);
         }
     }
 

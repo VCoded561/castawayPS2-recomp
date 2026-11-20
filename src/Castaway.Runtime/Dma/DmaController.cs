@@ -1,4 +1,5 @@
 using System.Buffers.Binary;
+using System.Diagnostics;
 using Castaway.Core;
 
 namespace Castaway.Runtime;
@@ -67,6 +68,11 @@ public sealed unsafe class DmaController
 
     // Metrics for verification & debugging
     public static bool CaptureDebugPackets { get; set; } = false;
+    public bool EnableProfiling { get; set; }
+    public long TotalDmaTicks { get; private set; }
+    public long TotalDmaVif1Ticks { get; private set; }
+    public long TotalDmaGifTicks { get; private set; }
+    public long TotalDmaOtherTicks { get; private set; }
     public long TotalQuadwordsTransferred { get; private set; }
     private readonly List<byte> _lastTransferredPacket = new();
     public IReadOnlyList<byte> LastTransferredPacket => _lastTransferredPacket;
@@ -149,28 +155,57 @@ public sealed unsafe class DmaController
 
     public void ExecuteChannelTransfer(CpuContext* ctx, byte* ram, DmaChannelRegisters ch)
     {
-        _lastTransferredPacket.Clear();
-
-        uint mode = (ch.Chcr >> 2) & 0x3u;
-        switch (mode)
+        bool sampling = RuntimeDispatcher.SamplingActive;
+        int prevPhase = sampling ? RuntimeDispatcher.ActiveProfilePhase : 0;
+        if (sampling)
         {
-            case 0: // Normal Mode
-                ExecuteNormalTransfer(ctx, ram, ch);
-                break;
-            case 1: // Chain Mode (Source Chain / Dest Chain)
-                ExecuteChainTransfer(ctx, ram, ch);
-                break;
-            case 2: // Interleave Mode
-            case 3:
-                ExecuteInterleaveTransfer(ctx, ram, ch);
-                break;
+            RuntimeDispatcher.ActiveProfilePhase = ch.ChannelId switch
+            {
+                DmaChannelId.Vif1 => 1,
+                DmaChannelId.Gif => 4,
+                _ => 5
+            };
         }
+        long t0 = EnableProfiling ? Stopwatch.GetTimestamp() : 0;
+        try
+        {
+            if (CaptureDebugPackets)
+                _lastTransferredPacket.Clear();
 
-        // Clear STR bit (bit 8) when transfer completes synchronously
-        ch.Chcr &= ~0x100u;
+            uint mode = (ch.Chcr >> 2) & 0x3u;
+            switch (mode)
+            {
+                case 0: // Normal Mode
+                    ExecuteNormalTransfer(ctx, ram, ch);
+                    break;
+                case 1: // Chain Mode (Source Chain / Dest Chain)
+                    ExecuteChainTransfer(ctx, ram, ch);
+                    break;
+                case 2: // Interleave Mode
+                case 3:
+                    ExecuteInterleaveTransfer(ctx, ram, ch);
+                    break;
+            }
 
-        // Fire DMAC interrupt bit for this channel
-        _kernel.FireDmacInterrupt(ctx, ram, (int)ch.ChannelId);
+            // Clear STR bit (bit 8) when transfer completes synchronously
+            ch.Chcr &= ~0x100u;
+
+            // Fire DMAC interrupt bit for this channel
+            _kernel.FireDmacInterrupt(ctx, ram, (int)ch.ChannelId);
+        }
+        finally
+        {
+            if (sampling)
+                RuntimeDispatcher.ActiveProfilePhase = prevPhase;
+            if (t0 != 0)
+            {
+                long dt = Stopwatch.GetTimestamp() - t0;
+                TotalDmaTicks += dt;
+                if (ch.ChannelId == DmaChannelId.Vif1) TotalDmaVif1Ticks += dt;
+                else if (ch.ChannelId == DmaChannelId.Gif) TotalDmaGifTicks += dt;
+                else TotalDmaOtherTicks += dt;
+            }
+        }
     }
 
     private void ExecuteNormalTransfer(CpuContext* ctx, byte* ram, DmaChannelRegisters ch)

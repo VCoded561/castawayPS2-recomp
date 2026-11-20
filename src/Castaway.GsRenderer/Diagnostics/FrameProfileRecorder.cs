@@ -142,6 +142,14 @@ public sealed class FrameProfileRecorder
     public long Vif1UnpackTicksDelta { get; set; }
     public long Vif1MicroCbTicksDelta { get; set; }
     public long Vif1DirectGifTicksDelta { get; set; }
+    public long Vu1XgKickTicksDelta { get; set; }
+    public long DmaTotalTicksDelta { get; set; }
+    public long DmaVif1TicksDelta { get; set; }
+    public long DmaGifTicksDelta { get; set; }
+    public long DmaOtherTicksDelta { get; set; }
+    public long TotalPcSamples { get; set; }
+    public long[] PhaseSamples { get; } = new long[8];
+    public Dictionary<uint, int> EePcSamples { get; } = new(256);
 
     public List<RecordedGifPacket> GifPackets { get; } = new(2048);
     public Dictionary<string, GifSourceStats> GifSources { get; } = new(StringComparer.Ordinal);

@@ -135,7 +135,7 @@ public readonly struct Ps2Float
     public static float Add(float a, float b)
     {
         float r = a + b;
-        return IsNormal(r) && !IsSpecial(a) && !IsSpecial(b) ? r : AddSlow(a, b);
+        return float.IsFinite(r) ? r : AddSlow(a, b);
     }
 
     [MethodImpl(MethodImplOptions.NoInlining)]
@@ -145,7 +145,7 @@ public readonly struct Ps2Float
     public static float Sub(float a, float b)
     {
         float r = a - b;
-        return IsNormal(r) && !IsSpecial(a) && !IsSpecial(b) ? r : SubSlow(a, b);
+        return float.IsFinite(r) ? r : SubSlow(a, b);
     }
 
     [MethodImpl(MethodImplOptions.NoInlining)]
@@ -155,17 +155,30 @@ public readonly struct Ps2Float
     public static float Mul(float a, float b)
     {
         float r = a * b;
-        return IsNormal(r) && !IsSpecial(a) && !IsSpecial(b) ? r : MulSlow(a, b);
+        return float.IsFinite(r) ? r : MulSlow(a, b);
     }
 
     [MethodImpl(MethodImplOptions.NoInlining)]
     private static float MulSlow(float a, float b) => FromDouble(ToDouble(a) * ToDouble(b));
 
+    private const float MinNormalFloat = 1.17549435e-38f;
+
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public static float Div(float a, float b)
     {
-        float r = a / b;
-        return AllNormal(a, b, r) ? r : DivSlow(a, b);
+        uint ub = BitConverter.SingleToUInt32Bits(b) & MagMask;
+        if (ub - 0x00800000u < 0x7F000000u)
+        {
+            uint ua = BitConverter.SingleToUInt32Bits(a) & MagMask;
+            if (ua == 0u || ua - 0x00800000u < 0x7F000000u)
+            {
+                float r = a / b;
+                uint ur = BitConverter.SingleToUInt32Bits(r) & MagMask;
+                if (ur == 0u || ur - 0x00800000u < 0x7F000000u)
+                    return r;
+            }
+        }
+        return DivSlow(a, b);
     }
 
     [MethodImpl(MethodImplOptions.NoInlining)]
@@ -182,6 +195,15 @@ public readonly struct Ps2Float
     public static float Sqrt(float a)
     {
         uint ua = BitConverter.SingleToUInt32Bits(a);
+        if (ua - 0x00800000u < 0x7F000000u)
+            return MathF.Sqrt(a);
+        return SqrtSlow(a);
+    }
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private static float SqrtSlow(float a)
+    {
+        uint ua = BitConverter.SingleToUInt32Bits(a);
         if ((ua & ExpMask) == 0u)
             return 0.0f;
         if ((ua & ExpMask) == ExpMask)
@@ -191,6 +213,24 @@ public readonly struct Ps2Float
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public static float Rsqrt(float a, float b)
+    {
+        uint ub = BitConverter.SingleToUInt32Bits(b);
+        if (ub - 0x00800000u < 0x7F000000u)
+        {
+            uint ua = BitConverter.SingleToUInt32Bits(a) & MagMask;
+            if (ua == 0u || ua - 0x00800000u < 0x7F000000u)
+            {
+                float r = a / MathF.Sqrt(b);
+                uint ur = BitConverter.SingleToUInt32Bits(r) & MagMask;
+                if (ur == 0u || ur - 0x00800000u < 0x7F000000u)
+                    return r;
+            }
+        }
+        return RsqrtSlow(a, b);
+    }
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private static float RsqrtSlow(float a, float b)
     {
         uint ub = BitConverter.SingleToUInt32Bits(b);
         if ((ub & ExpMask) == 0u)
@@ -232,25 +272,110 @@ public readonly struct Ps2Float
     }
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    public static float Max(float a, float b) => ToOrderedKey(a) >= ToOrderedKey(b) ? a : b;
+    public static float Max(float a, float b)
+    {
+        if (MathF.Abs(a) >= MinNormalFloat || MathF.Abs(b) >= MinNormalFloat)
+        {
+            if (a > b) return a;
+            if (a < b) return b;
+            if (a == b) return a;
+        }
+        else if (MathF.Abs(a) < MinNormalFloat && MathF.Abs(b) < MinNormalFloat)
+        {
+            return a;
+        }
+        return MaxSlow(a, b);
+    }
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private static float MaxSlow(float a, float b) => ToOrderedKey(a) >= ToOrderedKey(b) ? a : b;
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    public static float Min(float a, float b) => ToOrderedKey(a) <= ToOrderedKey(b) ? a : b;
+    public static float Min(float a, float b)
+    {
+        if (MathF.Abs(a) >= MinNormalFloat || MathF.Abs(b) >= MinNormalFloat)
+        {
+            if (a < b) return a;
+            if (a > b) return b;
+            if (a == b) return a;
+        }
+        else if (MathF.Abs(a) < MinNormalFloat && MathF.Abs(b) < MinNormalFloat)
+        {
+            return a;
+        }
+        return MinSlow(a, b);
+    }
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private static float MinSlow(float a, float b) => ToOrderedKey(a) <= ToOrderedKey(b) ? a : b;
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    public static bool CompareEq(float a, float b) => ToOrderedKey(a) == ToOrderedKey(b);
+    public static bool CompareEq(float a, float b)
+    {
+        if (MathF.Abs(a) >= MinNormalFloat || MathF.Abs(b) >= MinNormalFloat)
+        {
+            if (a == b) return true;
+            if (a < b || a > b) return false;
+        }
+        else if (MathF.Abs(a) < MinNormalFloat && MathF.Abs(b) < MinNormalFloat)
+        {
+            return true;
+        }
+        return CompareEqSlow(a, b);
+    }
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private static bool CompareEqSlow(float a, float b) => ToOrderedKey(a) == ToOrderedKey(b);
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    public static bool CompareLt(float a, float b) => ToOrderedKey(a) < ToOrderedKey(b);
+    public static bool CompareLt(float a, float b)
+    {
+        if (MathF.Abs(a) >= MinNormalFloat || MathF.Abs(b) >= MinNormalFloat)
+        {
+            if (a < b) return true;
+            if (a >= b) return false;
+        }
+        else if (MathF.Abs(a) < MinNormalFloat && MathF.Abs(b) < MinNormalFloat)
+        {
+            return false;
+        }
+        return CompareLtSlow(a, b);
+    }
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private static bool CompareLtSlow(float a, float b) => ToOrderedKey(a) < ToOrderedKey(b);
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    public static bool CompareLe(float a, float b) => ToOrderedKey(a) <= ToOrderedKey(b);
+    public static bool CompareLe(float a, float b)
+    {
+        if (MathF.Abs(a) >= MinNormalFloat || MathF.Abs(b) >= MinNormalFloat)
+        {
+            if (a <= b) return true;
+            if (a > b) return false;
+        }
+        else if (MathF.Abs(a) < MinNormalFloat && MathF.Abs(b) < MinNormalFloat)
+        {
+            return true;
+        }
+        return CompareLeSlow(a, b);
+    }
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private static bool CompareLeSlow(float a, float b) => ToOrderedKey(a) <= ToOrderedKey(b);
 
     /// <summary>
     /// PS2 CVT.W.S / TRUNC.W.S: Always rounds toward zero (MathF.Truncate) and clamps to [int.MinValue, int.MaxValue].
     /// </summary>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public static int CvtWS(float x)
+    {
+        if (x > -2147483648.0f && x < 2147483648.0f)
+            return (int)x;
+        return CvtWSSlow(x);
+    }
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private static int CvtWSSlow(float x)
     {
         uint b = BitConverter.SingleToUInt32Bits(x);
         uint exp = b & ExpMask;
@@ -292,19 +417,58 @@ public readonly struct Ps2Float
     }
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    public static Vector128<float> VecMadd(Vector128<float> acc, Vector128<float> a, Vector128<float> b)
+    {
+        Vector128<float> r = acc + (a * b);
+        Vector128<uint> expMask = Vector128.Create(ExpMask);
+        if (Vector128.EqualsAny(r.AsUInt32() & expMask, expMask))
+            return VecMaddSlow(acc, a, b);
+        return r;
+    }
+
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    public static Vector128<float> VecMsub(Vector128<float> acc, Vector128<float> a, Vector128<float> b)
+    {
+        Vector128<float> r = acc - (a * b);
+        Vector128<uint> expMask = Vector128.Create(ExpMask);
+        if (Vector128.EqualsAny(r.AsUInt32() & expMask, expMask))
+            return VecMsubSlow(acc, a, b);
+        return r;
+    }
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    public static Vector128<float> VecAddSlow(Vector128<float> a, Vector128<float> b) => VecSlow(a, b, 0);
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    public static Vector128<float> VecSubSlow(Vector128<float> a, Vector128<float> b) => VecSlow(a, b, 1);
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    public static Vector128<float> VecMulSlow(Vector128<float> a, Vector128<float> b) => VecSlow(a, b, 2);
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    public static Vector128<float> VecMaddSlow(Vector128<float> acc, Vector128<float> a, Vector128<float> b)
+    {
+        Vector128<float> prod = VecSlow(a, b, 2);
+        return VecSlow(acc, prod, 0);
+    }
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    public static Vector128<float> VecMsubSlow(Vector128<float> acc, Vector128<float> a, Vector128<float> b)
+    {
+        Vector128<float> prod = VecSlow(a, b, 2);
+        return VecSlow(acc, prod, 1);
+    }
+
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
     private static Vector128<float> VecFinish(Vector128<float> a, Vector128<float> b, Vector128<float> r, int op)
     {
         Vector128<uint> expMask = Vector128.Create(ExpMask);
-        Vector128<uint> rBits = r.AsUInt32();
-        Vector128<uint> rExp = rBits & expMask;
+        Vector128<uint> rExp = r.AsUInt32() & expMask;
         if (Vector128.EqualsAny(rExp, expMask))
         {
             return VecSlow(a, b, op);
         }
-        // Flush denormals (rExp == 0) to signed zero
-        Vector128<uint> isZeroExp = Vector128.Equals(rExp, Vector128<uint>.Zero);
-        Vector128<uint> flushMask = isZeroExp & Vector128.Create(MagMask);
-        return Vector128.AndNot(rBits, flushMask).AsSingle();
+        return r;
     }
 
     [MethodImpl(MethodImplOptions.NoInlining)]

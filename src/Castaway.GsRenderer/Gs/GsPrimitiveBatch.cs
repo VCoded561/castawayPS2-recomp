@@ -239,14 +239,6 @@ public sealed class GsPrimitiveBatch
             }
         }
 
-        int clutOffset = -1;
-        if (dc.ClutTable != null && ClutPoolCount < 1024)
-        {
-            clutOffset = ClutPoolCount * 256;
-            Array.Copy(dc.ClutTable, 0, ClutPool, clutOffset, 256);
-            ClutPoolCount++;
-        }
-
         DrawCalls[DrawCallCount++] = new GsGlDrawCall
         {
             StartVertex = startVtx,
@@ -259,8 +251,62 @@ public sealed class GsPrimitiveBatch
             Scy1 = scy1,
             Ofx = ofx,
             Ofy = ofy,
-            ClutOffset = clutOffset
+            ClutOffset = -1
         };
+    }
+
+    public int PrepareTriangleDrawCall(
+        in GsDrawContext dc,
+        int scx0, int scy0, int scx1, int scy1,
+        int ofx, int ofy,
+        out bool createdNew)
+    {
+        if (DrawCallCount > 0)
+        {
+            ref var lastCall = ref DrawCalls[DrawCallCount - 1];
+            if (lastCall.PrimType == GsPrimitiveType.Triangle &&
+                lastCall.Scx0 == scx0 && lastCall.Scy0 == scy0 &&
+                lastCall.Scx1 == scx1 && lastCall.Scy1 == scy1 &&
+                lastCall.Ofx == ofx && lastCall.Ofy == ofy &&
+                ((lastCall.DrawContext.StateVersion != 0 && lastCall.DrawContext.StateVersion == dc.StateVersion) ||
+                 lastCall.DrawContext.StateEquals(in dc)))
+            {
+                createdNew = false;
+                return DrawCallCount - 1;
+            }
+        }
+
+        if (DrawCallCount >= MaxDrawCalls)
+        {
+            createdNew = false;
+            return -1;
+        }
+
+        int idx = DrawCallCount++;
+        DrawCalls[idx] = new GsGlDrawCall
+        {
+            StartVertex = VertexCount,
+            VertexCount = 0,
+            PrimType = GsPrimitiveType.Triangle,
+            DrawContext = dc,
+            Scx0 = scx0,
+            Scy0 = scy0,
+            Scx1 = scx1,
+            Scy1 = scy1,
+            Ofx = ofx,
+            Ofy = ofy,
+            ClutOffset = -1
+        };
+        createdNew = true;
+        return idx;
+    }
+
+    public void RollbackEmptyDrawCall(int idx, bool createdNew)
+    {
+        if (createdNew && idx == DrawCallCount - 1 && DrawCalls[idx].VertexCount == 0)
+        {
+            DrawCallCount--;
+        }
     }
 
     public void AddSprite(
@@ -302,14 +348,6 @@ public sealed class GsPrimitiveBatch
             }
         }
 
-        int clutOffset = -1;
-        if (dc.ClutTable != null && ClutPoolCount < 1024)
-        {
-            clutOffset = ClutPoolCount * 256;
-            Array.Copy(dc.ClutTable, 0, ClutPool, clutOffset, 256);
-            ClutPoolCount++;
-        }
-
         DrawCalls[DrawCallCount++] = new GsGlDrawCall
         {
             StartVertex = startVtx,
@@ -322,7 +360,7 @@ public sealed class GsPrimitiveBatch
             Scy1 = scy1,
             Ofx = ofx,
             Ofy = ofy,
-            ClutOffset = clutOffset
+            ClutOffset = -1
         };
     }
 }

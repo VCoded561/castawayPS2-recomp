@@ -29,8 +29,11 @@ public sealed class EeThreadState
     public int WaitSemaId { get; set; } = -1;
     public int WakeupCount { get; set; }
     public volatile bool WakingUpFromWait;
+    public bool SemaGranted { get; set; }
+    public int SemaWaitResult { get; set; }
     public CpuContext SavedContext;
     public readonly AutoResetEvent SleepEvent = new(false);
+    public readonly AutoResetEvent SemaEvent = new(false);
     public Thread? HostThread { get; set; }
 }
 
@@ -42,7 +45,7 @@ public sealed class EeSemaState
     public int InitCount { get; set; }
     public uint Attr { get; set; }
     public uint Option { get; set; }
-    public Queue<int> WaitingThreadIds { get; } = new();
+    public List<int> WaitingThreadIds { get; } = new();
     public readonly AutoResetEvent Event = new(false);
 }
 
@@ -146,6 +149,30 @@ public sealed unsafe class EeKernel
     public uint IntcMask { get; set; }
     public uint DmacStat { get; set; } // Lower 16 = STAT, Upper 16 = MASK
 
+    public void WriteDmacStatRegister(uint clearStat, uint invertMask)
+    {
+        lock (_syncLock)
+        {
+            DmacStat = (DmacStat & ~clearStat) ^ invertMask;
+        }
+    }
+
+    public void ClearIntcStatBits(uint clearBits)
+    {
+        lock (_syncLock)
+        {
+            IntcStat &= ~clearBits;
+        }
+    }
+
+    public void ToggleIntcMaskBits(uint toggleBits)
+    {
+        lock (_syncLock)
+        {
+            IntcMask ^= toggleBits;
+        }
+    }
+
     public int CurrentThreadId
     {
         get => s_currentThreadId != 0 ? s_currentThreadId : 1;
@@ -248,8 +275,12 @@ public sealed unsafe class EeKernel
             {
                 int cause = (int)ctx->GetU32(4);
                 uint bit = 1u << (cause & 31);
-                bool wasSet = (IntcMask & bit) != 0;
-                IntcMask |= bit;
+                bool wasSet;
+                lock (_syncLock)
+                {
+                    wasSet = (IntcMask & bit) != 0;
+                    IntcMask |= bit;
+                }
                 ctx->SetS32(2, wasSet ? 1 : 0);
                 break;
             }
@@ -259,8 +290,12 @@ public sealed unsafe class EeKernel
             {
                 int cause = (int)ctx->GetU32(4);
                 uint bit = 1u << (cause & 31);
-                bool wasSet = (IntcMask & bit) != 0;
-                IntcMask &= ~bit;
+                bool wasSet;
+                lock (_syncLock)
+                {
+                    wasSet = (IntcMask & bit) != 0;
+                    IntcMask &= ~bit;
+                }
                 ctx->SetS32(2, wasSet ? 1 : 0);
                 break;
             }
@@ -270,8 +305,12 @@ public sealed unsafe class EeKernel
             {
                 int ch = (int)ctx->GetU32(4);
                 uint maskBit = 1u << ((ch & 15) + 16);
-                bool wasSet = (DmacStat & maskBit) != 0;
-                DmacStat |= maskBit;
+                bool wasSet;
+                lock (_syncLock)
+                {
+                    wasSet = (DmacStat & maskBit) != 0;
+                    DmacStat |= maskBit;
+                }
                 ctx->SetS32(2, wasSet ? 1 : 0);
                 break;
             }
@@ -281,8 +320,12 @@ public sealed unsafe class EeKernel
             {
                 int ch = (int)ctx->GetU32(4);
                 uint maskBit = 1u << ((ch & 15) + 16);
-                bool wasSet = (DmacStat & maskBit) != 0;
-                DmacStat &= ~maskBit;
+                bool wasSet;
+                lock (_syncLock)
+                {
+                    wasSet = (DmacStat & maskBit) != 0;
+                    DmacStat &= ~maskBit;
+                }
                 ctx->SetS32(2, wasSet ? 1 : 0);
                 break;
             }
@@ -879,10 +922,15 @@ public sealed unsafe class EeKernel
         {
             if (tid == CurrentThreadId || !_threads.TryGetValue(tid, out var t))
                 return -1;
+            if (t.WaitType == 2 && t.WaitSemaId >= 0 && _semas.TryGetValue(t.WaitSemaId, out var waitSema))
+                waitSema.WaitingThreadIds.Remove(tid);
             t.Status = Ps2ThreadStatus.Dormant;
             t.WaitType = 0;
             t.WaitSemaId = -1;
+            t.SemaGranted = true;
+            t.SemaWaitResult = -1;
             t.SleepEvent.Set();
+            t.SemaEvent.Set();
             return tid;
         }
     }
@@ -900,9 +948,12 @@ public sealed unsafe class EeKernel
                     kvp.Value.Status = Ps2ThreadStatus.Dormant;
                     kvp.Value.WaitType = 0;
                     kvp.Value.WaitSemaId = -1;
+                    kvp.Value.SemaGranted = true;
+                    kvp.Value.SemaWaitResult = -1;
                     try
                     {
                         kvp.Value.SleepEvent.Set();
+                        kvp.Value.SemaEvent.Set();
                     }
                     catch { }
 
@@ -958,13 +1009,18 @@ public sealed unsafe class EeKernel
         {
             if (!_threads.TryGetValue(tid, out var t))
                 return -1;
+            if (t.WaitType == 2 && t.WaitSemaId >= 0 && _semas.TryGetValue(t.WaitSemaId, out var waitSema))
+                waitSema.WaitingThreadIds.Remove(tid);
             if (t.Status == Ps2ThreadStatus.Wait)
                 t.Status = Ps2ThreadStatus.Ready;
             else if (t.Status == Ps2ThreadStatus.WaitSuspend)
                 t.Status = Ps2ThreadStatus.Suspend;
             t.WaitType = 0;
             t.WaitSemaId = -1;
+            t.SemaGranted = true;
+            t.SemaWaitResult = -1;
             t.SleepEvent.Set();
+            t.SemaEvent.Set();
             return tid;
         }
     }
@@ -1193,6 +1249,19 @@ public sealed unsafe class EeKernel
         {
             if (_semas.Remove(sid, out var s))
             {
+                foreach (int waiterId in s.WaitingThreadIds)
+                {
+                    if (_threads.TryGetValue(waiterId, out var t) && t.WaitType == 2 && t.WaitSemaId == sid)
+                    {
+                        t.Status = t.Status == Ps2ThreadStatus.WaitSuspend ? Ps2ThreadStatus.Suspend : Ps2ThreadStatus.Ready;
+                        t.WaitType = 0;
+                        t.WaitSemaId = -1;
+                        t.SemaGranted = true;
+                        t.SemaWaitResult = -1;
+                        t.SemaEvent.Set();
+                    }
+                }
+                s.WaitingThreadIds.Clear();
                 s.Event.Set();
                 return sid;
             }
@@ -1202,26 +1271,34 @@ public sealed unsafe class EeKernel
 
     public int SignalSema(int sid)
     {
-        EeThreadState? wokenWaiter = null;
         lock (_syncLock)
         {
             if (!_semas.TryGetValue(sid, out var s))
                 return -1;
 
-            if (s.WaitingThreadIds.Count > 0)
+            // Strict PS2 EE Kernel FIFO handoff:
+            // Transfer the semaphore permit directly to the oldest waiting thread (head of WaitingThreadIds)
+            // instead of incrementing s.Count and signaling a shared AutoResetEvent (which causes LIFO starvation on Windows).
+            while (s.WaitingThreadIds.Count > 0)
             {
-                int waiterId = s.WaitingThreadIds.Dequeue();
-                if (_threads.TryGetValue(waiterId, out var t))
+                int waiterId = s.WaitingThreadIds[0];
+                s.WaitingThreadIds.RemoveAt(0);
+                if (_threads.TryGetValue(waiterId, out var t) &&
+                    t.WaitType == 2 &&
+                    t.WaitSemaId == sid &&
+                    !t.SemaGranted)
                 {
-                    bool wasWaitingOnThisSema = t.Status == Ps2ThreadStatus.Wait && t.WaitSemaId == sid;
                     t.Status = t.Status == Ps2ThreadStatus.WaitSuspend ? Ps2ThreadStatus.Suspend : Ps2ThreadStatus.Ready;
                     t.WaitType = 0;
                     t.WaitSemaId = -1;
-                    if (wasWaitingOnThisSema && waiterId >= 2 && waiterId != CurrentThreadId)
+                    t.SemaGranted = true;
+                    t.SemaWaitResult = sid;
+                    if (waiterId >= 2 && waiterId != CurrentThreadId)
                     {
                         t.WakingUpFromWait = true;
-                        wokenWaiter = t;
                     }
+                    t.SemaEvent.Set();
+                    return sid;
                 }
             }
 
@@ -1240,6 +1317,57 @@ public sealed unsafe class EeKernel
     {
         int tid = CurrentThreadId;
         int mainWaitCount = 0;
+        EeThreadState? selfThread = null;
+        EeSemaState? s;
+
+        if (_isShuttingDown)
+        {
+            if (tid != 1)
+                throw new OperationCanceledException("PS2 worker thread shutdown");
+            return -1;
+        }
+
+        // Initial check / FIFO enqueue
+        lock (_syncLock)
+        {
+            if (!_semas.TryGetValue(sid, out s))
+                return -1;
+
+            if (_threads.TryGetValue(tid, out selfThread))
+            {
+                if (selfThread.Status != Ps2ThreadStatus.Run &&
+                    selfThread.Status != Ps2ThreadStatus.Wait &&
+                    selfThread.Status != Ps2ThreadStatus.Ready)
+                    return -1;
+            }
+
+            if (s.Count > 0 && s.WaitingThreadIds.Count == 0)
+            {
+                s.Count--;
+                if (selfThread != null)
+                {
+                    selfThread.Status = Ps2ThreadStatus.Run;
+                    selfThread.WaitType = 0;
+                    selfThread.WaitSemaId = -1;
+                    selfThread.WakingUpFromWait = false;
+                    selfThread.SemaGranted = false;
+                }
+                return sid;
+            }
+
+            if (selfThread != null)
+            {
+                selfThread.Status = Ps2ThreadStatus.Wait;
+                selfThread.WaitType = 2;
+                selfThread.WaitSemaId = sid;
+                selfThread.SemaGranted = false;
+                selfThread.SemaWaitResult = sid;
+                selfThread.SemaEvent.Reset();
+            }
+
+            if (!s.WaitingThreadIds.Contains(tid))
+                s.WaitingThreadIds.Add(tid);
+        }
 
         while (true)
         {
@@ -1250,42 +1378,6 @@ public sealed unsafe class EeKernel
                 return -1;
             }
 
-            EeSemaState? s;
-            lock (_syncLock)
-            {
-                if (!_semas.TryGetValue(sid, out s))
-                    return -1;
-
-                if (_threads.TryGetValue(tid, out var t))
-                {
-                    if (t.Status != Ps2ThreadStatus.Run && t.Status != Ps2ThreadStatus.Wait && t.Status != Ps2ThreadStatus.Ready)
-                        return -1;
-                }
-
-                if (s.Count > 0)
-                {
-                    s.Count--;
-                    if (_threads.TryGetValue(tid, out var tRunning))
-                    {
-                        tRunning.Status = Ps2ThreadStatus.Run;
-                        tRunning.WaitType = 0;
-                        tRunning.WaitSemaId = -1;
-                        tRunning.WakingUpFromWait = false;
-                    }
-                    return sid;
-                }
-
-                if (_threads.TryGetValue(tid, out var tWaiting))
-                {
-                    tWaiting.Status = Ps2ThreadStatus.Wait;
-                    tWaiting.WaitType = 2;
-                    tWaiting.WaitSemaId = sid;
-                }
-
-                if (!s.WaitingThreadIds.Contains(tid))
-                    s.WaitingThreadIds.Enqueue(tid);
-            }
-
             if (tid == 1)
             {
                 OnMainThreadIdleTick?.Invoke();
@@ -1293,6 +1385,17 @@ public sealed unsafe class EeKernel
                 bool hasRunningWorkers = false;
                 lock (_syncLock)
                 {
+                    if (selfThread != null && selfThread.SemaGranted)
+                    {
+                        selfThread.SemaGranted = false;
+                        selfThread.Status = Ps2ThreadStatus.Run;
+                        selfThread.WaitType = 0;
+                        selfThread.WaitSemaId = -1;
+                        return selfThread.SemaWaitResult;
+                    }
+                    if (!_semas.ContainsKey(sid))
+                        return -1;
+
                     if (_threads.TryGetValue(2, out var tMainGame))
                     {
                         hasRunningWorkers = tMainGame.Status != Ps2ThreadStatus.Dormant;
@@ -1310,9 +1413,25 @@ public sealed unsafe class EeKernel
                     }
                 }
 
-                bool signaled = s.Event.WaitOne(hasRunningWorkers ? 4 : 0);
+                bool signaled = selfThread != null
+                    ? selfThread.SemaEvent.WaitOne(hasRunningWorkers ? 4 : 0)
+                    : s.Event.WaitOne(hasRunningWorkers ? 4 : 0);
                 if (_isShuttingDown)
                     return -1;
+
+                lock (_syncLock)
+                {
+                    if (selfThread != null && selfThread.SemaGranted)
+                    {
+                        selfThread.SemaGranted = false;
+                        selfThread.Status = Ps2ThreadStatus.Run;
+                        selfThread.WaitType = 0;
+                        selfThread.WaitSemaId = -1;
+                        return selfThread.SemaWaitResult;
+                    }
+                    if (!_semas.ContainsKey(sid))
+                        return -1;
+                }
 
                 if (!signaled && !hasRunningWorkers && ram != null && ctx != null && _intcHandlers.Count > 0)
                 {
@@ -1322,6 +1441,18 @@ public sealed unsafe class EeKernel
                 mainWaitCount++;
                 if (!hasRunningWorkers && mainWaitCount >= 2)
                 {
+                    lock (_syncLock)
+                    {
+                        if (_semas.TryGetValue(sid, out var curSema))
+                            curSema.WaitingThreadIds.Remove(tid);
+                        if (selfThread != null)
+                        {
+                            selfThread.SemaGranted = false;
+                            selfThread.Status = Ps2ThreadStatus.Run;
+                            selfThread.WaitType = 0;
+                            selfThread.WaitSemaId = -1;
+                        }
+                    }
                     return sid;
                 }
             }
@@ -1339,21 +1470,48 @@ public sealed unsafe class EeKernel
                 bool sig;
                 try
                 {
-                    sig = s.Event.WaitOne(10);
+                    sig = selfThread != null ? selfThread.SemaEvent.WaitOne(10) : s.Event.WaitOne(10);
                 }
                 finally
                 {
                     lock (_syncLock)
                     {
-                        if (_threads.TryGetValue(tid, out var tWoke))
+                        if (selfThread != null)
                         {
-                            tWoke.WakingUpFromWait = false;
+                            selfThread.WakingUpFromWait = false;
                         }
                     }
                 }
 
                 if (_isShuttingDown)
                     throw new OperationCanceledException("PS2 worker thread shutdown");
+
+                lock (_syncLock)
+                {
+                    if (selfThread != null && selfThread.SemaGranted)
+                    {
+                        selfThread.SemaGranted = false;
+                        selfThread.Status = Ps2ThreadStatus.Run;
+                        selfThread.WaitType = 0;
+                        selfThread.WaitSemaId = -1;
+                        return selfThread.SemaWaitResult;
+                    }
+                    if (!_semas.ContainsKey(sid))
+                        return -1;
+                    // Fallback: if count > 0 and nobody else is ahead of us, claim it
+                    if (s.Count > 0 && (s.WaitingThreadIds.Count == 0 || s.WaitingThreadIds[0] == tid))
+                    {
+                        s.Count--;
+                        s.WaitingThreadIds.Remove(tid);
+                        if (selfThread != null)
+                        {
+                            selfThread.Status = Ps2ThreadStatus.Run;
+                            selfThread.WaitType = 0;
+                            selfThread.WaitSemaId = -1;
+                        }
+                        return sid;
+                    }
+                }
 
                 if (!sig && tid == 2)
                 {
@@ -1371,12 +1529,15 @@ public sealed unsafe class EeKernel
                         Console.WriteLine($"[EeKernel] MainGameThread (tid=2) breaking out of WaitSema(sid={sid}) after {mainWaitCount} waits! RA=0x{ra:X8}");
                         lock (_syncLock)
                         {
-                            if (_threads.TryGetValue(tid, out var tRun2))
+                            if (_semas.TryGetValue(sid, out var curSema))
+                                curSema.WaitingThreadIds.Remove(tid);
+                            if (selfThread != null)
                             {
-                                tRun2.Status = Ps2ThreadStatus.Run;
-                                tRun2.WaitType = 0;
-                                tRun2.WaitSemaId = -1;
-                                tRun2.WakingUpFromWait = false;
+                                selfThread.SemaGranted = false;
+                                selfThread.Status = Ps2ThreadStatus.Run;
+                                selfThread.WaitType = 0;
+                                selfThread.WaitSemaId = -1;
+                                selfThread.WakingUpFromWait = false;
                             }
                         }
                         return sid;
@@ -1543,16 +1704,15 @@ public sealed unsafe class EeKernel
     public void FireDmacInterrupt(CpuContext* ctx, byte* ram, int channel)
     {
         uint bit = 1u << (channel & 15);
-        DmacStat |= bit;
-
-        // Check if channel interrupt mask bit is enabled (upper 16 bits of D_STAT)
         uint maskBit = bit << 16;
-        if ((DmacStat & maskBit) == 0 || ctx == null)
-            return;
-
+        bool maskEnabled;
         EeDmacHandlerEntry[] handlers;
         lock (_syncLock)
         {
+            DmacStat |= bit;
+            maskEnabled = (DmacStat & maskBit) != 0;
+            if (!maskEnabled || ctx == null)
+                return;
             handlers = _dmacHandlers.ToArray();
         }
 

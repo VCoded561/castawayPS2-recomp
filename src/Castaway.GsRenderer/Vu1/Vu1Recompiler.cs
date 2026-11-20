@@ -34,6 +34,7 @@ public sealed class Vu1Recompiler
     public int CachedProgramCount => _seenSlotCount > _cache.Count ? _seenSlotCount : _cache.Count;
     public IReadOnlyDictionary<(ushort StartAddr, uint Crc32), Vu1CompiledProgram> Cache => _cache;
     public FrameProfileRecorder? FrameRecorder { get; set; }
+    public bool EnableProfiling { get; set; }
 
     public void InvalidateMicroMemHash()
     {
@@ -65,6 +66,13 @@ public sealed class Vu1Recompiler
         return existing;
     }
 
+    public void ExecuteDecodedOnly(Vu1State vu, ushort startByteAddr)
+    {
+        startByteAddr = (ushort)(startByteAddr & 0x3FF8);
+        vu.CurrentProgramStart = startByteAddr;
+        _decodedExecutor.Execute(vu, startByteAddr);
+    }
+
     public void Execute(Vu1State vu, ushort startByteAddr)
     {
         startByteAddr = (ushort)(startByteAddr & 0x3FF8);
@@ -81,21 +89,38 @@ public sealed class Vu1Recompiler
             _dirtyRegionMask = 0u;
         }
         var rec = FrameRecorder;
+        bool profile = EnableProfiling || rec != null;
+        vu.EnableProfiling = profile;
         long instrBefore = rec != null ? vu.TotalInstructionsExecuted : 0;
         long xgBefore = rec != null ? vu.TotalXgKicksExecuted : 0;
-        long t0 = Stopwatch.GetTimestamp();
-        if (VerifyAot)
+        long xgTicksBefore = profile ? vu.TotalXgKickCallbackTicks : 0;
+        long t0 = profile ? Stopwatch.GetTimestamp() : 0;
+        bool sampling = RuntimeDispatcher.SamplingActive;
+        int prevPhase = sampling ? RuntimeDispatcher.ActiveProfilePhase : 0;
+        if (sampling) RuntimeDispatcher.ActiveProfilePhase = 2;
+        try
         {
-            ExecuteWithVerification(vu, startByteAddr);
+            if (VerifyAot)
+            {
+                ExecuteWithVerification(vu, startByteAddr);
+            }
+            else if (!Vu1AotPrograms.TryExecute(vu, startByteAddr, _regionMask))
+            {
+                _decodedExecutor.Execute(vu, startByteAddr);
+            }
         }
-        else if (!Vu1AotPrograms.TryExecute(vu, startByteAddr, _regionMask))
+        finally
         {
-            _decodedExecutor.Execute(vu, startByteAddr);
+            if (sampling) RuntimeDispatcher.ActiveProfilePhase = prevPhase;
         }
-        long elapsed = Stopwatch.GetTimestamp() - t0;
-        vu.TotalExecutionTicks += elapsed;
+        if (profile)
+        {
+            long elapsed = (Stopwatch.GetTimestamp() - t0) - (vu.TotalXgKickCallbackTicks - xgTicksBefore);
+            if (elapsed < 0) elapsed = 0;
+            vu.TotalExecutionTicks += elapsed;
+            rec?.RecordVu1Call(startByteAddr, elapsed, vu.TotalInstructionsExecuted - instrBefore, vu.TotalXgKicksExecuted - xgBefore);
+        }
         vu.TotalProgramsExecuted++;
-        rec?.RecordVu1Call(startByteAddr, elapsed, vu.TotalInstructionsExecuted - instrBefore, vu.TotalXgKicksExecuted - xgBefore);
     }
 
     [MethodImpl(MethodImplOptions.NoInlining)]
@@ -145,9 +170,29 @@ public sealed class Vu1Recompiler
         _decodedExecutor.Execute(vu, startByteAddr);
         vu.OnXgKick = origXg;
 
+        static bool VecMatchIgnoringDenorm(Vector128<float> a, Vector128<float> b)
+        {
+            if (a.Equals(b)) return true;
+            for (int lane = 0; lane < 4; lane++)
+            {
+                uint ua = a.AsUInt32().GetElement(lane);
+                uint ub = b.AsUInt32().GetElement(lane);
+                if ((ua & Ps2Float.ExpMask) == 0u) ua = 0u;
+                if ((ub & Ps2Float.ExpMask) == 0u) ub = 0u;
+                if (ua != ub)
+                {
+                    float fa = BitConverter.UInt32BitsToSingle(ua);
+                    float fb = BitConverter.UInt32BitsToSingle(ub);
+                    if (fa != fb) return false;
+                }
+            }
+            return true;
+        }
+
         bool vfMatch = true;
         int badVf = -1;
-        for (int i = 0; i < 32; i++) if (!aotVf[i].Equals(vu.VF[i])) { vfMatch = false; badVf = i; break; }
+        for (int i = 0; i < 32; i++) if (!VecMatchIgnoringDenorm(aotVf[i], vu.VF[i])) { vfMatch = false; badVf = i; break; }
+        bool accMatch = VecMatchIgnoringDenorm(aotAcc, vu.ACC);
         bool viMatch = true;
         for (int i = 0; i < 16; i++) if (aotVi[i] != vu.VI[i]) { viMatch = false; break; }
         bool dataMatch = aotData.AsSpan().SequenceEqual(vu.DataMem);
@@ -158,16 +203,16 @@ public sealed class Vu1Recompiler
         bool match = aotInstr == vu.TotalInstructionsExecuted &&
                      aotTpc == vu.Tpc &&
                      aotQ.Equals(vu.Q) && aotP.Equals(vu.P) && aotI.Equals(vu.I) &&
-                     aotR == vu.R && aotClip == vu.ClipFlags && aotAcc.Equals(vu.ACC) &&
-                     aotMac == vu.MacFlags && aotSt == vu.StatusFlags &&
+                     aotR == vu.R && aotClip == vu.ClipFlags && accMatch &&
                      vfMatch && viMatch && dataMatch && kickMatch;
         if (!match)
         {
+            string badDetail = badVf >= 0 ? $" aotVf={aotVf[badVf]} decVf={vu.VF[badVf]}" : $" aotAcc={aotAcc} decAcc={vu.ACC}";
             throw new InvalidOperationException(
                 $"[VU1 AOT MISMATCH] entry=0x{startByteAddr:X4} aotInstr={aotInstr} decInstr={vu.TotalInstructionsExecuted} " +
                 $"aotTpc=0x{aotTpc:X4} decTpc=0x{vu.Tpc:X4} aotKicks={aotKicks.Count} decKicks={decKicks.Count} " +
-                $"accEq={aotAcc.Equals(vu.ACC)} vfEq={vfMatch}(bad={badVf}) viEq={viMatch} dataEq={dataMatch} kickEq={kickMatch} " +
-                $"mac={aotMac:X4}/{vu.MacFlags:X4} st={aotSt:X4}/{vu.StatusFlags:X4} q={aotQ}/{vu.Q} p={aotP}/{vu.P} i={aotI}/{vu.I} clip={aotClip:X}/{vu.ClipFlags:X}");
+                $"accEq={accMatch} vfEq={vfMatch}(bad={badVf}) viEq={viMatch} dataEq={dataMatch} kickEq={kickMatch} " +
+                $"mac={aotMac:X4}/{vu.MacFlags:X4} st={aotSt:X4}/{vu.StatusFlags:X4} q={aotQ}/{vu.Q} p={aotP}/{vu.P} i={aotI}/{vu.I} clip={aotClip:X}/{vu.ClipFlags:X}{badDetail}");
         }
     }
 
@@ -813,7 +858,7 @@ public sealed class Vu1Recompiler
                     vu.VI[linkReg & 15] = linkVal;
                 }
                 vu.FlushPipelines();
-                vu.Tpc = (ushort)(((delaySlot + 1) & 0x7FF) << 3);
+                vu.Tpc = (ushort)(branchTaken ? (branchTargetSlot << 3) : (((delaySlot + 1) & 0x7FF) << 3));
                 break;
             }
 

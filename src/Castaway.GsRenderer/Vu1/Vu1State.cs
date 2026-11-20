@@ -1,4 +1,5 @@
 using System.Buffers.Binary;
+using System.Diagnostics;
 using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
 using System.Runtime.Intrinsics;
@@ -62,7 +63,9 @@ public sealed class Vu1State
     public long TotalInstructionsExecuted { get; set; }
     public long TotalXgKicksExecuted { get; private set; }
     public long TotalExecutionTicks { get; set; }
+    public long TotalXgKickCallbackTicks { get; set; }
     public long TotalProgramsExecuted { get; set; }
+    public bool EnableProfiling { get; set; }
 
     public Vu1State(byte[]? microMem = null, byte[]? dataMem = null)
     {
@@ -228,7 +231,6 @@ public sealed class Vu1State
 
     private static readonly Vector128<uint> ExpMaskVec = Vector128.Create(Ps2Float.ExpMask);
     private static readonly Vector128<uint> SignMaskVec = Vector128.Create(Ps2Float.SignMask);
-    private static readonly byte[] NibbleReverse = { 0, 8, 4, 12, 2, 10, 6, 14, 1, 9, 5, 13, 3, 11, 7, 15 };
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public void UpdateMacAndStatusFlags(Vector128<float> res, uint destMask)
@@ -238,8 +240,8 @@ public sealed class Vu1State
         Vector128<uint> isZero = Vector128.Equals(exp, Vector128<uint>.Zero);
         Vector128<uint> sign = Vector128.AndNot(rBits, isZero) & SignMaskVec;
 
-        uint zeroBits = NibbleReverse[isZero.AsSingle().ExtractMostSignificantBits()] & destMask;
-        uint signBits = NibbleReverse[sign.AsSingle().ExtractMostSignificantBits()] & destMask;
+        uint zeroBits = ((uint)(0xF7B3D591E6A2C480UL >> ((int)isZero.AsSingle().ExtractMostSignificantBits() << 2))) & destMask;
+        uint signBits = ((uint)(0xF7B3D591E6A2C480UL >> ((int)sign.AsSingle().ExtractMostSignificantBits() << 2))) & destMask;
 
         ushort mac = (ushort)(zeroBits | (signBits << 4));
         MacFlags = mac;
@@ -248,6 +250,20 @@ public sealed class Vu1State
         if (zeroBits != 0) st |= 0x041; // Z / ZS
         if (signBits != 0) st |= 0x082; // S / SS
         StatusFlags = st;
+    }
+
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    public void UpdateMacFlagsOnly(Vector128<float> res, uint destMask)
+    {
+        Vector128<uint> rBits = res.AsUInt32();
+        Vector128<uint> exp = rBits & ExpMaskVec;
+        Vector128<uint> isZero = Vector128.Equals(exp, Vector128<uint>.Zero);
+        Vector128<uint> sign = Vector128.AndNot(rBits, isZero) & SignMaskVec;
+
+        uint zeroBits = ((uint)(0xF7B3D591E6A2C480UL >> ((int)isZero.AsSingle().ExtractMostSignificantBits() << 2))) & destMask;
+        uint signBits = ((uint)(0xF7B3D591E6A2C480UL >> ((int)sign.AsSingle().ExtractMostSignificantBits() << 2))) & destMask;
+
+        MacFlags = (ushort)(zeroBits | (signBits << 4));
     }
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
@@ -288,25 +304,75 @@ public sealed class Vu1State
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public void ExecClip(Vector128<float> fs, Vector128<float> ft)
     {
-        var su = fs.AsUInt32();
+        Vector128<uint> su = fs.AsUInt32();
+        Vector128<uint> nonZeroExp = Vector128.GreaterThan(su & ExpMaskVec, Vector128<uint>.Zero);
+        Vector128<int> s = (su & nonZeroExp).AsInt32();
+        Vector128<int> negS = ((su ^ SignMaskVec) & nonZeroExp).AsInt32();
+
         uint rawW = ft.AsUInt32().GetElement(3);
         int value = (rawW & 0x7F800000u) != 0u ? (int)(rawW & 0x7FFFFFFFu) : 0;
+        Vector128<int> valVec = Vector128.Create(value);
 
-        uint r0 = su.GetElement(0);
-        uint r1 = su.GetElement(1);
-        uint r2 = su.GetElement(2);
-        int s0 = (r0 & 0x7F800000u) != 0u ? unchecked((int)r0) : 0;
-        int s1 = (r1 & 0x7F800000u) != 0u ? unchecked((int)r1) : 0;
-        int s2 = (r2 & 0x7F800000u) != 0u ? unchecked((int)r2) : 0;
-        uint flags = 0u;
-        if (s0 > value) flags |= 0x01u;
-        if (unchecked((int)((uint)s0 ^ 0x80000000u)) > value) flags |= 0x02u;
-        if (s1 > value) flags |= 0x04u;
-        if (unchecked((int)((uint)s1 ^ 0x80000000u)) > value) flags |= 0x08u;
-        if (s2 > value) flags |= 0x10u;
-        if (unchecked((int)((uint)s2 ^ 0x80000000u)) > value) flags |= 0x20u;
+        uint posMask = Vector128.GreaterThan(s, valVec).AsSingle().ExtractMostSignificantBits();
+        uint negMask = Vector128.GreaterThan(negS, valVec).AsSingle().ExtractMostSignificantBits();
+
+        // Map lane 0 -> bit 0/1, lane 1 -> bit 2/3, lane 2 -> bit 4/5
+        uint flags = ((posMask & 1u) | ((posMask & 2u) << 1) | ((posMask & 4u) << 2))
+                   | (((negMask & 1u) << 1) | ((negMask & 2u) << 2) | ((negMask & 4u) << 3));
 
         ClipFlags = ((ClipFlags << 6) | flags) & 0x00FFFFFFu;
+    }
+
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    public static float VuDivFast(float a, float b)
+    {
+        uint ub = BitConverter.SingleToUInt32Bits(b);
+        uint expB = ub & Ps2Float.ExpMask;
+        if (expB != 0u && expB != Ps2Float.ExpMask)
+        {
+            float r = a / b;
+            if (float.IsFinite(r))
+                return r;
+        }
+        return VuDivSlow(a, b);
+    }
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private static float VuDivSlow(float a, float b)
+    {
+        uint ua = BitConverter.SingleToUInt32Bits(a);
+        uint ub = BitConverter.SingleToUInt32Bits(b);
+        if ((ub & Ps2Float.ExpMask) == 0u)
+            return BitConverter.UInt32BitsToSingle(((ua ^ ub) & Ps2Float.SignMask) | Ps2Float.IeeeMaxNormalBits);
+        float r = Ps2Float.Div(a, b);
+        uint ur = BitConverter.SingleToUInt32Bits(r);
+        if ((ur & Ps2Float.ExpMask) == Ps2Float.ExpMask)
+            return BitConverter.UInt32BitsToSingle((ur & Ps2Float.SignMask) | Ps2Float.IeeeMaxNormalBits);
+        return r;
+    }
+
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    public static float VuRsqrtFast(float a, float b)
+    {
+        uint ub = BitConverter.SingleToUInt32Bits(b);
+        uint expB = ub & Ps2Float.ExpMask;
+        if (expB != 0u && expB != Ps2Float.ExpMask)
+        {
+            float r = a / MathF.Sqrt(MathF.Abs(b));
+            if (float.IsFinite(r))
+                return r;
+        }
+        return VuRsqrtSlow(a, b);
+    }
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private static float VuRsqrtSlow(float a, float b)
+    {
+        float r = Ps2Float.Rsqrt(a, b);
+        uint ur = BitConverter.SingleToUInt32Bits(r);
+        if ((ur & Ps2Float.ExpMask) == Ps2Float.ExpMask)
+            return BitConverter.UInt32BitsToSingle((ur & Ps2Float.SignMask) | Ps2Float.IeeeMaxNormalBits);
+        return r;
     }
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
@@ -314,6 +380,18 @@ public sealed class Vu1State
     {
         Vector128<float> f = Vector128.ConvertToSingle(fs.AsInt32());
         return shift == 0 ? f : (f * Vector128.Create(1.0f / (1 << shift)));
+    }
+
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    public static Vector128<float> ExecFtoi0(Vector128<float> fs)
+    {
+        if (Sse2.IsSupported)
+        {
+            Vector128<int> ints = Sse2.ConvertToVector128Int32WithTruncation(fs);
+            if (!Vector128.EqualsAny(ints, Vector128.Create(int.MinValue)))
+                return ints.AsSingle();
+        }
+        return ExecFtoiSlow(fs);
     }
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
@@ -376,8 +454,7 @@ public sealed class Vu1State
     {
         var fsYzx = Vector128.Shuffle(fs, Vector128.Create(1, 2, 0, 3));
         var ftZxy = Vector128.Shuffle(ft, Vector128.Create(2, 0, 1, 3));
-        var prod = Ps2Float.VecMul(fsYzx, ftZxy);
-        return Ps2Float.VecSub(acc, prod);
+        return Ps2Float.VecSub(acc, Ps2Float.VecMul(fsYzx, ftZxy));
     }
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
@@ -407,17 +484,40 @@ public sealed class Vu1State
         R = 0x3F800000u | ((R ^ bits) & 0x007FFFFFu);
     }
 
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    public void ExecOpmulaFast(ref Vector128<float> acc, Vector128<float> fs, Vector128<float> ft, bool updateFlags = true)
+    {
+        var fsYzx = Vector128.Shuffle(fs, Vector128.Create(1, 2, 0, 3));
+        var ftZxy = Vector128.Shuffle(ft, Vector128.Create(2, 0, 1, 3));
+        var prod = fsYzx * ftZxy;
+        if (updateFlags) UpdateMacAndStatusFlags(prod, 0xEu);
+        acc = Ps2Vu0.BlendMask(acc, prod, 0xEu);
+    }
+
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    public static Vector128<float> ExecOpmsubFast(Vector128<float> acc, Vector128<float> fs, Vector128<float> ft)
+    {
+        var fsYzx = Vector128.Shuffle(fs, Vector128.Create(1, 2, 0, 3));
+        var ftZxy = Vector128.Shuffle(ft, Vector128.Create(2, 0, 1, 3));
+        return acc - (fsYzx * ftZxy);
+    }
+
     /// <summary>
     /// Executes an XGKICK from VU1 DataMem at quadword address VI[isReg] &amp; 0x3FF,
     /// walking GIFTags until EOP and forwarding the complete packet to GIF Path 1.
     /// </summary>
-    public void ExecXgKick(int isReg)
+    public void ExecXgKick(int isReg) => ExecXgKickAddr(ReadVi(isReg));
+
+    /// <summary>
+    /// Executes an XGKICK from VU1 DataMem at quadword address startQwordRaw &amp; 0x3FF.
+    /// </summary>
+    public void ExecXgKickAddr(ushort startQwordRaw)
     {
         TotalXgKicksExecuted++;
         if (OnXgKick == null)
             return;
 
-        int startQword = ReadVi(isReg) & 0x3FF;
+        int startQword = startQwordRaw & 0x3FF;
         int curQword = startQword;
         int totalQwords = 0;
         const int maxQwords = 1024;
@@ -455,20 +555,33 @@ public sealed class Vu1State
 
         totalQwords = Math.Min(totalQwords, maxQwords);
         int byteCount = totalQwords << 4;
-
-        if (startQword + totalQwords <= 1024)
+        long t0 = EnableProfiling ? Stopwatch.GetTimestamp() : 0;
+        bool sampling = RuntimeDispatcher.SamplingActive;
+        int prevPhase = sampling ? RuntimeDispatcher.ActiveProfilePhase : 0;
+        if (sampling) RuntimeDispatcher.ActiveProfilePhase = 3;
+        try
         {
-            OnXgKick(DataMem.AsSpan(startQword << 4, byteCount));
-        }
-        else
-        {
-            byte[] wrapped = new byte[byteCount];
-            for (int q = 0; q < totalQwords; q++)
+            if (startQword + totalQwords <= 1024)
             {
-                int srcOff = ((startQword + q) & 0x3FF) << 4;
-                Buffer.BlockCopy(DataMem, srcOff, wrapped, q << 4, 16);
+                OnXgKick(DataMem.AsSpan(startQword << 4, byteCount));
             }
-            OnXgKick(wrapped);
+            else
+            {
+                byte[] wrapped = new byte[byteCount];
+                for (int q = 0; q < totalQwords; q++)
+                {
+                    int srcOff = ((startQword + q) & 0x3FF) << 4;
+                    Buffer.BlockCopy(DataMem, srcOff, wrapped, q << 4, 16);
+                }
+                OnXgKick(wrapped);
+            }
         }
+        finally
+        {
+            if (sampling) RuntimeDispatcher.ActiveProfilePhase = prevPhase;
+        }
+
+        if (t0 != 0)
+            TotalXgKickCallbackTicks += Stopwatch.GetTimestamp() - t0;
     }
 }

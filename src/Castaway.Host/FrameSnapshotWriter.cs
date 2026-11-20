@@ -109,17 +109,24 @@ public static class FrameSnapshotWriter
         var sb = new StringBuilder(16384);
         sb.AppendLine($"=== Frame {r.CapturedFrame} Snapshot Performance Profile ===");
         sb.AppendLine($"FrameUpdate: {r.FrameUpdateTicks * tickToMs:F2} ms | RenderBatch: {r.RenderBatchTicks * tickToMs:F2} ms");
+        double dmaTotMs = r.DmaTotalTicksDelta * tickToMs;
+        double dmaVif1Ms = r.DmaVif1TicksDelta * tickToMs;
+        double dmaGifMs = r.DmaGifTicksDelta * tickToMs;
+        double dmaOthMs = r.DmaOtherTicksDelta * tickToMs;
+        double eeExclMs = Math.Max(0.0, (r.FrameUpdateTicks - r.DmaTotalTicksDelta) * tickToMs);
+        sb.AppendLine($"EE/DMA breakdown (ms): EeExcl={eeExclMs:F2}, DmaTotal={dmaTotMs:F2} [DmaVif1={dmaVif1Ms:F2}, DmaGif={dmaGifMs:F2}, DmaOther={dmaOthMs:F2}]");
         sb.AppendLine(
             $"Pipeline deltas (ms): Vif1={r.Vif1TicksDelta * tickToMs:F2}, Vu1={r.Vu1TicksDelta * tickToMs:F2}, " +
             $"Gif={r.GifTicksDelta * tickToMs:F2}, Trx={r.TrxTicksDelta * tickToMs:F2}, " +
             $"SoftTri={r.SoftTriTicksDelta * tickToMs:F2}, SoftSpr={r.SoftSprTicksDelta * tickToMs:F2}");
         double vif1UnpackMs = r.Vif1UnpackTicksDelta * tickToMs;
         double vif1MicroCbMs = r.Vif1MicroCbTicksDelta * tickToMs;
-        double vif1MicroCbExclMs = (r.Vif1MicroCbTicksDelta - r.Vu1TicksDelta) * tickToMs;
+        double vu1XgKickMs = r.Vu1XgKickTicksDelta * tickToMs;
+        double vif1MicroCbExclMs = (r.Vif1MicroCbTicksDelta - r.Vu1TicksDelta - r.Vu1XgKickTicksDelta) * tickToMs;
         double vif1DirectMs = r.Vif1DirectGifTicksDelta * tickToMs;
         double vif1OtherMs = (r.Vif1TicksDelta - r.Vif1MicroCbTicksDelta - r.Vif1UnpackTicksDelta - r.Vif1DirectGifTicksDelta) * tickToMs;
         sb.AppendLine(
-            $"Vif1 breakdown: ms={r.Vif1TicksDelta * tickToMs:F2} (Unpack={vif1UnpackMs:F2}, MicroCb={vif1MicroCbMs:F2} [Vu1={r.Vu1TicksDelta * tickToMs:F2} + Excl={vif1MicroCbExclMs:F2}], Direct={vif1DirectMs:F2}, Parse/Stage/Mpg={vif1OtherMs:F2}) | " +
+            $"Vif1 breakdown: ms={r.Vif1TicksDelta * tickToMs:F2} (Unpack={vif1UnpackMs:F2}, MicroCb={vif1MicroCbMs:F2} [Vu1={r.Vu1TicksDelta * tickToMs:F2} + XgKickGif={vu1XgKickMs:F2} + Excl={vif1MicroCbExclMs:F2}], Direct={vif1DirectMs:F2}, Parse/Stage/Mpg={vif1OtherMs:F2}) | " +
             $"xfers={r.Vif1TransfersDelta} bytes={r.Vif1BytesDelta} cmds={r.Vif1CommandsDelta} unk={r.Vif1UnknownCmdDelta} | " +
             $"unpackQw={r.Vif1UnpackQwordsDelta} (fast={r.Vif1UnpackFastDelta}, slow={r.Vif1UnpackSlowDelta}) | " +
             $"stage(fast={r.Vif1StagedFastDelta}, slow={r.Vif1StagedSlowDelta}, bytes={r.Vif1StagedBytesDelta}) | " +
@@ -136,6 +143,33 @@ public static class FrameSnapshotWriter
             sb.AppendLine($"  {kv.Key,-14} packets={kv.Value.Packets,5} bytes={kv.Value.TotalBytes,10}");
         }
         sb.AppendLine();
+
+        if (r.TotalPcSamples > 0)
+        {
+            string[] phaseNames = { "EE", "DmaVif1", "Vu1", "XgKickGif", "DmaGif", "DmaOther", "Syscall", "Audio" };
+            sb.AppendLine($"--- Sampled Phases ({r.TotalPcSamples} samples) ---");
+            for (int p = 0; p < phaseNames.Length; p++)
+            {
+                if (r.PhaseSamples[p] > 0)
+                {
+                    double pct = 100.0 * r.PhaseSamples[p] / r.TotalPcSamples;
+                    sb.AppendLine($"  {phaseNames[p],-10} {r.PhaseSamples[p],6} ({pct,5:F1}%)");
+                }
+            }
+            sb.AppendLine();
+            if (r.EePcSamples.Count > 0)
+            {
+                long eeTotal = r.PhaseSamples[0];
+                sb.AppendLine($"--- Top Sampled EE PCs (EE={eeTotal} samples) ---");
+                foreach (var kv in r.EePcSamples.OrderByDescending(x => x.Value).Take(25))
+                {
+                    double pctEe = eeTotal > 0 ? 100.0 * kv.Value / eeTotal : 0;
+                    double pctAll = 100.0 * kv.Value / r.TotalPcSamples;
+                    sb.AppendLine($"  0x{kv.Key:X8} | samples={kv.Value,5} | {pctEe,5:F1}% of EE | {pctAll,5:F1}% of frame");
+                }
+                sb.AppendLine();
+            }
+        }
 
         sb.AppendLine("--- VU1 Microprograms (sorted by TotalMs) ---");
         double totalVu1Ms = 0;

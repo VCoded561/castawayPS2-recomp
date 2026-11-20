@@ -49,6 +49,26 @@ public static unsafe class Ps2Vu0
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public static Vector128<float> BroadcastBc(Vector128<float> v, uint bc)
     {
+        if (Avx.IsSupported)
+        {
+            return (bc & 3u) switch
+            {
+                0u => Avx.Permute(v, 0x00),
+                1u => Avx.Permute(v, 0x55),
+                2u => Avx.Permute(v, 0xAA),
+                _ => Avx.Permute(v, 0xFF),
+            };
+        }
+        if (Sse.IsSupported)
+        {
+            return (bc & 3u) switch
+            {
+                0u => Sse.Shuffle(v, v, 0x00),
+                1u => Sse.Shuffle(v, v, 0x55),
+                2u => Sse.Shuffle(v, v, 0xAA),
+                _ => Sse.Shuffle(v, v, 0xFF),
+            };
+        }
         return (bc & 3u) switch
         {
             0u => Vector128.Shuffle(v, Vector128<int>.Zero),
@@ -147,6 +167,12 @@ public static unsafe class Ps2Vu0
         Vector128<float> pickB = Vector128.LessThan(VecOrderedKey(b), VecOrderedKey(a)).AsSingle();
         return Vector128.ConditionalSelect(pickB, b, a);
     }
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    public static Vector128<float> VecMaxSlow(Vector128<float> a, Vector128<float> b) => VecMax(a, b);
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    public static Vector128<float> VecMinSlow(Vector128<float> a, Vector128<float> b) => VecMin(a, b);
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public static void Vopmula(CpuContext* ctx, int vfs, int vft, uint destMask)

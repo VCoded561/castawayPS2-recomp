@@ -4,9 +4,9 @@ A work in progress native PC static recompiler for *The Sims 2: Castaway* (PS2 N
 
 # This project was almost fully vibe coded with Gemini 4 and gemini 3.8 Flash. Any part of the code might be hallucinated or just wrong. Do not use this as an example!
 
-The game now runs almost perfectly apart from bad performance with software and opengl rendering. Some issues with particle systems and mostly framerate independent.
+The game now runs almost perfectly apart from low performance with software and opengl rendering. OpenGL runs 60-100 fps on a Ryzen 9800X3D. Not fully framerate independent yet. MSAA has been implemented and 3D rendering supports any aspect ratio.
 
-The goal of this project is to create a native PC version that is 100% accurate to the PS2 version. A wishlist for the future: modern controls, readable codebase, high resolution and any aspect ratio support. Maybe even coop multiplayer at some point.
+The goal of this project is to create a native PC version that is mostly accurate to the PS2 version with bunch of enhancements.
 
 Any help is appreciated!
 

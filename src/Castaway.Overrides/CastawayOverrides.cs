@@ -15,7 +15,8 @@ public sealed class OverrideOptions
     public bool EnableModernControls { get; set; } = true;
     public float MouseSensitivity { get; set; } = 0.015f;
     public GsRendererMode RendererMode { get; set; } = GsRendererMode.Software;
-    public int TargetFps { get; set; } = 30; // 30 FPS locked by default for 100% PS2 timing accuracy
+    public int TargetFps { get; set; } = 60; // 60 FPS default for smooth PS2 NTSC field rate
+    public int MsaaSamples { get; set; } = 4; // OpenGL MSAA sample count (0/1 = off, 2, 4, 8, 16)
 }
 
 /// <summary>
@@ -24,12 +25,15 @@ public sealed class OverrideOptions
 /// </summary>
 public sealed unsafe class CastawayOverrides
 {
-    // RenderWare RwCameraSetViewWindow in SLUS_216.64 (0x001B6A30) sets camera view window (hx, hy)
-    public const uint RwCameraSetViewWindowAddr = 0x001B6A30u;
+    // PS2Display::GetAspectRatio() in SLUS_216.64 (0x00433B00, vtable[+336] on *(0x004A0728))
+    // Originally returns hardcoded 4:3 (0x3FAAAAAB) in $f0; called by all 3D camera frustum builders.
+    public const uint DisplayGetAspectRatioAddr = 0x00433B00u;
+    public const float NativePs2AspectRatio = 4f / 3f;
 
     public OverrideOptions Options { get; }
     public Action? OnSnapshotRequested { get; set; }
     private GsGraphicsPipeline? _graphics;
+    private float _viewportAspectRatio;
     private Vector2 _lastMousePos;
     private bool _hasLastMousePos;
     private float _pendingMouseDeltaX;
@@ -41,18 +45,43 @@ public sealed unsafe class CastawayOverrides
         Options = options ?? new OverrideOptions();
     }
 
+    public void SetViewportAspectRatio(int width, int height)
+    {
+        if (width > 0 && height > 0)
+        {
+            float aspect = Math.Clamp((float)width / height, 0.2f, 8.0f);
+            Volatile.Write(ref _viewportAspectRatio, aspect);
+        }
+    }
+
+    public float GetEffectiveAspectRatio()
+    {
+        if (_graphics != null && _graphics.Mode == GsRendererMode.OpenGl)
+        {
+            float vpAspect = Volatile.Read(ref _viewportAspectRatio);
+            if (vpAspect > 0.0f)
+                return vpAspect;
+            return Options.EnableWidescreen ? Math.Clamp(Options.TargetAspectRatio, 0.2f, 8.0f) : NativePs2AspectRatio;
+        }
+
+        if (Options.EnableWidescreen)
+        {
+            float vpAspect = Volatile.Read(ref _viewportAspectRatio);
+            return vpAspect > 0.0f ? vpAspect : Math.Clamp(Options.TargetAspectRatio, 0.2f, 8.0f);
+        }
+
+        return NativePs2AspectRatio;
+    }
+
     public void Install(CastawayRuntime runtime, GsGraphicsPipeline graphics)
     {
         _graphics = graphics;
         _graphics.Mode = Options.RendererMode;
         graphics.OpenGl.SetResolutionScale(Options.ResolutionScale);
+        graphics.OpenGl.SetMsaaSamples(Options.MsaaSamples);
 
         InstallRenderWareUiHook();
-
-        if (Options.EnableWidescreen)
-        {
-            InstallWidescreenHook();
-        }
+        InstallAspectRatioHook();
     }
 
     private void InstallRenderWareUiHook()
@@ -87,33 +116,18 @@ public sealed unsafe class CastawayOverrides
         });
     }
 
-    private void InstallWidescreenHook()
+    private void InstallAspectRatioHook()
     {
-        // Hook RwCameraSetViewWindow(RwCamera* camera [$a0], RwV2d* view [$a1])
-        // Scales horizontal view window (view->x at +0) from 4:3 (1.3333f) to TargetAspectRatio (e.g. 16:9)
-        RuntimeDispatcher.RegisterHook(RwCameraSetViewWindowAddr, (ctx, ram) =>
+        // Hook PS2Display::GetAspectRatio() at 0x00433B00 (vtable[+336] on *(0x004A0728)).
+        // Original MIPS returns hardcoded 4:3 (0x3FAAAAAB) in $f0; returning the live OpenGL
+        // viewport aspect ratio scales m[0][0] = cot(fovY/2) / aspect in sub_003DBFD0 (Hor+)
+        // and updates world frustum culling planes in sub_003EA738 so any aspect ratio renders
+        // without 3D stretching.
+        RuntimeDispatcher.RegisterHook(DisplayGetAspectRatioAddr, (ctx, ram) =>
         {
-            uint viewPtr = ctx->GetU32(5);
-            if (viewPtr != 0u && Options.EnableWidescreen)
-            {
-                float vx = BitConverter.UInt32BitsToSingle(Ps2Memory.Read32(ctx, ram, viewPtr + 0u));
-                float vy = BitConverter.UInt32BitsToSingle(Ps2Memory.Read32(ctx, ram, viewPtr + 4u));
-                const float NativeAspect = 4f / 3f;
-                float scale = Options.TargetAspectRatio / NativeAspect;
-
-                // Preserve original view vector on stack/temp, call original function with scaled X, then restore
-                uint origVxBits = Ps2Memory.Read32(ctx, ram, viewPtr + 0u);
-                if (vy > 0.001f && MathF.Abs((vx / vy) - NativeAspect) < 0.25f)
-                {
-                    Ps2Memory.Write32(ctx, ram, viewPtr + 0u, BitConverter.SingleToUInt32Bits(vx * scale));
-                }
-
-                RuntimeDispatcher.Call(RwCameraSetViewWindowAddr, ctx, ram);
-                Ps2Memory.Write32(ctx, ram, viewPtr + 0u, origVxBits);
-                return;
-            }
-
-            RuntimeDispatcher.Call(RwCameraSetViewWindowAddr, ctx, ram);
+            float aspect = GetEffectiveAspectRatio();
+            ctx->SetFpuBits(0, BitConverter.SingleToUInt32Bits(aspect));
+            RuntimeDispatcher.OnReturn(ctx, ctx->GetU32(31));
         });
     }
 
@@ -133,7 +147,25 @@ public sealed unsafe class CastawayOverrides
 
     private void OnKeyDown(IKeyboard keyboard, Key key, int scancode)
     {
-        if (key == Key.F9)
+        if (key == Key.F8)
+        {
+            if (_graphics != null)
+            {
+                int maxSamples = Math.Max(1, _graphics.OpenGl.MaxSupportedMsaaSamples);
+                int cur = Options.MsaaSamples <= 1 ? 1 : Options.MsaaSamples;
+                int next = cur switch
+                {
+                    1 => maxSamples >= 2 ? 2 : 1,
+                    2 => maxSamples >= 4 ? 4 : 1,
+                    4 => maxSamples >= 8 ? 8 : 1,
+                    _ => 1
+                };
+                Options.MsaaSamples = next;
+                _graphics.OpenGl.SetMsaaSamples(next);
+                Console.WriteLine($"\n[Castaway.Overrides] >>> MSAA toggled to: {(next <= 1 ? "Off" : $"{next}x")} <<<\n");
+            }
+        }
+        else if (key == Key.F9)
         {
             if (_graphics != null)
             {
