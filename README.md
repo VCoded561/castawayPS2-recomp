@@ -4,7 +4,7 @@ A work in progress native PC static recompiler for *The Sims 2: Castaway* (PS2 N
 
 # This project was almost fully vibe coded with Gemini 4 and gemini 3.8 Flash. Any part of the code might be hallucinated or just wrong. Do not use this as an example!
 
-The game now runs almost perfectly apart from low performance with software and opengl rendering. OpenGL runs 60-100 fps on a Ryzen 9800X3D. Not fully framerate independent yet. MSAA has been implemented and 3D rendering supports any aspect ratio.
+The game now runs almost perfectly with improved performance, audio fixes, and mostly framerate-independent gameplay. OpenGL runs 80-250 fps on a Ryzen 9800X3D, MSAA has been implemented, and 3D rendering supports any aspect ratio.
 
 The goal of this project is to create a native PC version that is mostly accurate to the PS2 version with bunch of enhancements.
 
@@ -74,6 +74,42 @@ dotnet run -c Release --project src/Castaway.Host/Castaway.Host.csproj -- --rend
 # Software Reference Rasterizer
 dotnet run -c Release --project src/Castaway.Host/Castaway.Host.csproj -- --renderer software --fps 30
 ```
+
+---
+
+## Controls & Hotkeys
+
+> **Note:** Mouse and keyboard support is experimental — a controller is recommended.
+
+### Debug & Runtime Hotkeys
+| Key | Action |
+| --- | --- |
+| `F8` | Cycle OpenGL MSAA (Off -> 2x -> 4x -> 8x) |
+| `F9` | Toggle Renderer (OpenGL / PS2 Software) |
+| `F10` | Cycle Target FPS (30 -> 60 -> 120 -> Uncapped) |
+| `F11` | Capture Frame Snapshot (GL + Software reference + perf profile) |
+| `F12` | Start / Stop & Save Input Recording (`.inp` in `Recordings/`) |
+
+### Keyboard Controls (DualShock 2 Mapping)
+| Key | PS2 Button / Axis |
+| --- | --- |
+| `W` / `A` / `S` / `D` | Left Analog Stick |
+| `Arrow Keys` | D-Pad (Up / Down / Left / Right) |
+| `Z` or `Space` | Cross (X) |
+| `X` | Circle (O) |
+| `C` | Square |
+| `V` | Triangle |
+| `Q` / `E` | L1 / R1 |
+| `Enter` (or `Numpad Enter`) | Start |
+| `Backspace` | Select |
+
+### Mouse Controls (when Modern Controls enabled)
+| Input | PS2 Mapping |
+| --- | --- |
+| `Left Click` | Cross (X) |
+| `Middle Click` | Triangle |
+| `Hold Right Click + Move` | Right Analog Stick (Camera orbit/rotate) |
+| `Scroll Wheel` | Right Analog Stick Y (Camera zoom in/out) |
 
 ---
 

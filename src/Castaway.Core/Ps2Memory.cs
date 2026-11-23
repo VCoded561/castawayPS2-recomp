@@ -58,6 +58,16 @@ public static unsafe class Ps2Memory
     public static byte Read8(CpuContext* ctx, byte* ram, uint vaddr)
         => vaddr < 0x10000000u ? ram[vaddr & RamMask] : Read8Slow(ctx, ram, vaddr);
 
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    public static byte Read8Spr(CpuContext* ctx, byte* ram, uint vaddr)
+    {
+        if (vaddr < 0x10000000u)
+            return ram[vaddr & RamMask];
+        if ((vaddr & ScratchpadPageMask) == ScratchpadBase && ctx != null && ctx->Scratchpad != null)
+            return ctx->Scratchpad[vaddr & ScratchpadOffsetMask];
+        return Read8Slow(ctx, ram, vaddr);
+    }
+
     [MethodImpl(MethodImplOptions.NoInlining)]
     private static byte Read8Slow(CpuContext* ctx, byte* ram, uint vaddr)
     {
@@ -75,6 +85,16 @@ public static unsafe class Ps2Memory
     public static ushort Read16(CpuContext* ctx, byte* ram, uint vaddr)
         => vaddr < 0x10000000u ? Unsafe.ReadUnaligned<ushort>(ram + (vaddr & RamMask)) : Read16Slow(ctx, ram, vaddr);
 
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    public static ushort Read16Spr(CpuContext* ctx, byte* ram, uint vaddr)
+    {
+        if (vaddr < 0x10000000u)
+            return Unsafe.ReadUnaligned<ushort>(ram + (vaddr & RamMask));
+        if ((vaddr & ScratchpadPageMask) == ScratchpadBase && ctx != null && ctx->Scratchpad != null)
+            return Unsafe.ReadUnaligned<ushort>(ctx->Scratchpad + (vaddr & ScratchpadOffsetMask));
+        return Read16Slow(ctx, ram, vaddr);
+    }
+
     [MethodImpl(MethodImplOptions.NoInlining)]
     private static ushort Read16Slow(CpuContext* ctx, byte* ram, uint vaddr)
     {
@@ -91,6 +111,16 @@ public static unsafe class Ps2Memory
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public static uint Read32(CpuContext* ctx, byte* ram, uint vaddr)
         => vaddr < 0x10000000u ? Unsafe.ReadUnaligned<uint>(ram + (vaddr & RamMask)) : Read32Slow(ctx, ram, vaddr);
+
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    public static uint Read32Spr(CpuContext* ctx, byte* ram, uint vaddr)
+    {
+        if (vaddr < 0x10000000u)
+            return Unsafe.ReadUnaligned<uint>(ram + (vaddr & RamMask));
+        if ((vaddr & ScratchpadPageMask) == ScratchpadBase && ctx != null && ctx->Scratchpad != null)
+            return Unsafe.ReadUnaligned<uint>(ctx->Scratchpad + (vaddr & ScratchpadOffsetMask));
+        return Read32Slow(ctx, ram, vaddr);
+    }
 
     [MethodImpl(MethodImplOptions.NoInlining)]
     private static uint Read32Slow(CpuContext* ctx, byte* ram, uint vaddr)
@@ -110,8 +140,28 @@ public static unsafe class Ps2Memory
         => vaddr < 0x10000000u ? Unsafe.ReadUnaligned<float>(ram + (vaddr & RamMask)) : BitConverter.UInt32BitsToSingle(Read32Slow(ctx, ram, vaddr));
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    public static float ReadF32Spr(CpuContext* ctx, byte* ram, uint vaddr)
+    {
+        if (vaddr < 0x10000000u)
+            return Unsafe.ReadUnaligned<float>(ram + (vaddr & RamMask));
+        if ((vaddr & ScratchpadPageMask) == ScratchpadBase && ctx != null && ctx->Scratchpad != null)
+            return Unsafe.ReadUnaligned<float>(ctx->Scratchpad + (vaddr & ScratchpadOffsetMask));
+        return BitConverter.UInt32BitsToSingle(Read32Slow(ctx, ram, vaddr));
+    }
+
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public static ulong Read64(CpuContext* ctx, byte* ram, uint vaddr)
         => vaddr < 0x10000000u ? Unsafe.ReadUnaligned<ulong>(ram + (vaddr & RamMask)) : Read64Slow(ctx, ram, vaddr);
+
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    public static ulong Read64Spr(CpuContext* ctx, byte* ram, uint vaddr)
+    {
+        if (vaddr < 0x10000000u)
+            return Unsafe.ReadUnaligned<ulong>(ram + (vaddr & RamMask));
+        if ((vaddr & ScratchpadPageMask) == ScratchpadBase && ctx != null && ctx->Scratchpad != null)
+            return Unsafe.ReadUnaligned<ulong>(ctx->Scratchpad + (vaddr & ScratchpadOffsetMask));
+        return Read64Slow(ctx, ram, vaddr);
+    }
 
     [MethodImpl(MethodImplOptions.NoInlining)]
     private static ulong Read64Slow(CpuContext* ctx, byte* ram, uint vaddr)
@@ -135,6 +185,17 @@ public static unsafe class Ps2Memory
             : Read128Slow(ctx, ram, aligned);
     }
 
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    public static Vector128<uint> Read128Spr(CpuContext* ctx, byte* ram, uint vaddr)
+    {
+        uint aligned = vaddr & ~0xFu;
+        if (aligned < 0x10000000u)
+            return Unsafe.ReadUnaligned<Vector128<uint>>(ram + (aligned & RamMask));
+        if ((aligned & ScratchpadPageMask) == ScratchpadBase && ctx != null && ctx->Scratchpad != null)
+            return Unsafe.ReadUnaligned<Vector128<uint>>(ctx->Scratchpad + (aligned & ScratchpadOffsetMask));
+        return Read128Slow(ctx, ram, aligned);
+    }
+
     [MethodImpl(MethodImplOptions.NoInlining)]
     private static Vector128<uint> Read128Slow(CpuContext* ctx, byte* ram, uint aligned)
     {
@@ -154,6 +215,8 @@ public static unsafe class Ps2Memory
         if (vaddr < 0x10000000u)
         {
             ram[vaddr & RamMask] = value;
+            if (RuntimeDispatcher.DataWriteAttributionTable != null)
+                RuntimeDispatcher.RecordDataWriteIfActive(ctx, vaddr);
             return;
         }
         Write8Slow(ctx, ram, vaddr, value);
@@ -187,6 +250,8 @@ public static unsafe class Ps2Memory
         if (vaddr < 0x10000000u)
         {
             Unsafe.WriteUnaligned(ram + (vaddr & RamMask), value);
+            if (RuntimeDispatcher.DataWriteAttributionTable != null)
+                RuntimeDispatcher.RecordDataWriteIfActive(ctx, vaddr);
             return;
         }
         Write16Slow(ctx, ram, vaddr, value);
@@ -215,11 +280,58 @@ public static unsafe class Ps2Memory
     }
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    public static void Write8Spr(CpuContext* ctx, byte* ram, uint vaddr, byte value)
+    {
+        if (vaddr < 0x10000000u)
+        {
+            ram[vaddr & RamMask] = value;
+            return;
+        }
+        if ((vaddr & ScratchpadPageMask) == ScratchpadBase && ctx != null && ctx->Scratchpad != null)
+        {
+            ctx->Scratchpad[vaddr & ScratchpadOffsetMask] = value;
+            return;
+        }
+        Write8Slow(ctx, ram, vaddr, value);
+    }
+
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    public static void Write16Spr(CpuContext* ctx, byte* ram, uint vaddr, ushort value)
+    {
+        if (vaddr < 0x10000000u)
+        {
+            Unsafe.WriteUnaligned(ram + (vaddr & RamMask), value);
+            return;
+        }
+        if ((vaddr & ScratchpadPageMask) == ScratchpadBase && ctx != null && ctx->Scratchpad != null)
+        {
+            Unsafe.WriteUnaligned(ctx->Scratchpad + (vaddr & ScratchpadOffsetMask), value);
+            return;
+        }
+        Write16Slow(ctx, ram, vaddr, value);
+    }
+
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public static void Write32(CpuContext* ctx, byte* ram, uint vaddr, uint value)
     {
         if (vaddr < 0x10000000u)
         {
             Unsafe.WriteUnaligned(ram + (vaddr & RamMask), value);
+            if (RuntimeDispatcher.DataWriteAttributionTable != null)
+                RuntimeDispatcher.RecordDataWriteIfActive(ctx, vaddr);
+            return;
+        }
+        Write32Slow(ctx, ram, vaddr, value);
+    }
+
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    public static void Write32Spr(CpuContext* ctx, byte* ram, uint vaddr, uint value)
+    {
+        if (vaddr < 0x10000000u)
+        {
+            Unsafe.WriteUnaligned(ram + (vaddr & RamMask), value);
+            if (RuntimeDispatcher.DataWriteAttributionTable != null)
+                RuntimeDispatcher.RecordDataWriteIfActive(ctx, vaddr);
             return;
         }
         if ((vaddr & ScratchpadPageMask) == ScratchpadBase && ctx != null && ctx->Scratchpad != null)
@@ -258,6 +370,21 @@ public static unsafe class Ps2Memory
         if (vaddr < 0x10000000u)
         {
             Unsafe.WriteUnaligned(ram + (vaddr & RamMask), value);
+            if (RuntimeDispatcher.DataWriteAttributionTable != null)
+                RuntimeDispatcher.RecordDataWriteIfActive(ctx, vaddr);
+            return;
+        }
+        Write32Slow(ctx, ram, vaddr, BitConverter.SingleToUInt32Bits(value));
+    }
+
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    public static void WriteF32Spr(CpuContext* ctx, byte* ram, uint vaddr, float value)
+    {
+        if (vaddr < 0x10000000u)
+        {
+            Unsafe.WriteUnaligned(ram + (vaddr & RamMask), value);
+            if (RuntimeDispatcher.DataWriteAttributionTable != null)
+                RuntimeDispatcher.RecordDataWriteIfActive(ctx, vaddr);
             return;
         }
         if ((vaddr & ScratchpadPageMask) == ScratchpadBase && ctx != null && ctx->Scratchpad != null)
@@ -270,6 +397,17 @@ public static unsafe class Ps2Memory
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public static void Write64(CpuContext* ctx, byte* ram, uint vaddr, ulong value)
+    {
+        if (vaddr < 0x10000000u)
+        {
+            Unsafe.WriteUnaligned(ram + (vaddr & RamMask), value);
+            return;
+        }
+        Write64Slow(ctx, ram, vaddr, value);
+    }
+
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    public static void Write64Spr(CpuContext* ctx, byte* ram, uint vaddr, ulong value)
     {
         if (vaddr < 0x10000000u)
         {
@@ -308,6 +446,18 @@ public static unsafe class Ps2Memory
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public static void Write128(CpuContext* ctx, byte* ram, uint vaddr, Vector128<uint> value)
+    {
+        uint aligned = vaddr & ~0xFu;
+        if (aligned < 0x10000000u)
+        {
+            Unsafe.WriteUnaligned(ram + (aligned & RamMask), value);
+            return;
+        }
+        Write128Slow(ctx, ram, aligned, value);
+    }
+
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    public static void Write128Spr(CpuContext* ctx, byte* ram, uint vaddr, Vector128<uint> value)
     {
         uint aligned = vaddr & ~0xFu;
         if (aligned < 0x10000000u)
@@ -484,5 +634,108 @@ public static unsafe class Ps2Memory
         ulong val = ctx->GetU64(rt);
         ulong newMem = (oldMem & ~mask) | ((val << shift) & mask);
         Write64(ctx, ram, aligned, newMem);
+    }
+
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    public static uint Read32Unaligned(CpuContext* ctx, byte* ram, uint vaddr)
+    {
+        uint off = vaddr & RamMask;
+        if (vaddr < 0x10000000u && off <= 0x01FFFFFCu)
+            return Unsafe.ReadUnaligned<uint>(ram + off);
+        return Read32UnalignedSlow(ctx, ram, vaddr);
+    }
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private static uint Read32UnalignedSlow(CpuContext* ctx, byte* ram, uint vaddr)
+    {
+        if (IsScratchpad(vaddr) && ctx->Scratchpad != null)
+        {
+            uint spOff = vaddr & ScratchpadOffsetMask;
+            if (spOff <= 0x3FFCu)
+                return Unsafe.ReadUnaligned<uint>(ctx->Scratchpad + spOff);
+        }
+        return (uint)Read8(ctx, ram, vaddr)
+            | ((uint)Read8(ctx, ram, vaddr + 1u) << 8)
+            | ((uint)Read8(ctx, ram, vaddr + 2u) << 16)
+            | ((uint)Read8(ctx, ram, vaddr + 3u) << 24);
+    }
+
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    public static void Write32Unaligned(CpuContext* ctx, byte* ram, uint vaddr, uint value)
+    {
+        uint off = vaddr & RamMask;
+        if (vaddr < 0x10000000u && off <= 0x01FFFFFCu)
+        {
+            Unsafe.WriteUnaligned(ram + off, value);
+            return;
+        }
+        Write32UnalignedSlow(ctx, ram, vaddr, value);
+    }
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private static void Write32UnalignedSlow(CpuContext* ctx, byte* ram, uint vaddr, uint value)
+    {
+        if (IsScratchpad(vaddr) && ctx->Scratchpad != null)
+        {
+            uint spOff = vaddr & ScratchpadOffsetMask;
+            if (spOff <= 0x3FFCu)
+            {
+                Unsafe.WriteUnaligned(ctx->Scratchpad + spOff, value);
+                return;
+            }
+        }
+        Write8(ctx, ram, vaddr, (byte)value);
+        Write8(ctx, ram, vaddr + 1u, (byte)(value >> 8));
+        Write8(ctx, ram, vaddr + 2u, (byte)(value >> 16));
+        Write8(ctx, ram, vaddr + 3u, (byte)(value >> 24));
+    }
+
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    public static ulong Read64Unaligned(CpuContext* ctx, byte* ram, uint vaddr)
+    {
+        uint off = vaddr & RamMask;
+        if (vaddr < 0x10000000u && off <= 0x01FFFFF8u)
+            return Unsafe.ReadUnaligned<ulong>(ram + off);
+        return Read64UnalignedSlow(ctx, ram, vaddr);
+    }
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private static ulong Read64UnalignedSlow(CpuContext* ctx, byte* ram, uint vaddr)
+    {
+        if (IsScratchpad(vaddr) && ctx->Scratchpad != null)
+        {
+            uint spOff = vaddr & ScratchpadOffsetMask;
+            if (spOff <= 0x3FF8u)
+                return Unsafe.ReadUnaligned<ulong>(ctx->Scratchpad + spOff);
+        }
+        return (ulong)Read32Unaligned(ctx, ram, vaddr) | ((ulong)Read32Unaligned(ctx, ram, vaddr + 4u) << 32);
+    }
+
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    public static void Write64Unaligned(CpuContext* ctx, byte* ram, uint vaddr, ulong value)
+    {
+        uint off = vaddr & RamMask;
+        if (vaddr < 0x10000000u && off <= 0x01FFFFF8u)
+        {
+            Unsafe.WriteUnaligned(ram + off, value);
+            return;
+        }
+        Write64UnalignedSlow(ctx, ram, vaddr, value);
+    }
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private static void Write64UnalignedSlow(CpuContext* ctx, byte* ram, uint vaddr, ulong value)
+    {
+        if (IsScratchpad(vaddr) && ctx->Scratchpad != null)
+        {
+            uint spOff = vaddr & ScratchpadOffsetMask;
+            if (spOff <= 0x3FF8u)
+            {
+                Unsafe.WriteUnaligned(ctx->Scratchpad + spOff, value);
+                return;
+            }
+        }
+        Write32Unaligned(ctx, ram, vaddr, (uint)value);
+        Write32Unaligned(ctx, ram, vaddr + 4u, (uint)(value >> 32));
     }
 }

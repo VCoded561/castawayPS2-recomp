@@ -167,6 +167,14 @@ public sealed class VifUnit
                 while (offset + 4 <= totalLen)
                 {
                     uint vifCode = BinaryPrimitives.ReadUInt32LittleEndian(remaining.Slice(offset, 4));
+                    if (vifCode == 0u)
+                    {
+                        Code = 0u;
+                        Num = 0;
+                        TotalCommandsProcessed++;
+                        offset += 4;
+                        continue;
+                    }
                     byte rawCmd = (byte)(vifCode >> 24);
                     byte cmd = (byte)(rawCmd & 0x7Fu); // Strip interrupt bit (bit 31)
                     byte num = (byte)((vifCode >> 16) & 0xFFu);
@@ -462,6 +470,11 @@ public sealed class VifUnit
                 int len = payload.Length;
                 if (len > 0)
                 {
+                    TotalMpgBytesUploaded += len;
+                    if (destAddr + len <= MicroMem.Length && payload.SequenceEqual(MicroMem.AsSpan(destAddr, len)))
+                    {
+                        break;
+                    }
                     int first = Math.Min(len, MicroMem.Length - destAddr);
                     payload.Slice(0, first).CopyTo(MicroMem.AsSpan(destAddr, first));
                     int remain = len - first;
@@ -472,7 +485,6 @@ public sealed class VifUnit
                         payload.Slice(len - remain, chunk).CopyTo(MicroMem.AsSpan(pos, chunk));
                         remain -= chunk;
                     }
-                    TotalMpgBytesUploaded += len;
                     OnMicroMemoryRangeModified?.Invoke(destAddr, len);
                 }
                 OnMicroMemoryModified?.Invoke();
@@ -764,6 +776,181 @@ public sealed class VifUnit
         int cycleStep = 0;
         bool isSkipping = cl >= wl;
         int stepSkip = cl - wl;
+
+        // Ultra-fast direct unmasked normal-mode path without DataMem wraparound
+        if (!useMask && effectiveMode == 0 && isSkipping && dstVectors > 0 && (cl == wl || wl == 1))
+        {
+            int dstStrideQw = cl == wl ? 1 : cl;
+            int lastQw = curDst + (dstVectors - 1) * dstStrideQw;
+            if ((uint)lastQw <= (uint)qwordMask)
+            {
+                int dstStrideBytes = dstStrideQw << 4;
+                ref byte d = ref Unsafe.Add(ref dmBase, curDst << 4);
+                ref byte s = ref srcBase;
+                switch (formatKey)
+                {
+                    case 0xC: // V4-32
+                        if (dstStrideQw == 1)
+                        {
+                            Unsafe.CopyBlockUnaligned(ref d, ref s, (uint)(dstVectors << 4));
+                        }
+                        else
+                        {
+                            for (int i = 0; i < dstVectors; i++)
+                            {
+                                Unsafe.WriteUnaligned(ref d, Unsafe.ReadUnaligned<Vector128<uint>>(ref s));
+                                s = ref Unsafe.Add(ref s, 16);
+                                d = ref Unsafe.Add(ref d, dstStrideBytes);
+                            }
+                        }
+                        TotalUnpackQuadwordsWritten += dstVectors;
+                        return;
+                    case 0x8: // V3-32
+                        for (int i = 0; i < dstVectors; i++)
+                        {
+                            Unsafe.WriteUnaligned(ref d, Vector128.Create(
+                                Unsafe.ReadUnaligned<uint>(ref s),
+                                Unsafe.ReadUnaligned<uint>(ref Unsafe.Add(ref s, 4)),
+                                Unsafe.ReadUnaligned<uint>(ref Unsafe.Add(ref s, 8)),
+                                0u));
+                            s = ref Unsafe.Add(ref s, 12);
+                            d = ref Unsafe.Add(ref d, dstStrideBytes);
+                        }
+                        TotalUnpackQuadwordsWritten += dstVectors;
+                        return;
+                    case 0xD: // V4-16
+                        if (usn)
+                        {
+                            for (int i = 0; i < dstVectors; i++)
+                            {
+                                ulong raw64 = Unsafe.ReadUnaligned<ulong>(ref s);
+                                Unsafe.WriteUnaligned(ref d, Vector128.WidenLower(Vector128.CreateScalarUnsafe(raw64).AsUInt16()));
+                                s = ref Unsafe.Add(ref s, 8);
+                                d = ref Unsafe.Add(ref d, dstStrideBytes);
+                            }
+                        }
+                        else
+                        {
+                            for (int i = 0; i < dstVectors; i++)
+                            {
+                                ulong raw64 = Unsafe.ReadUnaligned<ulong>(ref s);
+                                Unsafe.WriteUnaligned(ref d, Vector128.WidenLower(Vector128.CreateScalarUnsafe(raw64).AsInt16()).AsUInt32());
+                                s = ref Unsafe.Add(ref s, 8);
+                                d = ref Unsafe.Add(ref d, dstStrideBytes);
+                            }
+                        }
+                        TotalUnpackQuadwordsWritten += dstVectors;
+                        return;
+                    case 0x9: // V3-16
+                        if (usn)
+                        {
+                            for (int i = 0; i < dstVectors; i++)
+                            {
+                                Unsafe.WriteUnaligned(ref d, Vector128.Create(
+                                    (uint)Unsafe.ReadUnaligned<ushort>(ref s),
+                                    (uint)Unsafe.ReadUnaligned<ushort>(ref Unsafe.Add(ref s, 2)),
+                                    (uint)Unsafe.ReadUnaligned<ushort>(ref Unsafe.Add(ref s, 4)),
+                                    0u));
+                                s = ref Unsafe.Add(ref s, 6);
+                                d = ref Unsafe.Add(ref d, dstStrideBytes);
+                            }
+                        }
+                        else
+                        {
+                            for (int i = 0; i < dstVectors; i++)
+                            {
+                                Unsafe.WriteUnaligned(ref d, Vector128.Create(
+                                    unchecked((uint)(int)Unsafe.ReadUnaligned<short>(ref s)),
+                                    unchecked((uint)(int)Unsafe.ReadUnaligned<short>(ref Unsafe.Add(ref s, 2))),
+                                    unchecked((uint)(int)Unsafe.ReadUnaligned<short>(ref Unsafe.Add(ref s, 4))),
+                                    0u));
+                                s = ref Unsafe.Add(ref s, 6);
+                                d = ref Unsafe.Add(ref d, dstStrideBytes);
+                            }
+                        }
+                        TotalUnpackQuadwordsWritten += dstVectors;
+                        return;
+                    case 0x5: // V2-16
+                        if (usn)
+                        {
+                            for (int i = 0; i < dstVectors; i++)
+                            {
+                                uint x = Unsafe.ReadUnaligned<ushort>(ref s);
+                                uint y = Unsafe.ReadUnaligned<ushort>(ref Unsafe.Add(ref s, 2));
+                                Unsafe.WriteUnaligned(ref d, Vector128.Create(x, y, x, y));
+                                s = ref Unsafe.Add(ref s, 4);
+                                d = ref Unsafe.Add(ref d, dstStrideBytes);
+                            }
+                        }
+                        else
+                        {
+                            for (int i = 0; i < dstVectors; i++)
+                            {
+                                uint x = unchecked((uint)(int)Unsafe.ReadUnaligned<short>(ref s));
+                                uint y = unchecked((uint)(int)Unsafe.ReadUnaligned<short>(ref Unsafe.Add(ref s, 2)));
+                                Unsafe.WriteUnaligned(ref d, Vector128.Create(x, y, x, y));
+                                s = ref Unsafe.Add(ref s, 4);
+                                d = ref Unsafe.Add(ref d, dstStrideBytes);
+                            }
+                        }
+                        TotalUnpackQuadwordsWritten += dstVectors;
+                        return;
+                    case 0xE: // V4-8
+                        if (usn)
+                        {
+                            for (int i = 0; i < dstVectors; i++)
+                            {
+                                uint raw32 = Unsafe.ReadUnaligned<uint>(ref s);
+                                Unsafe.WriteUnaligned(ref d, Vector128.WidenLower(Vector128.WidenLower(Vector128.CreateScalarUnsafe(raw32).AsByte())));
+                                s = ref Unsafe.Add(ref s, 4);
+                                d = ref Unsafe.Add(ref d, dstStrideBytes);
+                            }
+                        }
+                        else
+                        {
+                            for (int i = 0; i < dstVectors; i++)
+                            {
+                                uint raw32 = Unsafe.ReadUnaligned<uint>(ref s);
+                                Unsafe.WriteUnaligned(ref d, Vector128.WidenLower(Vector128.WidenLower(Vector128.CreateScalarUnsafe(raw32).AsSByte())).AsUInt32());
+                                s = ref Unsafe.Add(ref s, 4);
+                                d = ref Unsafe.Add(ref d, dstStrideBytes);
+                            }
+                        }
+                        TotalUnpackQuadwordsWritten += dstVectors;
+                        return;
+                    case 0xA: // V3-8
+                        if (usn)
+                        {
+                            for (int i = 0; i < dstVectors; i++)
+                            {
+                                Unsafe.WriteUnaligned(ref d, Vector128.Create(
+                                    (uint)s,
+                                    (uint)Unsafe.Add(ref s, 1),
+                                    (uint)Unsafe.Add(ref s, 2),
+                                    0u));
+                                s = ref Unsafe.Add(ref s, 3);
+                                d = ref Unsafe.Add(ref d, dstStrideBytes);
+                            }
+                        }
+                        else
+                        {
+                            for (int i = 0; i < dstVectors; i++)
+                            {
+                                Unsafe.WriteUnaligned(ref d, Vector128.Create(
+                                    unchecked((uint)(int)(sbyte)s),
+                                    unchecked((uint)(int)(sbyte)Unsafe.Add(ref s, 1)),
+                                    unchecked((uint)(int)(sbyte)Unsafe.Add(ref s, 2)),
+                                    0u));
+                                s = ref Unsafe.Add(ref s, 3);
+                                d = ref Unsafe.Add(ref d, dstStrideBytes);
+                            }
+                        }
+                        TotalUnpackQuadwordsWritten += dstVectors;
+                        return;
+                }
+            }
+        }
+
         bool needRow = !isSkipping || useMask || effectiveMode != 0;
         Vector128<uint> rowVec = needRow
             ? Unsafe.ReadUnaligned<Vector128<uint>>(ref Unsafe.As<uint, byte>(ref MemoryMarshal.GetArrayDataReference(Row)))

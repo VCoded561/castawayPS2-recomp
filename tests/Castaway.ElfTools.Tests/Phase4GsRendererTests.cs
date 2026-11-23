@@ -2553,6 +2553,260 @@ public unsafe class Phase4GsRendererTests
         Assert.True(diffs.Count == 0, string.Join("\n", diffs));
     }
 
+    [Fact]
+    public void Stage9B_DeferredH2l_ClutAndStridedTextures_MatchSoftwareReference()
+    {
+        var glGs = new GsProcessor { Mode = GsRendererMode.OpenGl, ActiveBatch = new GsPrimitiveBatch() };
+        var swGs = new GsProcessor { Mode = GsRendererMode.Software };
+
+        static void UploadH2l(GsProcessor gs, int dbp, int dbw, GsPsm dpsm, int rrw, int rrh, byte[] data, int splitAt = -1)
+        {
+            ulong bitblt = ((ulong)(uint)dbp << 32) | ((ulong)(uint)dbw << 48) | ((ulong)(uint)dpsm << 56);
+            gs.WriteInternalRegister(0x50, bitblt); // BITBLTBUF
+            gs.WriteInternalRegister(0x51, 0ul);    // TRXPOS (0,0)
+            gs.WriteInternalRegister(0x52, (ulong)(uint)rrw | ((ulong)(uint)rrh << 32)); // TRXREG
+            gs.WriteInternalRegister(0x53, 0ul);    // TRXDIR = Host->Local
+
+            if (splitAt > 0 && splitAt < data.Length)
+            {
+                SendImagePacket(gs, data.AsSpan(0, splitAt));
+                SendImagePacket(gs, data.AsSpan(splitAt));
+            }
+            else
+            {
+                SendImagePacket(gs, data);
+            }
+        }
+
+        static void KickTexturedTri(GsProcessor gs, ulong tex0)
+        {
+            gs.WriteInternalRegister(0x18, 0ul); // XYOFFSET_1
+            gs.WriteInternalRegister(0x4C, 0x00000000000A0000ul); // FRAME_1 FBP=0, FBW=640
+            gs.WriteInternalRegister(0x40, (639ul << 16) | (447ul << 48)); // SCISSOR_1
+            gs.WriteInternalRegister(0x47, 0x0000000000030000ul); // TEST_1
+            gs.WriteInternalRegister(0x06, tex0); // TEX0_1
+            gs.WriteInternalRegister(0x00, 0x03ul | (1ul << 4)); // PRIM = Triangle, TME=1
+            gs.WriteInternalRegister(0x01, 0x80808080ul);
+            gs.WriteInternalRegister(0x05, ((ulong)10 << 4) | (((ulong)10 << 4) << 16));
+            gs.WriteInternalRegister(0x05, ((ulong)40 << 4) | (((ulong)10 << 4) << 16));
+            gs.WriteInternalRegister(0x05, ((ulong)10 << 4) | (((ulong)40 << 4) << 16));
+        }
+
+        static void SendImagePacket(GsProcessor gs, ReadOnlySpan<byte> bytes)
+        {
+            int qwords = (bytes.Length + 15) >> 4;
+            byte[] pkt = new byte[16 + qwords * 16];
+            ulong tagLo = (ulong)qwords | (1ul << 15) | (2ul << 58); // EOP=1, FLG=IMAGE(2)
+            BinaryPrimitives.WriteUInt64LittleEndian(pkt.AsSpan(0, 8), tagLo);
+            bytes.CopyTo(pkt.AsSpan(16));
+            gs.SubmitGifPacket(pkt);
+        }
+
+        var rng = new Random(12345);
+        // 1. 16x16 PSMCT32 CLUT at block 0x2000 (1024 bytes) + 64x64 PSMT8 multi-chunk texture at block 0x2100 (4096 bytes)
+        byte[] clut8 = new byte[16 * 16 * 4];
+        rng.NextBytes(clut8);
+        byte[] tex8 = new byte[64 * 64];
+        rng.NextBytes(tex8);
+
+        UploadH2l(glGs, 0x2000, 1, GsPsm.Psmct32, 16, 16, clut8);
+        UploadH2l(swGs, 0x2000, 1, GsPsm.Psmct32, 16, 16, clut8);
+        UploadH2l(glGs, 0x2100, 1, GsPsm.Psmt8, 64, 64, tex8, splitAt: 2048);
+        UploadH2l(swGs, 0x2100, 1, GsPsm.Psmt8, 64, 64, tex8, splitAt: 2048);
+
+        // 2. 8x2 PSMCT32 CLUT at block 0x2200 (64 bytes) + 16x8 PSMT4 uploaded, decoded as 8x8 strided!
+        byte[] clut4 = new byte[8 * 2 * 4];
+        rng.NextBytes(clut4);
+        byte[] tex4 = new byte[16 * 8 / 2];
+        rng.NextBytes(tex4);
+
+        UploadH2l(glGs, 0x2200, 1, GsPsm.Psmct32, 8, 2, clut4);
+        UploadH2l(swGs, 0x2200, 1, GsPsm.Psmct32, 8, 2, clut4);
+        UploadH2l(glGs, 0x2300, 1, GsPsm.Psmt4, 16, 8, tex4);
+        UploadH2l(swGs, 0x2300, 1, GsPsm.Psmt4, 16, 8, tex4);
+
+        // Switch swGs to OpenGl AFTER all swizzled VRAM uploads so ActiveBatch captures its VRAM-decoded textures
+        swGs.Mode = GsRendererMode.OpenGl;
+        swGs.ActiveBatch = new GsPrimitiveBatch();
+
+        ulong tex0_8 = 0x2100ul | (1ul << 14) | ((ulong)GsPsm.Psmt8 << 20) | (6ul << 26) | (6ul << 30) | (1ul << 34)
+            | (0x2000ul << 37) | (0ul << 51) | (0ul << 55) | (0ul << 56) | (1ul << 61);
+        KickTexturedTri(glGs, tex0_8);
+        KickTexturedTri(swGs, tex0_8);
+
+        ulong tex0_4 = 0x2300ul | (1ul << 14) | ((ulong)GsPsm.Psmt4 << 20) | (3ul << 26) | (3ul << 30) | (1ul << 34)
+            | (0x2200ul << 37) | (0ul << 51) | (0ul << 55) | (0ul << 56) | (1ul << 61);
+        KickTexturedTri(glGs, tex0_4);
+        KickTexturedTri(swGs, tex0_4);
+
+        Assert.Equal(2, glGs.ActiveBatch!.Textures.Count);
+        Assert.Equal(2, swGs.ActiveBatch!.Textures.Count);
+        Assert.Equal(swGs.ActiveBatch.Textures[0].Pixels, glGs.ActiveBatch.Textures[0].Pixels);
+        Assert.Equal(swGs.ActiveBatch.Textures[1].Pixels, glGs.ActiveBatch.Textures[1].Pixels);
+        Assert.True(glGs.DeferredClutHits >= 2, $"Expected >=2 deferred CLUT hits, got {glGs.DeferredClutHits}");
+        Assert.Equal(0, glGs.DeferredClutMisses);
+        Assert.Equal(0, glGs.DeferredH2lFlushes);
+
+        // 3. Partial-height UI texture (TRXREG=256x256, only top 64 rows sent before next TRXDIR=0 for CLUT)
+        // overwriting an existing deferred 256x256 texture at the same address (0x3528).
+        byte[] old3dTex = new byte[256 * 256];
+        rng.NextBytes(old3dTex);
+        byte[] uiPartialRows = new byte[256 * 64];
+        rng.NextBytes(uiPartialRows);
+        byte[] uiClut = new byte[16 * 16 * 4];
+        rng.NextBytes(uiClut);
+
+        swGs.Mode = GsRendererMode.Software;
+        swGs.ActiveBatch = null;
+        UploadH2l(glGs, 0x3528, 4, GsPsm.Psmt8, 256, 256, old3dTex);
+        UploadH2l(swGs, 0x3528, 4, GsPsm.Psmt8, 256, 256, old3dTex);
+
+        // Upload only 256x64 bytes under TRXREG=(256,256), then immediately start CLUT TRXDIR=0 at 0x3628!
+        static void UploadPartialH2l(GsProcessor gs, int dbp, int dbw, GsPsm dpsm, int rrw, int rrh, byte[] partialBytes)
+        {
+            ulong bitblt = ((ulong)(uint)dbp << 32) | ((ulong)(uint)dbw << 48) | ((ulong)(uint)dpsm << 56);
+            gs.WriteInternalRegister(0x50, bitblt);
+            gs.WriteInternalRegister(0x51, 0ul);
+            gs.WriteInternalRegister(0x52, (ulong)(uint)rrw | ((ulong)(uint)rrh << 32));
+            gs.WriteInternalRegister(0x53, 0ul);
+            SendImagePacket(gs, partialBytes);
+        }
+
+        UploadPartialH2l(glGs, 0x3528, 4, GsPsm.Psmt8, 256, 256, uiPartialRows);
+        UploadPartialH2l(swGs, 0x3528, 4, GsPsm.Psmt8, 256, 256, uiPartialRows);
+        UploadH2l(glGs, 0x3628, 1, GsPsm.Psmct32, 16, 16, uiClut);
+        UploadH2l(swGs, 0x3628, 1, GsPsm.Psmct32, 16, 16, uiClut);
+
+        swGs.Mode = GsRendererMode.OpenGl;
+        swGs.ActiveBatch = new GsPrimitiveBatch();
+        glGs.ActiveBatch = new GsPrimitiveBatch();
+        ulong tex0_ui = 0x3528ul | (4ul << 14) | ((ulong)GsPsm.Psmt8 << 20) | (8ul << 26) | (8ul << 30) | (1ul << 34)
+            | (0x3628ul << 37) | (0ul << 51) | (0ul << 55) | (0ul << 56) | (1ul << 61);
+        KickTexturedTri(glGs, tex0_ui);
+        KickTexturedTri(swGs, tex0_ui);
+        Assert.Equal(swGs.ActiveBatch.Textures[0].Pixels, glGs.ActiveBatch.Textures[0].Pixels);
+    }
+
+    [Fact]
+    public unsafe void Stage10C_UnalignedPairHelpers_MatchLdlLdrAndLwlLwrBitExact()
+    {
+        byte[] ramRef = new byte[256];
+        byte[] ramFast = new byte[256];
+        var rng = new Random(999);
+        rng.NextBytes(ramRef);
+        Buffer.BlockCopy(ramRef, 0, ramFast, 0, ramRef.Length);
+
+        CpuContext ctxRef = default;
+        CpuContext ctxFast = default;
+        fixed (byte* pRef = ramRef)
+        fixed (byte* pFast = ramFast)
+        {
+            for (uint off = 16; off < 24; off++)
+            {
+                // LDL/LDR vs Read64Unaligned
+                ctxRef.SetU64(2, 0xDEAD_BEEF_CAFE_BABEul);
+                Ps2Memory.LoadDoubleLeft(&ctxRef, pRef, 2, off + 7u);
+                Ps2Memory.LoadDoubleRight(&ctxRef, pRef, 2, off);
+                ulong fast64 = Ps2Memory.Read64Unaligned(&ctxFast, pFast, off);
+                Assert.Equal(ctxRef.GetU64(2), fast64);
+
+                // LWL/LWR vs Read32Unaligned (sign-extended to 64-bit)
+                ctxRef.SetU64(3, 0x1122_3344_5566_7788ul);
+                Ps2Memory.LoadWordLeft(&ctxRef, pRef, 3, off + 3u);
+                Ps2Memory.LoadWordRight(&ctxRef, pRef, 3, off);
+                ulong fast32 = unchecked((ulong)(long)(int)Ps2Memory.Read32Unaligned(&ctxFast, pFast, off));
+                Assert.Equal(ctxRef.GetU64(3), fast32);
+
+                // SDL/SDR vs Write64Unaligned
+                ulong w64 = 0x0123_4567_89AB_CDEFul ^ ((ulong)off * 0x1111_1111_1111_1111ul);
+                ctxRef.SetU64(4, w64);
+                Ps2Memory.StoreDoubleLeft(&ctxRef, pRef, 4, off + 64u + 7u);
+                Ps2Memory.StoreDoubleRight(&ctxRef, pRef, 4, off + 64u);
+                Ps2Memory.Write64Unaligned(&ctxFast, pFast, off + 64u, w64);
+                Assert.Equal(ramRef, ramFast);
+
+                // SWL/SWR vs Write32Unaligned
+                uint w32 = 0x89AB_CDEFu ^ (off * 0x0101_0101u);
+                ctxRef.SetZ32(5, w32);
+                Ps2Memory.StoreWordLeft(&ctxRef, pRef, 5, off + 128u + 3u);
+                Ps2Memory.StoreWordRight(&ctxRef, pRef, 5, off + 128u);
+                Ps2Memory.Write32Unaligned(&ctxFast, pFast, off + 128u, w32);
+                Assert.Equal(ramRef, ramFast);
+            }
+        }
+    }
+
+    [Fact]
+    public void Stage13_OffsetTable16_And_FlatTriangleFast16Lut_MatchReference()
+    {
+        // 1. Verify precomputed OffsetTable16/16S/Z16/Z16S match exact block+halfword formula across multi-page 256x128 surface
+        for (int isZ = 0; isZ <= 1; isZ++)
+        {
+            for (int is16S = 0; is16S <= 1; is16S++)
+            {
+                ReadOnlySpan<byte> blkTbl = isZ != 0
+                    ? (is16S != 0 ? GsSwizzle.BlockTableZ16S : GsSwizzle.BlockTableZ16)
+                    : (is16S != 0 ? GsSwizzle.BlockTable16S : GsSwizzle.BlockTable16);
+                for (int y = 0; y < 128; y += 3)
+                {
+                    for (int x = 0; x < 256; x += 5)
+                    {
+                        int pagesPerRow = 256 >> 6;
+                        int pageBlockBase = 0x3E00 + ((y >> 6) * pagesPerRow + (x >> 6)) * 32;
+                        int blockInPage = blkTbl[(((y & 63) >> 3) << 2) + ((x & 63) >> 4)];
+                        int blockIdx = (pageBlockBase + blockInPage) & 0x3FFF;
+                        int hwInBlock = GsSwizzle.ColumnHalfwordTable16[((y & 7) << 4) + (x & 15)];
+                        int expected = (((blockIdx << 7) + hwInBlock) << 1) & GsSwizzle.VramByteMask;
+                        int actual = GsSwizzle.GetPixelByteAddress16(0x3E00, 256, x, y, is16S: is16S != 0, isZ: isZ != 0);
+                        Assert.Equal(expected, actual);
+                    }
+                }
+            }
+        }
+
+        // 2. Verify RasterizeFlatTriangleFast16 LUT blend path on Psmct16S matches exact per-channel PS2 blend formula
+        var gs = new GsProcessor { Mode = GsRendererMode.Software };
+        // FRAME_1: FBP=0x3E00 (0x1F0 * 32), FBW=4 (256px), PSM=Psmct16S (0x0A), FBMSK=0
+        gs.WriteInternalRegister(0x4C, 0x1F0ul | (4ul << 16) | ((ulong)GsPsm.Psmct16S << 24));
+        gs.WriteInternalRegister(0x18, 0ul); // XYOFFSET_1 = (0,0)
+        gs.WriteInternalRegister(0x40, (255ul << 16) | (255ul << 48)); // SCISSOR_1 = [0..255, 0..255]
+        gs.WriteInternalRegister(0x47, (1ul << 16) | (1ul << 17)); // TEST_1: ATE=0, ZTE=1, ZTST=ALWAYS(1)
+        gs.WriteInternalRegister(0x4E, 1ul << 32); // ZBUF_1: ZMSK=1
+        gs.WriteInternalRegister(0x42, 0x44ul); // ALPHA_1: standard (Cs - Cd) * As >> 7 + Cd
+        gs.WriteInternalRegister(0x1A, 1ul); // COLCLAMP=1
+
+        // Seed background VRAM with varied 16-bit colors
+        for (int y = 0; y < 64; y++)
+        {
+            for (int x = 0; x < 64; x++)
+            {
+                uint bg = (uint)((x * 4) | ((y * 4) << 8) | (((x + y) * 2) << 16) | 0x80000000u);
+                int addr = GsSwizzle.GetPixelByteAddress16(0x3E00, 256, x, y, is16S: true);
+                BinaryPrimitives.WriteUInt16LittleEndian(gs.Vram.AsSpan(addr, 2), GsSwizzle.Pack32To16(bg));
+            }
+        }
+
+        // Draw flat alpha-blended triangle (PRIM=Triangle|ABE = 3 | 0x40 = 0x43, RGBA=(40,80,120,0x40))
+        byte sR = 40, sG = 80, sB = 120, sA = 0x40;
+        gs.WriteInternalRegister(0x00, 0x43ul);
+        gs.WriteInternalRegister(0x01, (ulong)sR | ((ulong)sG << 8) | ((ulong)sB << 16) | ((ulong)sA << 24));
+        gs.WriteInternalRegister(0x05, (8ul << 4) | ((8ul << 4) << 16));
+        gs.WriteInternalRegister(0x05, (56ul << 4) | ((8ul << 4) << 16));
+        gs.WriteInternalRegister(0x05, (8ul << 4) | ((56ul << 4) << 16));
+
+        // Check interior pixel (20, 20) matches exact Expand16To32 -> blend -> Pack32To16
+        uint origBg = (uint)((20 * 4) | ((20 * 4) << 8) | (((20 + 20) * 2) << 16) | 0x80000000u);
+        uint expDst = GsSwizzle.Expand16To32(GsSwizzle.Pack32To16(origBg));
+        int dR = (int)(expDst & 0xFFu), dG = (int)((expDst >> 8) & 0xFFu), dB = (int)((expDst >> 16) & 0xFFu);
+        int oR = Math.Clamp((((sR - dR) * sA) >> 7) + dR, 0, 255);
+        int oG = Math.Clamp((((sG - dG) * sA) >> 7) + dG, 0, 255);
+        int oB = Math.Clamp((((sB - dB) * sA) >> 7) + dB, 0, 255);
+        ushort expected16 = GsSwizzle.Pack32To16((uint)(oR | (oG << 8) | (oB << 16) | (sA << 24)));
+        int chkAddr = GsSwizzle.GetPixelByteAddress16(0x3E00, 256, 20, 20, is16S: true);
+        ushort actual16 = BinaryPrimitives.ReadUInt16LittleEndian(gs.Vram.AsSpan(chkAddr, 2));
+        Assert.Equal(expected16, actual16);
+    }
+
     private static uint MakeVifCode(byte cmd, byte num, ushort imm)
         => ((uint)cmd << 24) | ((uint)num << 16) | imm;
 }

@@ -1273,4 +1273,97 @@ public unsafe class Phase3RuntimeTests
             Assert.True(mix.Max(s => Math.Abs((int)s)) > 1000);
         }
     }
+
+    [Fact]
+    public void Spu2AudioService_ProLogicRearVolumes_DownmixInPhaseForStereoOutput()
+    {
+        using var audio = new Spu2AudioService(tryInitOpenAl: false);
+        byte[] ramManaged = new byte[CpuContext.RamSize];
+
+        fixed (byte* ram = ramManaged)
+        {
+            uint spuAddr = 0x5010u;
+            WriteAdpcmBlock(audio.Spu2Ram.AsSpan((int)spuAddr, 16), flags: 0x03, nibbleVal: 4);
+
+            uint sendAddr = 0x00605000u;
+            uint recvAddr = 0x00606000u;
+
+            // SLUS_216.64 rear-center Pro Logic II encoding: L=+0.5 (0x2000), R=-0.5 (0x7FFF - 0x2000 = 0x5FFF)
+            uint cur = WriteEaStreamBatchHeader(ramManaged, sendAddr, 1);
+            cur = WriteEaStreamBatchCmd(ramManaged, cur, 0, (ushort)(spuAddr >> 16), (ushort)spuAddr, 0, 0x2000, 0x5FFF, 0x1000, 0x000F);
+            audio.HandleEaStreamRpc(0, ram, sendAddr, (int)(cur - sendAddr), recvAddr, 256);
+
+            short[] mix = new short[128 * 2];
+            audio.StepMixSamples(128, mix);
+
+            bool sawNonZero = false;
+            for (int i = 0; i < 128; i++)
+            {
+                int l = mix[i * 2];
+                int r = mix[i * 2 + 1];
+                if (l != 0 || r != 0)
+                {
+                    sawNonZero = true;
+                    Assert.True((long)l * r >= 0, $"Expected in-phase stereo downmix for Pro Logic rear voice, got L={l}, R={r} at frame {i}.");
+                }
+            }
+            Assert.True(sawNonZero);
+        }
+    }
+
+    [Fact]
+    public void Spu2AudioService_StereoStream_PreservesLeftRightChannelSeparation_WhenBothVoicesReceiveSharedVolPair()
+    {
+        using var audio = new Spu2AudioService(tryInitOpenAl: false);
+        byte[] ramManaged = new byte[CpuContext.RamSize];
+
+        fixed (byte* ram = ramManaged)
+        {
+            // Stereo MIH header at 0x1000 (64 bytes before payload; channels=2, sr=24000, interleave=0x0400)
+            // Payload at 0x1040: Left interleave chunk [0x1040..0x1440) has ADPCM signal; Right chunk [0x1440..0x1840) is silent.
+            byte[] archive = new byte[0x3000];
+            uint headerOffset = 0x1000u;
+            uint streamDataOffset = 0x1040u;
+            uint fh = 11u;
+
+            BinaryPrimitives.WriteUInt32LittleEndian(archive.AsSpan((int)headerOffset + 0, 4), 64u);
+            BinaryPrimitives.WriteUInt32LittleEndian(archive.AsSpan((int)headerOffset + 8, 4), 2u);
+            BinaryPrimitives.WriteUInt32LittleEndian(archive.AsSpan((int)headerOffset + 12, 4), 24000u);
+            BinaryPrimitives.WriteUInt32LittleEndian(archive.AsSpan((int)headerOffset + 16, 4), 0x0400u);
+
+            for (int off = (int)streamDataOffset; off < (int)streamDataOffset + 0x0400; off += 16)
+                WriteAdpcmBlock(archive.AsSpan(off, 16), flags: 0x00, nibbleVal: 3);
+
+            audio.StreamFileReader = (handle, offset, dst) =>
+            {
+                if (handle != fh || offset < 0 || offset >= archive.Length)
+                    return 0;
+                int copy = (int)Math.Min(dst.Length, archive.Length - offset);
+                archive.AsSpan((int)offset, copy).CopyTo(dst);
+                return copy;
+            };
+
+            uint sendAddr = 0x00605000u;
+            uint recvAddr = 0x00606000u;
+            uint eeHdrDest = 0x00610000u;
+
+            // Load MIH header, start stereo stream on chL=44 / chR=45, and send shared (0x3FFF, 0x3FFF) to both via cmd=1, cmd=44, cmd=96
+            uint cur = WriteEaStreamBatchHeader(ramManaged, sendAddr, 8);
+            cur = WriteEaStreamBatchCmd(ramManaged, cur, 41, 0, (ushort)fh, 0, (ushort)headerOffset, 0, 0x0040);
+            cur = WriteEaStreamBatchCmd(ramManaged, cur, 49, (ushort)(eeHdrDest >> 16), (ushort)eeHdrDest);
+            cur = WriteEaStreamBatchCmd(ramManaged, cur, 1, 0, (ushort)fh, 0x002C, 0x3FFF, 0x3FFF, 0x0800, 126);
+            cur = WriteEaStreamBatchCmd(ramManaged, cur, 41, 0, (ushort)fh, 0, (ushort)streamDataOffset, 0, 0x1000);
+            cur = WriteEaStreamBatchCmd(ramManaged, cur, 1, 0, (ushort)fh, 0x002C, 0x3FFF, 0x3FFF, 0x0800, 0);
+            cur = WriteEaStreamBatchCmd(ramManaged, cur, 44, (0 << 8) | 44, 45, 1, 0x3FFF, 0x3FFF, 0, 0);
+            cur = WriteEaStreamBatchCmd(ramManaged, cur, 96, 44, 0x3FFF, 0x3FFF);
+            cur = WriteEaStreamBatchCmd(ramManaged, cur, 96, 45, 0x3FFF, 0x3FFF);
+            audio.HandleEaStreamRpc(0, ram, sendAddr, (int)(cur - sendAddr), recvAddr, 512);
+
+            short[] mix = new short[128 * 2];
+            audio.StepMixSamples(128, mix);
+
+            Assert.Contains(Enumerable.Range(0, 128).Select(i => mix[i * 2]), s => s != 0);
+            Assert.All(Enumerable.Range(0, 128).Select(i => mix[i * 2 + 1]), s => Assert.Equal((short)0, s));
+        }
+    }
 }

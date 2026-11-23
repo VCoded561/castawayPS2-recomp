@@ -155,6 +155,8 @@ public struct GsGlDrawCall
 {
     public int StartVertex;
     public int VertexCount;
+    public int StartIndex;
+    public int IndexCount;
     public GsPrimitiveType PrimType;
     public GsDrawContext DrawContext;
     public int Scx0, Scy0, Scx1, Scy1;
@@ -169,20 +171,24 @@ public struct GsGlDrawCall
 public sealed class GsPrimitiveBatch
 {
     public const int MaxVertices = 300_000;
+    public const int MaxIndices = 600_000;
     public const int MaxDrawCalls = 16_384;
 
     public GsGlVertex[] Vertices { get; } = new GsGlVertex[MaxVertices];
+    public uint[] Indices { get; } = new uint[MaxIndices];
     public GsGlDrawCall[] DrawCalls { get; } = new GsGlDrawCall[MaxDrawCalls];
     public uint[] ClutPool { get; } = new uint[1024 * 256];
     public List<GsBatchTexture> Textures { get; } = new(256);
     private readonly Dictionary<(ulong Hash64, int Width, int Height), int> _frameTexDedup = new(256);
     public int ClutPoolCount { get; set; }
     public int VertexCount { get; set; }
+    public int IndexCount { get; set; }
     public int DrawCallCount { get; set; }
 
     public void Reset()
     {
         VertexCount = 0;
+        IndexCount = 0;
         DrawCallCount = 0;
         ClutPoolCount = 0;
         Textures.Clear();
@@ -216,13 +222,18 @@ public sealed class GsPrimitiveBatch
         int ofx, int ofy,
         in GsGlVertex v0, in GsGlVertex v1, in GsGlVertex v2)
     {
-        if (VertexCount + 3 > MaxVertices || DrawCallCount >= MaxDrawCalls)
+        if (VertexCount + 3 > MaxVertices || IndexCount + 3 > MaxIndices || DrawCallCount >= MaxDrawCalls)
             return;
 
         int startVtx = VertexCount;
+        int startIdx = IndexCount;
         Vertices[VertexCount++] = v0;
         Vertices[VertexCount++] = v1;
         Vertices[VertexCount++] = v2;
+        uint b = (uint)startVtx;
+        Indices[IndexCount++] = b;
+        Indices[IndexCount++] = b + 1u;
+        Indices[IndexCount++] = b + 2u;
 
         if (DrawCallCount > 0)
         {
@@ -235,6 +246,7 @@ public sealed class GsPrimitiveBatch
                  lastCall.DrawContext.StateEquals(in dc)))
             {
                 lastCall.VertexCount += 3;
+                lastCall.IndexCount += 3;
                 return;
             }
         }
@@ -243,6 +255,8 @@ public sealed class GsPrimitiveBatch
         {
             StartVertex = startVtx,
             VertexCount = 3,
+            StartIndex = startIdx,
+            IndexCount = 3,
             PrimType = GsPrimitiveType.Triangle,
             DrawContext = dc,
             Scx0 = scx0,
@@ -287,6 +301,8 @@ public sealed class GsPrimitiveBatch
         {
             StartVertex = VertexCount,
             VertexCount = 0,
+            StartIndex = IndexCount,
+            IndexCount = 0,
             PrimType = GsPrimitiveType.Triangle,
             DrawContext = dc,
             Scx0 = scx0,
@@ -303,7 +319,7 @@ public sealed class GsPrimitiveBatch
 
     public void RollbackEmptyDrawCall(int idx, bool createdNew)
     {
-        if (createdNew && idx == DrawCallCount - 1 && DrawCalls[idx].VertexCount == 0)
+        if (createdNew && idx == DrawCallCount - 1 && DrawCalls[idx].IndexCount == 0)
         {
             DrawCallCount--;
         }
@@ -315,12 +331,13 @@ public sealed class GsPrimitiveBatch
         int ofx, int ofy,
         in GsGlVertex v0, in GsGlVertex v1)
     {
-        if (VertexCount + 6 > MaxVertices || DrawCallCount >= MaxDrawCalls)
+        if (VertexCount + 4 > MaxVertices || IndexCount + 6 > MaxIndices || DrawCallCount >= MaxDrawCalls)
             return;
 
         int startVtx = VertexCount;
+        int startIdx = IndexCount;
 
-        // Quad split into 2 triangles: (x0, y0), (x1, y0), (x0, y1) and (x1, y0), (x1, y1), (x0, y1)
+        // Quad split into 2 indexed triangles (4 vertices, 6 indices)
         var q0 = new GsGlVertex { X = v0.X, Y = v0.Y, Z = v1.Z, W = 1f, R = v1.R, G = v1.G, B = v1.B, A = v1.A, S = v0.S, T = v0.T, Q = v1.Q, U = v0.U, V = v0.V };
         var q1 = new GsGlVertex { X = v1.X, Y = v0.Y, Z = v1.Z, W = 1f, R = v1.R, G = v1.G, B = v1.B, A = v1.A, S = v1.S, T = v0.T, Q = v1.Q, U = v1.U, V = v0.V };
         var q2 = new GsGlVertex { X = v0.X, Y = v1.Y, Z = v1.Z, W = 1f, R = v1.R, G = v1.G, B = v1.B, A = v1.A, S = v0.S, T = v1.T, Q = v1.Q, U = v0.U, V = v1.V };
@@ -329,9 +346,14 @@ public sealed class GsPrimitiveBatch
         Vertices[VertexCount++] = q0;
         Vertices[VertexCount++] = q1;
         Vertices[VertexCount++] = q2;
-        Vertices[VertexCount++] = q1;
         Vertices[VertexCount++] = q3;
-        Vertices[VertexCount++] = q2;
+        uint b = (uint)startVtx;
+        Indices[IndexCount++] = b;
+        Indices[IndexCount++] = b + 1u;
+        Indices[IndexCount++] = b + 2u;
+        Indices[IndexCount++] = b + 1u;
+        Indices[IndexCount++] = b + 3u;
+        Indices[IndexCount++] = b + 2u;
 
         if (DrawCallCount > 0)
         {
@@ -344,6 +366,7 @@ public sealed class GsPrimitiveBatch
                  lastCall.DrawContext.StateEquals(in dc)))
             {
                 lastCall.VertexCount += 6;
+                lastCall.IndexCount += 6;
                 return;
             }
         }
@@ -352,6 +375,8 @@ public sealed class GsPrimitiveBatch
         {
             StartVertex = startVtx,
             VertexCount = 6,
+            StartIndex = startIdx,
+            IndexCount = 6,
             PrimType = GsPrimitiveType.Triangle,
             DrawContext = dc,
             Scx0 = scx0,

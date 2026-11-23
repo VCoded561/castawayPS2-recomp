@@ -253,7 +253,7 @@ public sealed class Vu1State
     }
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    public void UpdateMacFlagsOnly(Vector128<float> res, uint destMask)
+    public static ushort ComputeMacFlagsOnly(Vector128<float> res, uint destMask)
     {
         Vector128<uint> rBits = res.AsUInt32();
         Vector128<uint> exp = rBits & ExpMaskVec;
@@ -263,7 +263,20 @@ public sealed class Vu1State
         uint zeroBits = ((uint)(0xF7B3D591E6A2C480UL >> ((int)isZero.AsSingle().ExtractMostSignificantBits() << 2))) & destMask;
         uint signBits = ((uint)(0xF7B3D591E6A2C480UL >> ((int)sign.AsSingle().ExtractMostSignificantBits() << 2))) & destMask;
 
-        MacFlags = (ushort)(zeroBits | (signBits << 4));
+        return (ushort)(zeroBits | (signBits << 4));
+    }
+
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    public static ushort ComputeMacFlagsW(Vector128<float> res)
+    {
+        uint bits = res.AsUInt32().GetElement(3);
+        return (bits & 0x7F800000u) == 0u ? (ushort)0x01 : (ushort)((bits >> 27) & 0x10u);
+    }
+
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    public void UpdateMacFlagsOnly(Vector128<float> res, uint destMask)
+    {
+        MacFlags = ComputeMacFlagsOnly(res, destMask);
     }
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
@@ -327,27 +340,29 @@ public sealed class Vu1State
     public static float VuDivFast(float a, float b)
     {
         uint ub = BitConverter.SingleToUInt32Bits(b);
-        uint expB = ub & Ps2Float.ExpMask;
-        if (expB != 0u && expB != Ps2Float.ExpMask)
-        {
-            float r = a / b;
-            if (float.IsFinite(r))
-                return r;
-        }
-        return VuDivSlow(a, b);
+        if (((ub & Ps2Float.ExpMask) - 0x00800000u) >= 0x7F000000u)
+            return VuDivSlow(a, b, ub);
+        float r = a / b;
+        uint ur = BitConverter.SingleToUInt32Bits(r);
+        if (((ur & Ps2Float.ExpMask) - 0x00800000u) >= 0x7F000000u)
+            return ClampVuResultSlow(ur);
+        return r;
     }
 
     [MethodImpl(MethodImplOptions.NoInlining)]
-    private static float VuDivSlow(float a, float b)
+    private static float VuDivSlow(float a, float b, uint ub)
     {
-        uint ua = BitConverter.SingleToUInt32Bits(a);
-        uint ub = BitConverter.SingleToUInt32Bits(b);
-        if ((ub & Ps2Float.ExpMask) == 0u)
+        uint expB = ub & Ps2Float.ExpMask;
+        if (expB == 0u)
+        {
+            uint ua = BitConverter.SingleToUInt32Bits(a);
             return BitConverter.UInt32BitsToSingle(((ua ^ ub) & Ps2Float.SignMask) | Ps2Float.IeeeMaxNormalBits);
-        float r = Ps2Float.Div(a, b);
+        }
+        b = BitConverter.UInt32BitsToSingle((ub & Ps2Float.SignMask) | Ps2Float.IeeeMaxNormalBits);
+        float r = a / b;
         uint ur = BitConverter.SingleToUInt32Bits(r);
-        if ((ur & Ps2Float.ExpMask) == Ps2Float.ExpMask)
-            return BitConverter.UInt32BitsToSingle((ur & Ps2Float.SignMask) | Ps2Float.IeeeMaxNormalBits);
+        if (((ur & Ps2Float.ExpMask) - 0x00800000u) >= 0x7F000000u)
+            return ClampVuResultSlow(ur);
         return r;
     }
 
@@ -355,24 +370,40 @@ public sealed class Vu1State
     public static float VuRsqrtFast(float a, float b)
     {
         uint ub = BitConverter.SingleToUInt32Bits(b);
-        uint expB = ub & Ps2Float.ExpMask;
-        if (expB != 0u && expB != Ps2Float.ExpMask)
-        {
-            float r = a / MathF.Sqrt(MathF.Abs(b));
-            if (float.IsFinite(r))
-                return r;
-        }
-        return VuRsqrtSlow(a, b);
+        if (((ub & Ps2Float.ExpMask) - 0x00800000u) >= 0x7F000000u)
+            return VuRsqrtSlow(a, b, ub);
+        float r = a / MathF.Sqrt(MathF.Abs(b));
+        uint ur = BitConverter.SingleToUInt32Bits(r);
+        if (((ur & Ps2Float.ExpMask) - 0x00800000u) >= 0x7F000000u)
+            return ClampVuResultSlow(ur);
+        return r;
     }
 
     [MethodImpl(MethodImplOptions.NoInlining)]
-    private static float VuRsqrtSlow(float a, float b)
+    private static float VuRsqrtSlow(float a, float b, uint ub)
     {
-        float r = Ps2Float.Rsqrt(a, b);
+        uint expB = ub & Ps2Float.ExpMask;
+        if (expB == 0u)
+        {
+            uint ua = BitConverter.SingleToUInt32Bits(a);
+            return (ua & Ps2Float.ExpMask) == 0u
+                ? BitConverter.UInt32BitsToSingle(ua & Ps2Float.SignMask)
+                : BitConverter.UInt32BitsToSingle((ua & Ps2Float.SignMask) | Ps2Float.IeeeMaxNormalBits);
+        }
+        b = BitConverter.UInt32BitsToSingle(Ps2Float.IeeeMaxNormalBits);
+        float r = a / MathF.Sqrt(b);
         uint ur = BitConverter.SingleToUInt32Bits(r);
+        if (((ur & Ps2Float.ExpMask) - 0x00800000u) >= 0x7F000000u)
+            return ClampVuResultSlow(ur);
+        return r;
+    }
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private static float ClampVuResultSlow(uint ur)
+    {
         if ((ur & Ps2Float.ExpMask) == Ps2Float.ExpMask)
             return BitConverter.UInt32BitsToSingle((ur & Ps2Float.SignMask) | Ps2Float.IeeeMaxNormalBits);
-        return r;
+        return BitConverter.UInt32BitsToSingle(ur & Ps2Float.SignMask);
     }
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
@@ -388,8 +419,9 @@ public sealed class Vu1State
         if (Sse2.IsSupported)
         {
             Vector128<int> ints = Sse2.ConvertToVector128Int32WithTruncation(fs);
-            if (!Vector128.EqualsAny(ints, Vector128.Create(int.MinValue)))
-                return ints.AsSingle();
+            Vector128<int> isIndef = Vector128.Equals(ints, Vector128.Create(int.MinValue));
+            Vector128<int> posOverflow = Vector128.AndNot(isIndef, Vector128.ShiftRightArithmetic(fs.AsInt32(), 31));
+            return (ints + posOverflow).AsSingle();
         }
         return ExecFtoiSlow(fs);
     }
@@ -401,8 +433,9 @@ public sealed class Vu1State
         if (Sse2.IsSupported)
         {
             Vector128<int> ints = Sse2.ConvertToVector128Int32WithTruncation(scaled);
-            if (!Vector128.EqualsAny(ints, Vector128.Create(int.MinValue)))
-                return ints.AsSingle();
+            Vector128<int> isIndef = Vector128.Equals(ints, Vector128.Create(int.MinValue));
+            Vector128<int> posOverflow = Vector128.AndNot(isIndef, Vector128.ShiftRightArithmetic(scaled.AsInt32(), 31));
+            return (ints + posOverflow).AsSingle();
         }
         return ExecFtoiSlow(scaled);
     }

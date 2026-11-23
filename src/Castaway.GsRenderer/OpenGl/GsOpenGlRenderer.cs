@@ -66,6 +66,7 @@ public sealed unsafe class GsOpenGlRenderer : IDisposable
 
     // Hardware primitive rasterization resources (DSA)
     private uint _primitiveVbo;
+    private uint _primitiveEbo;
     private uint _primitiveVao;
     private uint _drawParamsUbo;
     private uint _primitiveProgram;
@@ -196,6 +197,14 @@ public sealed unsafe class GsOpenGlRenderer : IDisposable
         gl.VertexArrayAttribBinding(_primitiveVao, 3, 0);
 
         gl.VertexArrayVertexBuffer(_primitiveVao, 0, _primitiveVbo, 0, (uint)sizeof(GsGlVertex));
+
+        gl.CreateBuffers(1, out _primitiveEbo);
+        gl.NamedBufferStorage(
+            _primitiveEbo,
+            (nuint)(GsPrimitiveBatch.MaxIndices * sizeof(uint)),
+            null,
+            BufferStorageMask.DynamicStorageBit);
+        gl.VertexArrayElementBuffer(_primitiveVao, _primitiveEbo);
 
         // 7. Allocate per-draw-call state UBOs via DSA
         gl.CreateBuffers(1, out _drawParamsUbo);
@@ -424,10 +433,17 @@ public sealed unsafe class GsOpenGlRenderer : IDisposable
         else
             _gl.Disable(EnableCap.Multisample);
 
-        // 2. Upload dynamic vertex buffer via DSA NamedBufferSubData
+        // 2. Upload dynamic vertex & index buffers via DSA NamedBufferSubData
         fixed (GsGlVertex* vtxPtr = batch.Vertices)
         {
             _gl.NamedBufferSubData(_primitiveVbo, 0, (nuint)(batch.VertexCount * sizeof(GsGlVertex)), vtxPtr);
+        }
+        if (batch.IndexCount > 0)
+        {
+            fixed (uint* idxPtr = batch.Indices)
+            {
+                _gl.NamedBufferSubData(_primitiveEbo, 0, (nuint)(batch.IndexCount * sizeof(uint)), idxPtr);
+            }
         }
 
         // 3. Set global OpenGL state bindings
@@ -648,8 +664,11 @@ public sealed unsafe class GsOpenGlRenderer : IDisposable
 
             _gl.NamedBufferSubData(_drawParamsUbo, 0, (nuint)sizeof(GsGlDrawParams), &drawParams);
 
-            // Draw triangles
-            _gl.DrawArrays(PrimitiveType.Triangles, call.StartVertex, (uint)call.VertexCount);
+            // Draw indexed triangles
+            if (call.IndexCount > 0)
+                _gl.DrawElements(PrimitiveType.Triangles, (uint)call.IndexCount, DrawElementsType.UnsignedInt, (void*)((nuint)call.StartIndex * sizeof(uint)));
+            else
+                _gl.DrawArrays(PrimitiveType.Triangles, call.StartVertex, (uint)call.VertexCount);
 
             if (twoPassAfail)
             {
@@ -668,7 +687,10 @@ public sealed unsafe class GsOpenGlRenderer : IDisposable
                     _gl.ColorMask(maskR, maskG, maskB, false);
                     _gl.DepthMask(false);
                 }
-                _gl.DrawArrays(PrimitiveType.Triangles, call.StartVertex, (uint)call.VertexCount);
+                if (call.IndexCount > 0)
+                    _gl.DrawElements(PrimitiveType.Triangles, (uint)call.IndexCount, DrawElementsType.UnsignedInt, (void*)((nuint)call.StartIndex * sizeof(uint)));
+                else
+                    _gl.DrawArrays(PrimitiveType.Triangles, call.StartVertex, (uint)call.VertexCount);
             }
         }
 
@@ -1442,6 +1464,7 @@ public sealed unsafe class GsOpenGlRenderer : IDisposable
         if (_presentGraphicsProgram != 0) _gl.DeleteProgram(_presentGraphicsProgram);
 
         if (_primitiveVbo != 0) _gl.DeleteBuffer(_primitiveVbo);
+        if (_primitiveEbo != 0) _gl.DeleteBuffer(_primitiveEbo);
         if (_primitiveVao != 0) _gl.DeleteVertexArray(_primitiveVao);
         if (_drawParamsUbo != 0) _gl.DeleteBuffer(_drawParamsUbo);
         if (_primitiveProgram != 0) _gl.DeleteProgram(_primitiveProgram);

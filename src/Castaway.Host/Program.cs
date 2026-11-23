@@ -20,6 +20,7 @@ namespace Castaway.Host;
 public static unsafe class Program
 {
     private static readonly List<(int Frame, Ps2PadButtons Button)> _autoInputs = [];
+    private static double _spikeThresholdMs;
 
     public static int Main(string[] args)
     {
@@ -27,6 +28,8 @@ public static unsafe class Program
         string? elfPath = null;
         string? dvdPath = null;
         string? traceBinaryPath = null;
+        string? recordInputsPath = null;
+        string? scanFpsDepsPath = null;
         int maxTraceRecords = 500_000;
         int maxFrames = 0; // 0 = unlimited
         int autoStartFrame = 0;
@@ -35,6 +38,7 @@ public static unsafe class Program
         bool dumpVram = false;
         bool debugHooks = false;
         bool profileEe = Environment.GetEnvironmentVariable("CASTAWAY_PROFILE_EE") == "1";
+        _spikeThresholdMs = double.TryParse(Environment.GetEnvironmentVariable("CASTAWAY_SPIKE_MS"), System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out double envSpikeMs) ? envSpikeMs : 0.0;
         bool fpsExplicitlySet = false;
         bool? realTimeTimersOverride = null;
         var overrideOpts = new OverrideOptions();
@@ -89,6 +93,9 @@ public static unsafe class Program
                 case "--profile-ee":
                     profileEe = true;
                     break;
+                case "--log-spikes" when i + 1 < args.Length && double.TryParse(args[++i], System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out double spMs):
+                    _spikeThresholdMs = spMs;
+                    break;
                 case "--scale" when i + 1 < args.Length && int.TryParse(args[++i], out int sc):
                     overrideOpts.ResolutionScale = Math.Clamp(sc, 1, 8);
                     break;
@@ -120,6 +127,19 @@ public static unsafe class Program
                 case "--fixed-timers":
                     realTimeTimersOverride = false;
                     break;
+                case "--no-fps-fix":
+                    overrideOpts.EnableFramerateIndependence = false;
+                    break;
+                case "--record-inputs" when i + 1 < args.Length:
+                    recordInputsPath = args[++i];
+                    break;
+                case "--scan-fps-deps" or "--replay-fps-diff":
+                    if (i + 1 < args.Length && !args[i + 1].StartsWith("--", StringComparison.Ordinal))
+                        scanFpsDepsPath = args[++i];
+                    else
+                        scanFpsDepsPath = "__SYNTHETIC__";
+                    headless = true;
+                    break;
             }
         }
 
@@ -142,11 +162,16 @@ public static unsafe class Program
 
         Console.WriteLine($"[Castaway.Host] ELF: {elfPath}");
         Console.WriteLine($"[Castaway.Host] DVD Root: {dvdPath}");
-        Console.WriteLine($"[Castaway.Host] Mode: {(headless ? "Headless" : $"OpenGL 4.6 Windowed ({overrideOpts.ResolutionScale}x scale)")} | Renderer: {overrideOpts.RendererMode} | MSAA: {(overrideOpts.MsaaSamples <= 1 ? "Off" : $"{overrideOpts.MsaaSamples}x")} | Target FPS: {(overrideOpts.TargetFps == 0 ? "Uncapped" : $"{overrideOpts.TargetFps} FPS (PS2 Locked)")} | Timers: {(useRealTimeTimers ? "Real-Time (576kHz wall-clock, <=66.67ms)" : "Fixed 60Hz (9600 ticks/frame)")}");
+        Console.WriteLine($"[Castaway.Host] Mode: {(headless ? "Headless" : $"OpenGL 4.6 Windowed ({overrideOpts.ResolutionScale}x scale)")} | Renderer: {overrideOpts.RendererMode} | MSAA: {(overrideOpts.MsaaSamples <= 1 ? "Off" : $"{overrideOpts.MsaaSamples}x")} | Target FPS: {(overrideOpts.TargetFps == 0 ? "Uncapped" : $"{overrideOpts.TargetFps} FPS (PS2 Locked)")} | Timers: {(useRealTimeTimers ? "Real-Time (576kHz wall-clock, <=66.67ms)" : "Fixed 60Hz (9600 ticks/frame)")} | FPS-Independence: {(overrideOpts.EnableFramerateIndependence ? "ON" : "OFF")}");
+
+        if (!string.IsNullOrEmpty(scanFpsDepsPath))
+        {
+            return RunFpsDependenceComparison(elfPath, dvdPath, scanFpsDepsPath, maxFrames, autoStartFrame, overrideOpts, debugHooks);
+        }
 
         if (headless)
         {
-            return RunExecution(elfPath, dvdPath, traceBinaryPath, maxTraceRecords, maxFrames, autoStartFrame, snapshotFrame, overrideOpts, dumpVram, debugHooks, profileEe, useRealTimeTimers, window: null, gl: null, input: null);
+            return RunExecution(elfPath, dvdPath, traceBinaryPath, recordInputsPath, replaySchedule: null, passCapture: null, maxTraceRecords, maxFrames, autoStartFrame, snapshotFrame, overrideOpts, dumpVram, debugHooks, profileEe, useRealTimeTimers, window: null, gl: null, input: null);
         }
 
         int winH = 448 * Math.Clamp(overrideOpts.ResolutionScale, 1, 4);
@@ -175,7 +200,7 @@ public static unsafe class Program
 
         try
         {
-            exitCode = RunExecution(elfPath, dvdPath, traceBinaryPath, maxTraceRecords, maxFrames, autoStartFrame, snapshotFrame, overrideOpts, dumpVram, debugHooks, profileEe, useRealTimeTimers, window, gl, input);
+            exitCode = RunExecution(elfPath, dvdPath, traceBinaryPath, recordInputsPath, replaySchedule: null, passCapture: null, maxTraceRecords, maxFrames, autoStartFrame, snapshotFrame, overrideOpts, dumpVram, debugHooks, profileEe, useRealTimeTimers, window, gl, input);
         }
         finally
         {
@@ -187,10 +212,110 @@ public static unsafe class Program
         return exitCode;
     }
 
+    private static int RunFpsDependenceComparison(
+        string elfPath,
+        string? dvdPath,
+        string scanFpsDepsPath,
+        int maxFrames,
+        int autoStartFrame,
+        OverrideOptions baseOpts,
+        bool debugHooks)
+    {
+        List<RecordedFrameInputSample> rawRecording;
+        if (scanFpsDepsPath == "__SYNTHETIC__" || !File.Exists(scanFpsDepsPath))
+        {
+            int sliceCount30Hz = maxFrames > 0 ? maxFrames : 90; // Default 3.0 seconds (90 ticks @ 30 Hz)
+            Console.WriteLine($"[FPS-DEPS SCAN] Generating synthetic 30 Hz input scenario ({sliceCount30Hz} ticks = {sliceCount30Hz / 30.0:F2}s, holding D-Pad Down + Start pulse)...");
+            rawRecording = new List<RecordedFrameInputSample>(sliceCount30Hz);
+            for (int i = 0; i < sliceCount30Hz; i++)
+            {
+                var btns = Ps2PadButtons.None;
+                if (autoStartFrame > 0 && i >= autoStartFrame && i <= autoStartFrame + 3)
+                    btns |= Ps2PadButtons.Start;
+                if (i >= 15)
+                    btns |= Ps2PadButtons.Down;
+                rawRecording.Add(new RecordedFrameInputSample(19_200u, btns, 0x80, 0x80, 0x80, 0x80));
+            }
+        }
+        else
+        {
+            rawRecording = FpsDependenceScanner.LoadRecording(scanFpsDepsPath);
+            double totalSec = rawRecording.Sum(s => (long)s.TimerTicks576kHz) / (double)MmioRouter.Timer1TicksPerSecond;
+            Console.WriteLine($"[FPS-DEPS SCAN] Loaded '{scanFpsDepsPath}': {rawRecording.Count} recorded frame(s) ({totalSec:F2}s of gameplay).");
+        }
+
+        var timeline30Hz = FpsDependenceScanner.NormalizeTo30HzTimeline(rawRecording);
+        if (maxFrames > 0 && timeline30Hz.Count > maxFrames)
+        {
+            timeline30Hz = timeline30Hz.Take(maxFrames).ToList();
+        }
+
+        var schedule30Fps = FpsDependenceScanner.BuildPassSchedule(timeline30Hz, subStepsPer30Hz: 1, simulateVariableFpsDrops: false);
+        var schedule120Fps = FpsDependenceScanner.BuildPassSchedule(timeline30Hz, subStepsPer30Hz: 4, simulateVariableFpsDrops: false);
+        var scheduleVarFps = FpsDependenceScanner.BuildPassSchedule(timeline30Hz, subStepsPer30Hz: 2, simulateVariableFpsDrops: true);
+
+        const int DataBssBytes = (int)(RuntimeDispatcher.DataWatchLimit - RuntimeDispatcher.DataWatchBase);
+        const int DataBssWords = DataBssBytes >> 2;
+
+        var pass30Capture = new FpsDependenceScanner.PassCaptureResult
+        {
+            PassName = "Pass A (30 FPS Baseline)",
+            TotalFramesExecuted = schedule30Fps.Count,
+            TotalTimerTicks = (uint)schedule30Fps.Sum(s => (long)s.TimerTicks576kHz),
+            InitialDataBss = new byte[DataBssBytes],
+            FinalDataBss = new byte[DataBssBytes],
+            WriterPcTable = new uint[DataBssWords]
+        };
+
+        var pass120Capture = new FpsDependenceScanner.PassCaptureResult
+        {
+            PassName = "Pass B (120 FPS High-Rate)",
+            TotalFramesExecuted = schedule120Fps.Count,
+            TotalTimerTicks = (uint)schedule120Fps.Sum(s => (long)s.TimerTicks576kHz),
+            InitialDataBss = new byte[DataBssBytes],
+            FinalDataBss = new byte[DataBssBytes],
+            WriterPcTable = new uint[DataBssWords]
+        };
+
+        var passVarCapture = new FpsDependenceScanner.PassCaptureResult
+        {
+            PassName = "Pass C (Variable 30..120 FPS Drops)",
+            TotalFramesExecuted = scheduleVarFps.Count,
+            TotalTimerTicks = (uint)scheduleVarFps.Sum(s => (long)s.TimerTicks576kHz),
+            InitialDataBss = new byte[DataBssBytes],
+            FinalDataBss = new byte[DataBssBytes],
+            WriterPcTable = new uint[DataBssWords]
+        };
+
+        var runOpts = new OverrideOptions
+        {
+            ResolutionScale = 1,
+            RendererMode = GsRendererMode.Software,
+            TargetFps = 0,
+            EnableFramerateIndependence = baseOpts.EnableFramerateIndependence
+        };
+
+        Console.WriteLine($"\n[FPS-DEPS SCAN] Running {pass30Capture.PassName} ({schedule30Fps.Count} frames @ 33.33ms)...");
+        RunExecution(elfPath, dvdPath, traceBinaryPath: null, recordInputsPath: null, schedule30Fps, pass30Capture, 0, schedule30Fps.Count, 0, 0, runOpts, dumpVram: false, debugHooks, profileEe: false, useRealTimeTimers: true, window: null, gl: null, input: null);
+
+        Console.WriteLine($"\n[FPS-DEPS SCAN] Running {pass120Capture.PassName} ({schedule120Fps.Count} frames @ 8.33ms)...");
+        RunExecution(elfPath, dvdPath, traceBinaryPath: null, recordInputsPath: null, schedule120Fps, pass120Capture, 0, schedule120Fps.Count, 0, 0, runOpts, dumpVram: false, debugHooks, profileEe: false, useRealTimeTimers: true, window: null, gl: null, input: null);
+
+        Console.WriteLine($"\n[FPS-DEPS SCAN] Running {passVarCapture.PassName} ({scheduleVarFps.Count} frames @ variable 8.33ms..33.33ms)...");
+        RunExecution(elfPath, dvdPath, traceBinaryPath: null, recordInputsPath: null, scheduleVarFps, passVarCapture, 0, scheduleVarFps.Count, 0, 0, runOpts, dumpVram: false, debugHooks, profileEe: false, useRealTimeTimers: true, window: null, gl: null, input: null);
+
+        FpsDependenceScanner.CompareAndReport(pass30Capture, pass120Capture);
+        FpsDependenceScanner.CompareAndReport(pass30Capture, passVarCapture);
+        return 0;
+    }
+
     private static int RunExecution(
         string elfPath,
         string? dvdPath,
         string? traceBinaryPath,
+        string? recordInputsPath,
+        IReadOnlyList<RecordedFrameInputSample>? replaySchedule,
+        FpsDependenceScanner.PassCaptureResult? passCapture,
         int maxTraceRecords,
         int maxFrames,
         int autoStartFrame,
@@ -227,6 +352,7 @@ public static unsafe class Program
         }
 
         bool watchdogStop = false;
+        var inputRecorder = new FpsDependenceScanner();
         try
         {
             CastawayRuntime.LoadElfSegmentsToRam(elfPath, ram);
@@ -260,6 +386,16 @@ public static unsafe class Program
             if (traceRecorder != null)
             {
                 RuntimeDispatcher.SetTraceHandler(traceRecorder.OnTraceEvent);
+            }
+            if (!string.IsNullOrEmpty(recordInputsPath))
+            {
+                inputRecorder.StartRecording(recordInputsPath);
+            }
+            if (passCapture != null)
+            {
+                new ReadOnlySpan<byte>(ram + RuntimeDispatcher.DataWatchBase, passCapture.InitialDataBss.Length)
+                    .CopyTo(passCapture.InitialDataBss);
+                RuntimeDispatcher.DataWriteAttributionTable = passCapture.WriterPcTable;
             }
             long lastFrameTick = 0;
             var sw = Stopwatch.StartNew();
@@ -304,11 +440,25 @@ public static unsafe class Program
 
             if (window != null)
             {
-                Console.WriteLine("[HOTKEYS] F8=Cycle MSAA | F9=Toggle GL/Software | F10=Cycle Target FPS | F11=Capture Frame Snapshot (Snapshots/)");
+                Console.WriteLine("[HOTKEYS] F8=Cycle MSAA | F9=Toggle GL/Software | F10=Cycle Target FPS (30/60/120/Uncapped) | F11=Capture Frame Snapshot | F12=Record/Save Inputs (.inp)");
                 overrides.OnSnapshotRequested = () =>
                 {
                     Volatile.Write(ref snapshotArmed, true);
                     Console.WriteLine("\n[SNAPSHOT] Armed — will capture complete GL + PS2 Software reference + perf profile on next frame...\n");
+                };
+                overrides.OnRecordInputsToggleRequested = () =>
+                {
+                    if (inputRecorder.IsRecording)
+                    {
+                        inputRecorder.StopAndSave();
+                    }
+                    else
+                    {
+                        string path = !string.IsNullOrEmpty(recordInputsPath)
+                            ? recordInputsPath
+                            : Path.Combine("Recordings", $"session_{DateTime.Now:yyyyMMdd_HHmmss}_f{Volatile.Read(ref frameCount)}.inp");
+                        inputRecorder.StartRecording(path);
+                    }
                 };
             }
 
@@ -1236,31 +1386,40 @@ public static unsafe class Program
                 frameCount++;
                 ThrottleFrameRate(overrideOpts.TargetFps, ref lastFrameTick);
 
-                if (window == null)
+                if (replaySchedule != null && frameCount - 1 < replaySchedule.Count)
                 {
-                    if (autoStartFrame > 0 && frameCount >= autoStartFrame && frameCount <= autoStartFrame + 5)
-                    {
-                        var st = DualShock2State.Neutral;
-                        st.PressedButtons = Ps2PadButtons.Start;
-                        runtime.Pad.SetPortState(0, st);
-                    }
-                    else if (autoStartFrame > 0 && frameCount == autoStartFrame + 6)
-                    {
-                        runtime.Pad.SetPortState(0, DualShock2State.Neutral);
-                    }
-                    overrides.UpdateInput(runtime.Pad, input, r);
+                    var sample = replaySchedule[frameCount - 1];
+                    runtime.Mmio.QueueForcedFrameTimerTicks(sample.TimerTicks576kHz);
+                    runtime.Pad.SetPortState(0, sample.ToPadState());
                 }
-                foreach (var ai in _autoInputs)
+                else
                 {
-                    if (frameCount >= ai.Frame && frameCount <= ai.Frame + 5)
+                    if (window == null)
                     {
-                        var st = DualShock2State.Neutral;
-                        st.PressedButtons = ai.Button;
-                        runtime.Pad.SetPortState(0, st);
+                        if (autoStartFrame > 0 && frameCount >= autoStartFrame && frameCount <= autoStartFrame + 5)
+                        {
+                            var st = DualShock2State.Neutral;
+                            st.PressedButtons = Ps2PadButtons.Start;
+                            runtime.Pad.SetPortState(0, st);
+                        }
+                        else if (autoStartFrame > 0 && frameCount == autoStartFrame + 6)
+                        {
+                            runtime.Pad.SetPortState(0, DualShock2State.Neutral);
+                        }
+                        overrides.UpdateInput(runtime.Pad, input, r);
                     }
-                    else if (frameCount == ai.Frame + 6)
+                    foreach (var ai in _autoInputs)
                     {
-                        runtime.Pad.SetPortState(0, DualShock2State.Neutral);
+                        if (frameCount >= ai.Frame && frameCount <= ai.Frame + 5)
+                        {
+                            var st = DualShock2State.Neutral;
+                            st.PressedButtons = ai.Button;
+                            runtime.Pad.SetPortState(0, st);
+                        }
+                        else if (frameCount == ai.Frame + 6)
+                        {
+                            runtime.Pad.SetPortState(0, DualShock2State.Neutral);
+                        }
                     }
                 }
                 runtime.PumpPadSubsystem(c, r);
@@ -1292,6 +1451,10 @@ public static unsafe class Program
 
                 // Advance hardware timers (real-time wall-clock delta or fixed 16.667 ms) and fire INTC_TIM0/TIM1 once per frame
                 runtime.Kernel.StepFrameTimers(c, r);
+                if (inputRecorder.IsRecording)
+                {
+                    inputRecorder.RecordFrame(runtime.Mmio.LastFrameTimerTicks, runtime.Pad.GetPortState(0));
+                }
                 if (!runtime.Audio.IsRealtimeAudioActive)
                     runtime.Audio.StepMixSamples(800);
 
@@ -1355,6 +1518,29 @@ public static unsafe class Program
                 Volatile.Write(ref frameUpdateStartMs, sw.ElapsedMilliseconds);
                 Volatile.Write(ref inApplicationUpdateFrame, true);
                 long updateStartMs = sw.ElapsedMilliseconds;
+                bool trackSpike = _spikeThresholdMs > 0.0 && frameCount > 30;
+                long spStartTicks = 0, spDmaTot = 0, spDmaVif1 = 0, spDmaGif = 0, spVif1 = 0, spVu1 = 0, spGif = 0, spTrx = 0, spSoftTri = 0, spSoftSpr = 0, spFlushes = 0;
+                int spGc0 = 0, spGc1 = 0, spGc2 = 0;
+                if (trackSpike)
+                {
+                    spStartTicks = Stopwatch.GetTimestamp();
+                    spGc0 = GC.CollectionCount(0);
+                    spGc1 = GC.CollectionCount(1);
+                    spGc2 = GC.CollectionCount(2);
+                    spFlushes = graphics.Gs.DeferredH2lFlushes;
+                    if (envProfile)
+                    {
+                        spDmaTot = runtime.Dma.TotalDmaTicks;
+                        spDmaVif1 = runtime.Dma.TotalDmaVif1Ticks;
+                        spDmaGif = runtime.Dma.TotalDmaGifTicks;
+                        spVif1 = graphics.Vif1.TotalProcessingTicks;
+                        spVu1 = graphics.Vu1.TotalExecutionTicks;
+                        spGif = graphics.Gs.TotalSubmitGifTicks;
+                        spTrx = graphics.Gs.TotalVramTransferTicks;
+                        spSoftTri = graphics.Gs.TotalRasterizeTriangleTicks;
+                        spSoftSpr = graphics.Gs.TotalRasterizeSpriteTicks;
+                    }
+                }
                 try
                 {
                     RecompiledFunctions.sub_003E2940(c, r);
@@ -1363,6 +1549,34 @@ public static unsafe class Program
                 {
                     Volatile.Write(ref inApplicationUpdateFrame, false);
                     Volatile.Write(ref activeFrameCtxPtr, 0);
+                    if (trackSpike)
+                    {
+                        double tickToMs = 1000.0 / Stopwatch.Frequency;
+                        double spMs = (Stopwatch.GetTimestamp() - spStartTicks) * tickToMs;
+                        if (spMs >= _spikeThresholdMs)
+                        {
+                            int dg0 = GC.CollectionCount(0) - spGc0;
+                            int dg1 = GC.CollectionCount(1) - spGc1;
+                            int dg2 = GC.CollectionCount(2) - spGc2;
+                            long dFlush = graphics.Gs.DeferredH2lFlushes - spFlushes;
+                            if (envProfile)
+                            {
+                                double dDma = (runtime.Dma.TotalDmaTicks - spDmaTot) * tickToMs;
+                                double dEeExcl = Math.Max(0.0, spMs - dDma);
+                                double dVif1 = (graphics.Vif1.TotalProcessingTicks - spVif1) * tickToMs;
+                                double dVu1 = (graphics.Vu1.TotalExecutionTicks - spVu1) * tickToMs;
+                                double dGif = (graphics.Gs.TotalSubmitGifTicks - spGif) * tickToMs;
+                                double dTrx = (graphics.Gs.TotalVramTransferTicks - spTrx) * tickToMs;
+                                double dSTri = (graphics.Gs.TotalRasterizeTriangleTicks - spSoftTri) * tickToMs;
+                                double dSSpr = (graphics.Gs.TotalRasterizeSpriteTicks - spSoftSpr) * tickToMs;
+                                Console.WriteLine($"[SPIKE f={frameCount} t={sw.Elapsed.TotalSeconds:F2}s] Update={spMs:F2}ms RB={Volatile.Read(ref lastRenderBatchMs)}ms | EeExcl={dEeExcl:F2} Dma={dDma:F2} Vif1={dVif1:F2}(Vu1={dVu1:F2}) Gif={dGif:F2} Trx={dTrx:F2} SoftTri={dSTri:F2} SoftSpr={dSSpr:F2} | GC={dg0}/{dg1}/{dg2} Flushes={dFlush} Calls={graphics.BackBatch.DrawCallCount} Vtx={graphics.BackBatch.VertexCount} Tex={graphics.BackBatch.Textures.Count}");
+                            }
+                            else
+                            {
+                                Console.WriteLine($"[SPIKE f={frameCount} t={sw.Elapsed.TotalSeconds:F2}s] Update={spMs:F2}ms RB={Volatile.Read(ref lastRenderBatchMs)}ms | GC={dg0}/{dg1}/{dg2} Flushes={dFlush} Calls={graphics.BackBatch.DrawCallCount} Vtx={graphics.BackBatch.VertexCount} Tex={graphics.BackBatch.Textures.Count}");
+                            }
+                        }
+                    }
                     if (activeSnapshot != null)
                     {
                         Volatile.Write(ref activeSamplerSnapshot, null);
@@ -1463,7 +1677,7 @@ public static unsafe class Program
                     Console.WriteLine($"[GL PERF f={frameCount}] Update={updateMs}ms RB={Volatile.Read(ref lastRenderBatchMs)}ms | 60fTotals(ms): Vif1={dVif1:F0} Vu1={dVu1:F0} Gif={dGif:F0} Trx={dTrx:F0} SoftTri={dSoftTri:F0} SoftSpr={dSoftSpr:F0}({dSprCount}) | Vif1Det: Unp={dVif1Unp:F0} McExcl={dVif1McExcl:F0} Oth={dVif1Other:F0} xfer={dXfers} B={dBytes} UF={dUF} US={dUS} SF={dSF} SS={dSS} SB={dSB} | Calls={graphics.FrontBatch.DrawCallCount} Vtx={graphics.FrontBatch.VertexCount} Tex={graphics.FrontBatch.Textures.Count} | FPS={currentFps:F1}");
                     if (envProfile && frameCount == 1500)
                     {
-                        Console.WriteLine($"[GS CACHE STATS f=1500] FastPacked={graphics.Gs.FastPackedStripsHit} ({graphics.Gs.FastPackedVertsHit} vtx) GenericPacked={graphics.Gs.GenericPackedTags} | H2lDedup Hit={graphics.Gs.H2lDedupHits} Miss={graphics.Gs.H2lDedupMisses}");
+                        Console.WriteLine($"[GS CACHE STATS f=1500] FastPacked={graphics.Gs.FastPackedStripsHit} ({graphics.Gs.FastPackedVertsHit} vtx) GenericPacked={graphics.Gs.GenericPackedTags} | H2lDedup Hit={graphics.Gs.H2lDedupHits} Miss={graphics.Gs.H2lDedupMisses} Flushes={graphics.Gs.DeferredH2lFlushes}(GetTex={graphics.Gs.DeferredH2lFlushesGetTex},H2l={graphics.Gs.DeferredH2lFlushesH2l}) Active={graphics.Gs.DeferredH2lActiveCount} ClutHit={graphics.Gs.DeferredClutHits} ClutMiss={graphics.Gs.DeferredClutMisses}");
                     }
                 }
 
@@ -1558,6 +1772,15 @@ public static unsafe class Program
 
                 if (maxFrames > 0 && frameCount >= maxFrames)
                 {
+                    if (passCapture != null)
+                    {
+                        new ReadOnlySpan<byte>(r + RuntimeDispatcher.DataWatchBase, passCapture.FinalDataBss.Length)
+                            .CopyTo(passCapture.FinalDataBss);
+                        Console.WriteLine($"[FPS-DEPS SCAN] {passCapture.PassName} captured after {frameCount} frames.");
+                        Ps2Memory.Write32(c, r, appPtr + 36u, 1u);
+                        runtime.Kernel.ShutdownThreads();
+                        throw new OperationCanceledException("PS2 worker thread shutdown");
+                    }
                     Console.WriteLine("\n================================================================================");
                     Console.WriteLine($">>> [SHUTDOWN SEQUENCE INITIATED] (Target frame limit of {maxFrames} frames reached)");
                     Console.WriteLine(">>> Note: Any logs below this line are SLUS_216.64 TEARDOWN & CLEANUP, NOT gameplay!");
@@ -1629,6 +1852,11 @@ public static unsafe class Program
         }
         finally
         {
+            if (inputRecorder.IsRecording)
+            {
+                inputRecorder.StopAndSave();
+            }
+            RuntimeDispatcher.DataWriteAttributionTable = null;
             Volatile.Write(ref watchdogStop, true);
             RuntimeDispatcher.SetTraceHandler(null);
             runtime.Kernel.ShutdownThreads();

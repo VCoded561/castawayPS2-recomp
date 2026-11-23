@@ -154,14 +154,22 @@ public static class GsSwizzle
         }
     };
 
-    // Precomputed hardware-accurate offset tables for 32-bit (32x64), 32Z (32x64), 8-bit (64x128), and 4-bit (128x128) page swizzling
+    // Precomputed hardware-accurate offset tables for 32-bit (32x64), 32Z (32x64), 16-bit (64x64), 8-bit (64x128), and 4-bit (128x128) page swizzling
     private static readonly ushort[] OffsetTable32 = new ushort[32 * 64];
     private static readonly ushort[] OffsetTable32Z = new ushort[32 * 64];
+    private static readonly ushort[] OffsetTable16 = new ushort[64 * 64];
+    private static readonly ushort[] OffsetTable16S = new ushort[64 * 64];
+    private static readonly ushort[] OffsetTableZ16 = new ushort[64 * 64];
+    private static readonly ushort[] OffsetTableZ16S = new ushort[64 * 64];
     private static readonly ushort[] OffsetTable8 = new ushort[64 * 128];
     private static readonly ushort[] OffsetTable4 = new ushort[128 * 128];
 
     internal static ReadOnlySpan<ushort> OffsetTable32Span => OffsetTable32;
     internal static ReadOnlySpan<ushort> OffsetTable32ZSpan => OffsetTable32Z;
+    internal static ReadOnlySpan<ushort> OffsetTable16Span => OffsetTable16;
+    internal static ReadOnlySpan<ushort> OffsetTable16SSpan => OffsetTable16S;
+    internal static ReadOnlySpan<ushort> OffsetTableZ16Span => OffsetTableZ16;
+    internal static ReadOnlySpan<ushort> OffsetTableZ16SSpan => OffsetTableZ16S;
     internal static ReadOnlySpan<ushort> OffsetTable8Span => OffsetTable8;
     internal static ReadOnlySpan<ushort> OffsetTable4Span => OffsetTable4;
 
@@ -178,6 +186,23 @@ public static class GsSwizzle
                 int wordInBlock = ColumnWordTable32[py + (x & 7)];
                 OffsetTable32[(y << 6) | x] = (ushort)(((blockInPage << 6) + wordInBlock) << 2);
                 OffsetTable32Z[(y << 6) | x] = (ushort)((((blockInPage ^ 0x18) << 6) + wordInBlock) << 2);
+            }
+        }
+        // Build PSMCT16 / PSMCT16S / PSMZ16 / PSMZ16S offset tables (64 rows x 64 columns, byte offset inside an 8 KiB page)
+        for (int y = 0; y < 64; ++y)
+        {
+            int by = (y >> 3) << 2;
+            int py = (y & 7) << 4;
+            for (int x = 0; x < 64; ++x)
+            {
+                int blkIdx = by + (x >> 4);
+                int hwInBlock = ColumnHalfwordTable16[py + (x & 15)];
+                int hwBytes = hwInBlock << 1;
+                int idx = (y << 6) | x;
+                OffsetTable16[idx] = (ushort)((BlockTable16[blkIdx] << 8) + hwBytes);
+                OffsetTable16S[idx] = (ushort)((BlockTable16S[blkIdx] << 8) + hwBytes);
+                OffsetTableZ16[idx] = (ushort)((BlockTableZ16[blkIdx] << 8) + hwBytes);
+                OffsetTableZ16S[idx] = (ushort)((BlockTableZ16S[blkIdx] << 8) + hwBytes);
             }
         }
         // Build PSMT8 offset table (64 rows x 128 columns)
@@ -235,22 +260,12 @@ public static class GsSwizzle
     public static int GetPixelByteAddress16(int baseBlock, int bwPixels, int x, int y, bool is16S = false, bool isZ = false)
     {
         int pagesPerRow = Math.Max(1, bwPixels >> 6);
-        int pageX = x >> 6;
-        int pageY = y >> 6;
-        int pageBlockBase = baseBlock + (pageY * pagesPerRow + pageX) * 32;
-
-        int bx = (x & 63) >> 4;
-        int by = (y & 63) >> 3;
-        int blockInPage = isZ
-            ? (is16S ? BlockTableZ16S[(by << 2) + bx] : BlockTableZ16[(by << 2) + bx])
-            : (is16S ? BlockTable16S[(by << 2) + bx] : BlockTable16[(by << 2) + bx]);
-        int blockIdx = (pageBlockBase + blockInPage) & 0x3FFF;
-
-        int px = x & 15;
-        int py = y & 7;
-        int halfwordInBlock = ColumnHalfwordTable16[(py << 4) + px];
-
-        return (((blockIdx << 7) + halfwordInBlock) << 1) & VramByteMask;
+        int pageAddr = (baseBlock << 8) + (((y >> 6) * pagesPerRow + (x >> 6)) << 13);
+        int idx = ((y & 63) << 6) | (x & 63);
+        int off = isZ
+            ? (is16S ? OffsetTableZ16S[idx] : OffsetTableZ16[idx])
+            : (is16S ? OffsetTable16S[idx] : OffsetTable16[idx]);
+        return (pageAddr + off) & VramByteMask;
     }
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]

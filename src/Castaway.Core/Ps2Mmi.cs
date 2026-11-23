@@ -142,6 +142,113 @@ public static unsafe class Ps2Mmi
         }
     }
 
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    public static int MaddVal(CpuContext* ctx, int a, int b)
+    {
+        long res = (long)CombineHiLo(ctx->HI, ctx->LO) + (long)a * b;
+        ctx->LO = SignExt32((uint)res);
+        ctx->HI = SignExt32((uint)(res >> 32));
+        return (int)res;
+    }
+
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    public static int MadduVal(CpuContext* ctx, uint a, uint b)
+    {
+        ulong res = CombineHiLo(ctx->HI, ctx->LO) + (ulong)a * b;
+        ctx->LO = SignExt32((uint)res);
+        ctx->HI = SignExt32((uint)(res >> 32));
+        return (int)res;
+    }
+
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    public static int MsubVal(CpuContext* ctx, int a, int b)
+    {
+        long res = (long)CombineHiLo(ctx->HI, ctx->LO) - (long)a * b;
+        ctx->LO = SignExt32((uint)res);
+        ctx->HI = SignExt32((uint)(res >> 32));
+        return (int)res;
+    }
+
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    public static int MsubuVal(CpuContext* ctx, uint a, uint b)
+    {
+        ulong res = CombineHiLo(ctx->HI, ctx->LO) - (ulong)a * b;
+        ctx->LO = SignExt32((uint)res);
+        ctx->HI = SignExt32((uint)(res >> 32));
+        return (int)res;
+    }
+
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    public static int Madd1Val(CpuContext* ctx, int a, int b)
+    {
+        long res = (long)CombineHiLo(ctx->HI1, ctx->LO1) + (long)a * b;
+        ctx->LO1 = SignExt32((uint)res);
+        ctx->HI1 = SignExt32((uint)(res >> 32));
+        return (int)res;
+    }
+
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    public static int Maddu1Val(CpuContext* ctx, uint a, uint b)
+    {
+        ulong res = CombineHiLo(ctx->HI1, ctx->LO1) + (ulong)a * b;
+        ctx->LO1 = SignExt32((uint)res);
+        ctx->HI1 = SignExt32((uint)(res >> 32));
+        return (int)res;
+    }
+
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    public static int Mult1Val(CpuContext* ctx, int a, int b)
+    {
+        long res = (long)a * b;
+        ctx->LO1 = SignExt32((uint)res);
+        ctx->HI1 = SignExt32((uint)(res >> 32));
+        return (int)res;
+    }
+
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    public static int Multu1Val(CpuContext* ctx, uint a, uint b)
+    {
+        ulong res = (ulong)a * b;
+        ctx->LO1 = SignExt32((uint)res);
+        ctx->HI1 = SignExt32((uint)(res >> 32));
+        return (int)res;
+    }
+
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    public static void Div1Val(CpuContext* ctx, int dividend, int divisor)
+    {
+        if (divisor == 0)
+        {
+            ctx->LO1 = dividend < 0 ? 1UL : 0xFFFFFFFFFFFFFFFFUL;
+            ctx->HI1 = (ulong)(long)dividend;
+        }
+        else if (divisor == -1 && dividend == int.MinValue)
+        {
+            ctx->LO1 = unchecked((ulong)(long)int.MinValue);
+            ctx->HI1 = 0UL;
+        }
+        else
+        {
+            ctx->LO1 = (ulong)(long)(dividend / divisor);
+            ctx->HI1 = (ulong)(long)(dividend % divisor);
+        }
+    }
+
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    public static void Divu1Val(CpuContext* ctx, uint dividend, uint divisor)
+    {
+        if (divisor == 0)
+        {
+            ctx->LO1 = 0xFFFFFFFFFFFFFFFFUL;
+            ctx->HI1 = SignExt32(dividend);
+        }
+        else
+        {
+            ctx->LO1 = SignExt32(dividend / divisor);
+            ctx->HI1 = SignExt32(dividend % divisor);
+        }
+    }
+
     // =========================================================================
     // PLZCW — Parallel Leading Zero/One Count Word
     // =========================================================================

@@ -802,17 +802,21 @@ public sealed unsafe class Spu2AudioService : IDisposable
                 }
 
                 float lVolL = _voices[chL].VolL / 16384.0f;
-                float lVolR = _voices[chL].VolR / 16384.0f;
-                mixAccum[f * 2] += (int)(leftSample * lVolL);
-                mixAccum[f * 2 + 1] += (int)(leftSample * lVolR);
-
-                if (slot.Channels >= 2)
+                if (slot.Channels <= 1)
                 {
+                    float lVolR = _voices[chL].VolR / 16384.0f;
+                    mixAccum[f * 2] += (int)(leftSample * lVolL);
+                    mixAccum[f * 2 + 1] += (int)(leftSample * lVolR);
+                }
+                else
+                {
+                    // SLUS_216.64 (0x00430080 / 0x004391C8) sends the same (volL, volR) pair to both
+                    // chL and chR of a 2-channel stereo stream. Keep left/right channels separated
+                    // instead of summing both channels into both speakers (mono collapse + 2x gain).
+                    mixAccum[f * 2] += (int)(leftSample * lVolL);
                     if (ReadStreamSample(slot, slot.Right, 1, step, out float rightSample))
                     {
-                        float rVolL = _voices[chR].VolL / 16384.0f;
                         float rVolR = _voices[chR].VolR / 16384.0f;
-                        mixAccum[f * 2] += (int)(rightSample * rVolL);
                         mixAccum[f * 2 + 1] += (int)(rightSample * rVolR);
                     }
                 }
@@ -932,18 +936,20 @@ public sealed unsafe class Spu2AudioService : IDisposable
     }
 
     /// <summary>
-    /// Decodes a PS2 SPU2 / EA MultiStream 15-bit volume halfword into signed linear gain [-16384, +16383].
-    /// Values 0x0000..0x3FFF are positive (+0..+16383); values 0x4000..0x7FFF represent inverted phase
-    /// encoded by 0x0046AE28 as (0x7FFF - magnitude), where 0x7FFF is attenuated zero (-0) and 0x4000 is -16383.
-    /// Negative 16-bit signed values are clamped to [-16384, 0] for caller/test compatibility.
+    /// Decodes a PS2 SPU2 / EA MultiStream 15-bit volume halfword into in-phase linear gain [0, 16383].
+    /// Values 0x0000..0x3FFF are positive (+0..+16383); values 0x4000..0x7FFF are Dolby Pro Logic II
+    /// inverted-phase rear-surround volumes encoded by 0x0024B8B0 / 0x004154F0 / 0x0046AE28 as
+    /// (0x7FFF - magnitude), where 0x7FFF is attenuated zero (-0) and 0x4000 is full rear magnitude (16383).
+    /// Returning positive magnitude cleanly downmixes Pro Logic II to PC stereo without 180° interaural
+    /// phase cancellation or hollow rear-hemisphere directionality.
     /// </summary>
     private static short DecodeSpu2Vol(ushort raw)
     {
         int signed16 = (short)raw;
         if (signed16 < 0)
-            return (short)Math.Clamp(signed16, -16384, 0);
+            return (short)Math.Min(-signed16, 0x3FFF);
         if (signed16 >= 0x4000)
-            return (short)-(0x7FFF - signed16);
+            return (short)(0x7FFF - signed16);
         return (short)signed16;
     }
 
@@ -1407,6 +1413,8 @@ public sealed unsafe class Spu2AudioService : IDisposable
                         if ((uint)ch2 < VoiceCount)
                         {
                             _streams[slotIdx].SpuChRight = ch2;
+                            if (ch2 != ch1 && _streams[slotIdx].Channels < 2)
+                                _streams[slotIdx].Channels = 2;
                             if (hwCount >= 5)
                             {
                                 short volL2 = DecodeSpu2Vol(ArgU16(argsBytes, 3));

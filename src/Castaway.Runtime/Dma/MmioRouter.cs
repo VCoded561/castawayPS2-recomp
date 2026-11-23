@@ -13,6 +13,15 @@ public sealed unsafe class MmioRouter
     public const uint FixedTimerTicksPerFrame = 9_600u;
     /// <summary>Max real-time frame timer advance (66.67 ms / 15 FPS floor, matching SLUS_216.64 sub_001BF008).</summary>
     public const uint MaxRealTimeTimerTicksPerFrame = 38_400u;
+    /// <summary>
+    /// Host wall-clock threshold (150 ms) above which a frame delay is classified as an asset-streaming
+    /// stall, DVD/ARC load hitch, or OS window freeze rather than gameplay time. On a spike above this
+    /// threshold, the timer advances by a single nominal 30 Hz step (19,200 ticks = 33.333 ms) instead
+    /// of burning a large chunk of gameplay time on a frozen frame.
+    /// </summary>
+    public const double StallFreezeThresholdSeconds = 0.150;
+    /// <summary>Nominal 30 Hz frame ticks (33.333 ms) applied when recovering from a stall/freeze.</summary>
+    public const uint StallRecoveryTimerTicks = 19_200u;
 
     private readonly EeKernel _kernel;
     private readonly DmaController _dma;
@@ -26,6 +35,7 @@ public sealed unsafe class MmioRouter
     private bool _hasRealTimeBaseline;
     private long _lastTimerHostTick;
     private long _realTimeTickRemainderNum;
+    private uint? _pendingForcedTimerTicks;
 
     /// <summary>
     /// When true, <see cref="StepFrameTimers"/> advances EE timers proportionally to real elapsed
@@ -36,6 +46,24 @@ public sealed unsafe class MmioRouter
 
     /// <summary>Timer ticks applied during the most recent <see cref="StepFrameTimers"/> call.</summary>
     public uint LastFrameTimerTicks { get; private set; }
+
+    /// <summary>
+    /// Exact frame delta in seconds corresponding to <see cref="LastFrameTimerTicks"/>
+    /// (<c>LastFrameTimerTicks / 576000.0f</c>), used by framerate-independence hooks and input recording.
+    /// </summary>
+    public float LastFrameDeltaSeconds => LastFrameTimerTicks / (float)Timer1TicksPerSecond;
+
+    /// <summary>True if the most recent frame experienced a host stall/freeze (&gt;= 150 ms) and was clamped.</summary>
+    public bool LastFrameWasStallClamped { get; private set; }
+
+    /// <summary>
+    /// Forces the next <see cref="StepFrameTimers"/> call to advance by an exact number of 576 kHz ticks
+    /// (used during deterministic input replay and multi-rate --scan-fps-deps comparisons).
+    /// </summary>
+    public void QueueForcedFrameTimerTicks(uint ticks)
+    {
+        _pendingForcedTimerTicks = ticks;
+    }
 
     private uint _sifMscom;
     private uint _sifSmcom;
@@ -123,6 +151,16 @@ public sealed unsafe class MmioRouter
 
     private uint ComputeFrameTimerTicks()
     {
+        LastFrameWasStallClamped = false;
+
+        if (_pendingForcedTimerTicks.HasValue)
+        {
+            uint forced = _pendingForcedTimerTicks.Value;
+            _pendingForcedTimerTicks = null;
+            _lastTimerHostTick = _timestampProvider();
+            return forced;
+        }
+
         if (!UseRealTimeTimers)
         {
             _hasRealTimeBaseline = false;
@@ -142,10 +180,14 @@ public sealed unsafe class MmioRouter
         long elapsedHostTicks = Math.Max(0L, now - _lastTimerHostTick);
         _lastTimerHostTick = now;
 
-        if (elapsedHostTicks >= _timestampFrequency)
+        // If a frame froze or stalled >= 150 ms (e.g. heavy DVD/ARC asset load, shader compile, or window drag),
+        // discard the freeze debt and advance by a single nominal 30 Hz step (33.333 ms) so gameplay does not jump.
+        long stallThresholdTicks = (long)(_timestampFrequency * StallFreezeThresholdSeconds);
+        if (elapsedHostTicks >= stallThresholdTicks)
         {
+            LastFrameWasStallClamped = true;
             _realTimeTickRemainderNum = 0;
-            return MaxRealTimeTimerTicksPerFrame;
+            return StallRecoveryTimerTicks;
         }
 
         Int128 totalNum = (Int128)elapsedHostTicks * Timer1TicksPerSecond + _realTimeTickRemainderNum;
@@ -158,7 +200,7 @@ public sealed unsafe class MmioRouter
 
         uint wholeTicks = (uint)(totalNum / _timestampFrequency);
         _realTimeTickRemainderNum = (long)(totalNum % _timestampFrequency);
-        return wholeTicks;
+        return Math.Max(1u, wholeTicks);
     }
 
     public uint ReadSifReg(uint reg)

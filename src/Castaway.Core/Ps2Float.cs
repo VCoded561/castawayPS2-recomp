@@ -166,19 +166,8 @@ public readonly struct Ps2Float
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public static float Div(float a, float b)
     {
-        uint ub = BitConverter.SingleToUInt32Bits(b) & MagMask;
-        if (ub - 0x00800000u < 0x7F000000u)
-        {
-            uint ua = BitConverter.SingleToUInt32Bits(a) & MagMask;
-            if (ua == 0u || ua - 0x00800000u < 0x7F000000u)
-            {
-                float r = a / b;
-                uint ur = BitConverter.SingleToUInt32Bits(r) & MagMask;
-                if (ur == 0u || ur - 0x00800000u < 0x7F000000u)
-                    return r;
-            }
-        }
-        return DivSlow(a, b);
+        float r = a / b;
+        return float.IsFinite(r) ? r : DivSlow(a, b);
     }
 
     [MethodImpl(MethodImplOptions.NoInlining)]
@@ -194,10 +183,8 @@ public readonly struct Ps2Float
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public static float Sqrt(float a)
     {
-        uint ua = BitConverter.SingleToUInt32Bits(a);
-        if (ua - 0x00800000u < 0x7F000000u)
-            return MathF.Sqrt(a);
-        return SqrtSlow(a);
+        float r = MathF.Sqrt(a);
+        return float.IsFinite(r) ? r : SqrtSlow(a);
     }
 
     [MethodImpl(MethodImplOptions.NoInlining)]
@@ -214,19 +201,8 @@ public readonly struct Ps2Float
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public static float Rsqrt(float a, float b)
     {
-        uint ub = BitConverter.SingleToUInt32Bits(b);
-        if (ub - 0x00800000u < 0x7F000000u)
-        {
-            uint ua = BitConverter.SingleToUInt32Bits(a) & MagMask;
-            if (ua == 0u || ua - 0x00800000u < 0x7F000000u)
-            {
-                float r = a / MathF.Sqrt(b);
-                uint ur = BitConverter.SingleToUInt32Bits(r) & MagMask;
-                if (ur == 0u || ur - 0x00800000u < 0x7F000000u)
-                    return r;
-            }
-        }
-        return RsqrtSlow(a, b);
+        float r = a / MathF.Sqrt(b);
+        return float.IsFinite(r) ? r : RsqrtSlow(a, b);
     }
 
     [MethodImpl(MethodImplOptions.NoInlining)]
@@ -312,15 +288,8 @@ public readonly struct Ps2Float
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public static bool CompareEq(float a, float b)
     {
-        if (MathF.Abs(a) >= MinNormalFloat || MathF.Abs(b) >= MinNormalFloat)
-        {
-            if (a == b) return true;
-            if (a < b || a > b) return false;
-        }
-        else if (MathF.Abs(a) < MinNormalFloat && MathF.Abs(b) < MinNormalFloat)
-        {
-            return true;
-        }
+        if (a == b) return true;
+        if (a < b || a > b) return false;
         return CompareEqSlow(a, b);
     }
 
@@ -330,15 +299,8 @@ public readonly struct Ps2Float
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public static bool CompareLt(float a, float b)
     {
-        if (MathF.Abs(a) >= MinNormalFloat || MathF.Abs(b) >= MinNormalFloat)
-        {
-            if (a < b) return true;
-            if (a >= b) return false;
-        }
-        else if (MathF.Abs(a) < MinNormalFloat && MathF.Abs(b) < MinNormalFloat)
-        {
-            return false;
-        }
+        if (a < b) return true;
+        if (a >= b) return false;
         return CompareLtSlow(a, b);
     }
 
@@ -348,15 +310,8 @@ public readonly struct Ps2Float
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public static bool CompareLe(float a, float b)
     {
-        if (MathF.Abs(a) >= MinNormalFloat || MathF.Abs(b) >= MinNormalFloat)
-        {
-            if (a <= b) return true;
-            if (a > b) return false;
-        }
-        else if (MathF.Abs(a) < MinNormalFloat && MathF.Abs(b) < MinNormalFloat)
-        {
-            return true;
-        }
+        if (a <= b) return true;
+        if (a > b) return false;
         return CompareLeSlow(a, b);
     }
 

@@ -1,4 +1,5 @@
 using System.Runtime.CompilerServices;
+using System.Runtime.InteropServices;
 using System.Runtime.Intrinsics;
 
 namespace Castaway.Core;
@@ -45,6 +46,30 @@ public static unsafe class RuntimeDispatcher
     public static uint CurrentDmaRa;
     public static uint CurrentDmaAddr;
 
+    // Optional .data/.bss write attribution table used by --scan-fps-deps to identify which guest function
+    // modified any diverging global/static address (0x00490000..0x005B96D8). Null during normal execution.
+    // Note: 0x005B96D8 is EeKernel.HeapBase, so 0x00490000..0x005B96D8 covers strictly static .data/.bss!
+    public const uint DataWatchBase = 0x00490000u;
+    public const uint DataWatchLimit = 0x005B96D8u;
+    public static uint[]? DataWriteAttributionTable;
+
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    public static void RecordDataWriteIfActive(CpuContext* ctx, uint vaddr)
+    {
+        var table = DataWriteAttributionTable;
+        if (table != null && ctx != null)
+        {
+            uint phys = vaddr & 0x01FFFFFFu;
+            uint off = phys - DataWatchBase;
+            if (off < DataWatchLimit - DataWatchBase)
+            {
+                uint idx = off >> 2;
+                if (idx < (uint)table.Length && ctx->PC != 0)
+                    table[idx] = ctx->PC;
+            }
+        }
+    }
+
     // Fast memory mapped pointers for VU0 (4K/4K) and VU1 (16K/16K)
     public static byte* Vu0Micro;
     public static byte* Vu0Data;
@@ -80,8 +105,11 @@ public static unsafe class RuntimeDispatcher
     public static void ClearHooks()
     {
         Hooks.Clear();
-        Array.Clear(HookPageBits);
         Array.Clear(HookBitTable);
+        if (TracingActive)
+            Array.Fill(HookPageBits, ~0UL);
+        else
+            Array.Clear(HookPageBits);
         SlowPathActive = TraceHandler != null;
     }
 
@@ -89,6 +117,23 @@ public static unsafe class RuntimeDispatcher
     {
         TraceHandler = handler;
         TracingActive = handler != null;
+        if (TracingActive)
+        {
+            Array.Fill(HookPageBits, ~0UL);
+        }
+        else
+        {
+            Array.Clear(HookPageBits);
+            foreach (uint vaddr in Hooks.Keys)
+            {
+                uint off = vaddr - TextBase;
+                if (off < TextSize && (off & 3u) == 0)
+                {
+                    uint page = off >> 10;
+                    HookPageBits[page >> 6] |= 1UL << (int)page;
+                }
+            }
+        }
         SlowPathActive = Hooks.Count > 0 || TraceHandler != null;
     }
 
@@ -135,7 +180,15 @@ public static unsafe class RuntimeDispatcher
     public static bool CheckEntry(uint pc, CpuContext* ctx, byte* ram)
     {
         ctx->PC = pc;
-        return SlowPathActive && (TracingActive || HasHook(pc)) && CheckEntrySlow(pc, ctx, ram);
+        uint off = pc - TextBase;
+        if (off < TextSize)
+        {
+            uint page = off >> 10;
+            if ((Unsafe.Add(ref MemoryMarshal.GetArrayDataReference(HookPageBits), (nint)(page >> 6)) & (1UL << (int)page)) == 0)
+                return false;
+            return CheckEntrySlow(pc, ctx, ram);
+        }
+        return SlowPathActive && CheckEntrySlow(pc, ctx, ram);
     }
 
     [MethodImpl(MethodImplOptions.NoInlining)]
@@ -164,8 +217,14 @@ public static unsafe class RuntimeDispatcher
     public static void OnReturn(CpuContext* ctx, uint returnTarget)
     {
         if (TracingActive)
-            TraceHandler?.Invoke(ctx->PC, 1u, ctx); // 1 = FuncExit
+            OnReturnSlow(ctx);
         ctx->PC = returnTarget;
+    }
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private static void OnReturnSlow(CpuContext* ctx)
+    {
+        TraceHandler?.Invoke(ctx->PC, 1u, ctx); // 1 = FuncExit
     }
 
     private static int _missingDispatchLogs;

@@ -935,7 +935,7 @@ public sealed unsafe class EeKernel
         }
     }
 
-    public void ShutdownThreads(int waitTimeoutMs = 250)
+    public void ShutdownThreads(int waitTimeoutMs = 500)
     {
         _isShuttingDown = true;
         List<Thread> workersToJoin = new();
@@ -957,7 +957,7 @@ public sealed unsafe class EeKernel
                     }
                     catch { }
 
-                    if (kvp.Value.HostThread != null && kvp.Value.HostThread.IsAlive)
+                    if (kvp.Value.HostThread != null && kvp.Value.HostThread.IsAlive && kvp.Value.HostThread != Thread.CurrentThread)
                     {
                         workersToJoin.Add(kvp.Value.HostThread);
                     }
@@ -981,7 +981,7 @@ public sealed unsafe class EeKernel
                 if (!th.Join(waitTimeoutMs))
                 {
                     th.Interrupt();
-                    th.Join(50);
+                    th.Join(500);
                 }
             }
             catch

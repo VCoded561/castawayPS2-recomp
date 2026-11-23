@@ -237,15 +237,21 @@ public static class FrameSnapshotWriter
             ref readonly var c = ref batch.DrawCalls[i];
             ref readonly var dc = ref c.DrawContext;
             ulong texHash = (dc.TexIndex >= 0 && dc.TexIndex < batch.Textures.Count) ? batch.Textures[dc.TexIndex].Hash64 : 0ul;
-            GsGlVertex v0 = c.StartVertex < batch.VertexCount ? batch.Vertices[c.StartVertex] : default;
+            bool useIdx = c.IndexCount > 0 && c.StartIndex < batch.IndexCount;
+            GsGlVertex v0 = useIdx
+                ? batch.Vertices[(int)batch.Indices[c.StartIndex]]
+                : (c.StartVertex < batch.VertexCount ? batch.Vertices[c.StartVertex] : default);
 
             float minX = float.MaxValue, maxX = float.MinValue, minY = float.MaxValue, maxY = float.MinValue;
             float minR = float.MaxValue, maxR = float.MinValue, minG = float.MaxValue, maxG = float.MinValue;
             float minB = float.MaxValue, maxB = float.MinValue, minA = float.MaxValue, maxA = float.MinValue;
-            int end = Math.Min(batch.VertexCount, c.StartVertex + c.VertexCount);
-            for (int vi = c.StartVertex; vi < end; vi++)
+            int end = useIdx
+                ? Math.Min(batch.IndexCount, c.StartIndex + c.IndexCount)
+                : Math.Min(batch.VertexCount, c.StartVertex + c.VertexCount);
+            int start = useIdx ? c.StartIndex : c.StartVertex;
+            for (int vi = start; vi < end; vi++)
             {
-                ref readonly var v = ref batch.Vertices[vi];
+                ref readonly var v = ref (useIdx ? ref batch.Vertices[(int)batch.Indices[vi]] : ref batch.Vertices[vi]);
                 if (v.X < minX) minX = v.X;
                 if (v.X > maxX) maxX = v.X;
                 if (v.Y < minY) minY = v.Y;

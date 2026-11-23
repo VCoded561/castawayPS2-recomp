@@ -428,6 +428,8 @@ internal static class Vu1AotPrograms
         ushort vi1 = Unsafe.Add(ref vi, 1);
         float regQ = vu.Q;
         float regI = vu.I;
+        float regP = vu.P;
+        float regPendingP = vu.PendingP; _ = regPendingP;
         vi1 = vu.Top;
         vf3 = Ps2Vu0.BlendMask(vf3, Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, ((vi1 & 0x3FF)) << 4)), 0xEu);
         vf6 = Ps2Vu0.BlendMask(vf6, (vf3 * vf3), 0xEu);
@@ -441,7 +443,7 @@ internal static class Vu1AotPrograms
         vf4 = Ps2Vu0.BlendMask(vf4, (vf1 * vf1), 0xEu);
         { ref byte sq_8 = ref Unsafe.Add(ref dm, (0x6) << 4); Unsafe.WriteUnaligned(ref sq_8, vf3.AsUInt64().GetElement(0)); Unsafe.WriteUnaligned(ref Unsafe.Add(ref sq_8, 8), vf3.GetElement(2)); }
         vf5 = Ps2Vu0.BlendMask(vf5, (vf2 * vf2), 0xEu);
-        vu.P = vu.PendingP = Ps2Float.Sqrt(vf7.GetElement(3));
+        regP = Ps2Float.Sqrt(vf7.GetElement(3));
         acc = Ps2Vu0.BlendMask(acc, (Vf0 * Ps2Vu0.BroadcastBc(vf5, 0u)), 0x1u);
         { ref byte sq_10 = ref Unsafe.Add(ref dm, (0x7) << 4); Unsafe.WriteUnaligned(ref sq_10, vf2.AsUInt64().GetElement(0)); Unsafe.WriteUnaligned(ref Unsafe.Add(ref sq_10, 8), vf2.GetElement(2)); }
         acc = Ps2Vu0.BlendMask(acc, FmaAdd(Vf0, Ps2Vu0.BroadcastBc(vf5, 1u), acc), 0x1u);
@@ -449,19 +451,18 @@ internal static class Vu1AotPrograms
         vf7 = Ps2Vu0.BlendMask(vf7, FmaAdd(Vf0, Ps2Vu0.BroadcastBc(vf5, 2u), acc), 0x1u);
         { ref byte sq_12 = ref Unsafe.Add(ref dm, (0x9) << 4); Unsafe.WriteUnaligned(ref sq_12, vf9.AsUInt64().GetElement(0)); Unsafe.WriteUnaligned(ref Unsafe.Add(ref sq_12, 8), vf9.GetElement(2)); }
         acc = Ps2Vu0.BlendMask(acc, (Vf0 * Ps2Vu0.BroadcastBc(vf4, 0u)), 0x1u);
-        vu.P = vu.PendingP;
-        vu.PendingP = Ps2Float.Sqrt(vf7.GetElement(3));
+        regPendingP = Ps2Float.Sqrt(vf7.GetElement(3));
         acc = Ps2Vu0.BlendMask(acc, FmaAdd(Vf0, Ps2Vu0.BroadcastBc(vf4, 1u), acc), 0x1u);
-        vf8 = Ps2Vu0.BlendMask(vf8, Vector128.Create(vu.P), 0x1u);
+        vf8 = Ps2Vu0.BlendMask(vf8, Vector128.Create(regP), 0x1u);
         vf7 = Ps2Vu0.BlendMask(vf7, FmaAdd(Vf0, Ps2Vu0.BroadcastBc(vf4, 2u), acc), 0x1u);
         regQ = Vu1State.VuDivFast(1.0f, vf8.GetElement(3));
-        vu.P = vu.PendingP;
-        vu.PendingP = Ps2Float.Sqrt(vf7.GetElement(3));
+        regP = regPendingP;
+        regPendingP = Ps2Float.Sqrt(vf7.GetElement(3));
         vf3 = Ps2Vu0.BlendMask(vf3, (vf3 * Vector128.Create(regQ)), 0xEu);
-        vf8 = Ps2Vu0.BlendMask(vf8, Vector128.Create(vu.P), 0x1u);
+        vf8 = Ps2Vu0.BlendMask(vf8, Vector128.Create(regP), 0x1u);
         regQ = Vu1State.VuDivFast(1.0f, vf8.GetElement(3));
-        vu.P = vu.PendingP;
-        vf8 = Ps2Vu0.BlendMask(vf8, Vector128.Create(vu.P), 0x1u);
+        regP = regPendingP;
+        vf8 = Ps2Vu0.BlendMask(vf8, Vector128.Create(regP), 0x1u);
         vf2 = Ps2Vu0.BlendMask(vf2, (vf2 * Vector128.Create(regQ)), 0xEu);
         regQ = Vu1State.VuDivFast(1.0f, vf8.GetElement(3));
         vf1 = Ps2Vu0.BlendMask(vf1, (vf1 * Vector128.Create(regQ)), 0xEu);
@@ -474,18 +475,20 @@ internal static class Vu1AotPrograms
         { ref byte sq_30 = ref Unsafe.Add(ref dm, (0x3C) << 4); Unsafe.WriteUnaligned(ref sq_30, vf2.AsUInt64().GetElement(0)); Unsafe.WriteUnaligned(ref Unsafe.Add(ref sq_30, 8), vf2.GetElement(2)); }
         { ref byte sq_31 = ref Unsafe.Add(ref dm, (0x3D) << 4); Unsafe.WriteUnaligned(ref sq_31, vf1.AsUInt64().GetElement(0)); Unsafe.WriteUnaligned(ref Unsafe.Add(ref sq_31, 8), vf1.GetElement(2)); }
         steps += 32;
-        Unsafe.Add(ref vf, 1) = vf1;
-        Unsafe.Add(ref vf, 2) = vf2;
-        Unsafe.Add(ref vf, 3) = vf3;
-        Unsafe.Add(ref vf, 4) = vf4;
-        Unsafe.Add(ref vf, 5) = vf5;
-        Unsafe.Add(ref vf, 6) = vf6;
-        Unsafe.Add(ref vf, 7) = vf7;
-        Unsafe.Add(ref vf, 8) = vf8;
-        Unsafe.Add(ref vf, 9) = vf9;
+        { ref Vector128<float> fl_1 = ref Unsafe.Add(ref vf, 1); fl_1 = Ps2Vu0.BlendMask(fl_1, vf1, 0xEu); }
+        { ref Vector128<float> fl_2 = ref Unsafe.Add(ref vf, 2); fl_2 = Ps2Vu0.BlendMask(fl_2, vf2, 0xEu); }
+        { ref Vector128<float> fl_3 = ref Unsafe.Add(ref vf, 3); fl_3 = Ps2Vu0.BlendMask(fl_3, vf3, 0xEu); }
+        { ref Vector128<float> fl_4 = ref Unsafe.Add(ref vf, 4); fl_4 = Ps2Vu0.BlendMask(fl_4, vf4, 0xEu); }
+        { ref Vector128<float> fl_5 = ref Unsafe.Add(ref vf, 5); fl_5 = Ps2Vu0.BlendMask(fl_5, vf5, 0xEu); }
+        { ref Vector128<float> fl_6 = ref Unsafe.Add(ref vf, 6); fl_6 = Ps2Vu0.BlendMask(fl_6, vf6, 0xEu); }
+        { ref Vector128<float> fl_7 = ref Unsafe.Add(ref vf, 7); fl_7 = Ps2Vu0.BlendMask(fl_7, vf7, 0x1u); }
+        { ref Vector128<float> fl_8 = ref Unsafe.Add(ref vf, 8); fl_8 = Ps2Vu0.BlendMask(fl_8, vf8, 0x1u); }
+        { ref Vector128<float> fl_9 = ref Unsafe.Add(ref vf, 9); fl_9 = Ps2Vu0.BlendMask(fl_9, vf9, 0xEu); }
         Unsafe.Add(ref vi, 1) = vi1;
         vu.Q = regQ;
         vu.I = regI;
+        vu.P = regP;
+        vu.PendingP = regP;
         vu.ACC = acc;
         vu.Tpc = 0x0108;
         vu.TotalInstructionsExecuted += steps;
@@ -517,6 +520,8 @@ internal static class Vu1AotPrograms
         ushort vi1 = Unsafe.Add(ref vi, 1);
         float regQ = vu.Q;
         float regI = vu.I;
+        float regP = vu.P;
+        float regPendingP = vu.PendingP; _ = regPendingP;
         vi1 = vu.Top;
         vf3 = Ps2Vu0.BlendMask(vf3, Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, ((vi1 & 0x3FF)) << 4)), 0xEu);
         vf6 = Ps2Vu0.BlendMask(vf6, (vf3 * vf3), 0xEu);
@@ -530,7 +535,7 @@ internal static class Vu1AotPrograms
         vf4 = Ps2Vu0.BlendMask(vf4, (vf1 * vf1), 0xEu);
         { ref byte sq_8 = ref Unsafe.Add(ref dm, (0x6) << 4); Unsafe.WriteUnaligned(ref sq_8, vf3.AsUInt64().GetElement(0)); Unsafe.WriteUnaligned(ref Unsafe.Add(ref sq_8, 8), vf3.GetElement(2)); }
         vf5 = Ps2Vu0.BlendMask(vf5, (vf2 * vf2), 0xEu);
-        vu.P = vu.PendingP = Ps2Float.Sqrt(vf7.GetElement(3));
+        regP = Ps2Float.Sqrt(vf7.GetElement(3));
         acc = Ps2Vu0.BlendMask(acc, (Vf0 * Ps2Vu0.BroadcastBc(vf5, 0u)), 0x1u);
         { ref byte sq_10 = ref Unsafe.Add(ref dm, (0x7) << 4); Unsafe.WriteUnaligned(ref sq_10, vf2.AsUInt64().GetElement(0)); Unsafe.WriteUnaligned(ref Unsafe.Add(ref sq_10, 8), vf2.GetElement(2)); }
         acc = Ps2Vu0.BlendMask(acc, FmaAdd(Vf0, Ps2Vu0.BroadcastBc(vf5, 1u), acc), 0x1u);
@@ -538,19 +543,18 @@ internal static class Vu1AotPrograms
         vf7 = Ps2Vu0.BlendMask(vf7, FmaAdd(Vf0, Ps2Vu0.BroadcastBc(vf5, 2u), acc), 0x1u);
         { ref byte sq_12 = ref Unsafe.Add(ref dm, (0x9) << 4); Unsafe.WriteUnaligned(ref sq_12, vf9.AsUInt64().GetElement(0)); Unsafe.WriteUnaligned(ref Unsafe.Add(ref sq_12, 8), vf9.GetElement(2)); }
         acc = Ps2Vu0.BlendMask(acc, (Vf0 * Ps2Vu0.BroadcastBc(vf4, 0u)), 0x1u);
-        vu.P = vu.PendingP;
-        vu.PendingP = Ps2Float.Sqrt(vf7.GetElement(3));
+        regPendingP = Ps2Float.Sqrt(vf7.GetElement(3));
         acc = Ps2Vu0.BlendMask(acc, FmaAdd(Vf0, Ps2Vu0.BroadcastBc(vf4, 1u), acc), 0x1u);
-        vf8 = Ps2Vu0.BlendMask(vf8, Vector128.Create(vu.P), 0x1u);
+        vf8 = Ps2Vu0.BlendMask(vf8, Vector128.Create(regP), 0x1u);
         vf7 = Ps2Vu0.BlendMask(vf7, FmaAdd(Vf0, Ps2Vu0.BroadcastBc(vf4, 2u), acc), 0x1u);
         regQ = Vu1State.VuDivFast(1.0f, vf8.GetElement(3));
-        vu.P = vu.PendingP;
-        vu.PendingP = Ps2Float.Sqrt(vf7.GetElement(3));
+        regP = regPendingP;
+        regPendingP = Ps2Float.Sqrt(vf7.GetElement(3));
         vf3 = Ps2Vu0.BlendMask(vf3, (vf3 * Vector128.Create(regQ)), 0xEu);
-        vf8 = Ps2Vu0.BlendMask(vf8, Vector128.Create(vu.P), 0x1u);
+        vf8 = Ps2Vu0.BlendMask(vf8, Vector128.Create(regP), 0x1u);
         regQ = Vu1State.VuDivFast(1.0f, vf8.GetElement(3));
-        vu.P = vu.PendingP;
-        vf8 = Ps2Vu0.BlendMask(vf8, Vector128.Create(vu.P), 0x1u);
+        regP = regPendingP;
+        vf8 = Ps2Vu0.BlendMask(vf8, Vector128.Create(regP), 0x1u);
         vf2 = Ps2Vu0.BlendMask(vf2, (vf2 * Vector128.Create(regQ)), 0xEu);
         regQ = Vu1State.VuDivFast(1.0f, vf8.GetElement(3));
         vf1 = Ps2Vu0.BlendMask(vf1, (vf1 * Vector128.Create(regQ)), 0xEu);
@@ -563,18 +567,20 @@ internal static class Vu1AotPrograms
         { ref byte sq_30 = ref Unsafe.Add(ref dm, (0x3C) << 4); Unsafe.WriteUnaligned(ref sq_30, vf2.AsUInt64().GetElement(0)); Unsafe.WriteUnaligned(ref Unsafe.Add(ref sq_30, 8), vf2.GetElement(2)); }
         { ref byte sq_31 = ref Unsafe.Add(ref dm, (0x3D) << 4); Unsafe.WriteUnaligned(ref sq_31, vf1.AsUInt64().GetElement(0)); Unsafe.WriteUnaligned(ref Unsafe.Add(ref sq_31, 8), vf1.GetElement(2)); }
         steps += 31;
-        Unsafe.Add(ref vf, 1) = vf1;
-        Unsafe.Add(ref vf, 2) = vf2;
-        Unsafe.Add(ref vf, 3) = vf3;
-        Unsafe.Add(ref vf, 4) = vf4;
-        Unsafe.Add(ref vf, 5) = vf5;
-        Unsafe.Add(ref vf, 6) = vf6;
-        Unsafe.Add(ref vf, 7) = vf7;
-        Unsafe.Add(ref vf, 8) = vf8;
-        Unsafe.Add(ref vf, 9) = vf9;
+        { ref Vector128<float> fl_1 = ref Unsafe.Add(ref vf, 1); fl_1 = Ps2Vu0.BlendMask(fl_1, vf1, 0xEu); }
+        { ref Vector128<float> fl_2 = ref Unsafe.Add(ref vf, 2); fl_2 = Ps2Vu0.BlendMask(fl_2, vf2, 0xEu); }
+        { ref Vector128<float> fl_3 = ref Unsafe.Add(ref vf, 3); fl_3 = Ps2Vu0.BlendMask(fl_3, vf3, 0xEu); }
+        { ref Vector128<float> fl_4 = ref Unsafe.Add(ref vf, 4); fl_4 = Ps2Vu0.BlendMask(fl_4, vf4, 0xEu); }
+        { ref Vector128<float> fl_5 = ref Unsafe.Add(ref vf, 5); fl_5 = Ps2Vu0.BlendMask(fl_5, vf5, 0xEu); }
+        { ref Vector128<float> fl_6 = ref Unsafe.Add(ref vf, 6); fl_6 = Ps2Vu0.BlendMask(fl_6, vf6, 0xEu); }
+        { ref Vector128<float> fl_7 = ref Unsafe.Add(ref vf, 7); fl_7 = Ps2Vu0.BlendMask(fl_7, vf7, 0x1u); }
+        { ref Vector128<float> fl_8 = ref Unsafe.Add(ref vf, 8); fl_8 = Ps2Vu0.BlendMask(fl_8, vf8, 0x1u); }
+        { ref Vector128<float> fl_9 = ref Unsafe.Add(ref vf, 9); fl_9 = Ps2Vu0.BlendMask(fl_9, vf9, 0xEu); }
         Unsafe.Add(ref vi, 1) = vi1;
         vu.Q = regQ;
         vu.I = regI;
+        vu.P = regP;
+        vu.PendingP = regP;
         vu.ACC = acc;
         vu.Tpc = 0x0108;
         vu.TotalInstructionsExecuted += steps;
@@ -610,6 +616,8 @@ internal static class Vu1AotPrograms
         ushort vi1 = Unsafe.Add(ref vi, 1);
         float regQ = vu.Q;
         float regI = vu.I;
+        float regP = vu.P;
+        float regPendingP = vu.PendingP; _ = regPendingP;
         vi1 = vu.Top;
         vf3 = Ps2Vu0.BlendMask(vf3, Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, ((vi1 & 0x3FF)) << 4)), 0xEu);
         vf6 = Ps2Vu0.BlendMask(vf6, (vf3 * vf3), 0xEu);
@@ -623,7 +631,7 @@ internal static class Vu1AotPrograms
         vf4 = Ps2Vu0.BlendMask(vf4, (vf1 * vf1), 0xEu);
         { ref byte sq_39 = ref Unsafe.Add(ref dm, (0x6) << 4); Unsafe.WriteUnaligned(ref sq_39, vf3.AsUInt64().GetElement(0)); Unsafe.WriteUnaligned(ref Unsafe.Add(ref sq_39, 8), vf3.GetElement(2)); }
         vf5 = Ps2Vu0.BlendMask(vf5, (vf2 * vf2), 0xEu);
-        vu.P = vu.PendingP = Ps2Float.Sqrt(vf7.GetElement(3));
+        regP = Ps2Float.Sqrt(vf7.GetElement(3));
         acc = Ps2Vu0.BlendMask(acc, (Vf0 * Ps2Vu0.BroadcastBc(vf5, 0u)), 0x1u);
         { ref byte sq_41 = ref Unsafe.Add(ref dm, (0x7) << 4); Unsafe.WriteUnaligned(ref sq_41, vf2.AsUInt64().GetElement(0)); Unsafe.WriteUnaligned(ref Unsafe.Add(ref sq_41, 8), vf2.GetElement(2)); }
         acc = Ps2Vu0.BlendMask(acc, FmaAdd(Vf0, Ps2Vu0.BroadcastBc(vf5, 1u), acc), 0x1u);
@@ -635,12 +643,11 @@ internal static class Vu1AotPrograms
         vf12 = Ps2Vu0.BlendMask(vf12, Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, ((((short)vi1 + (6)) & 0x3FF)) << 4)), 0xEu);
         vf13 = Ps2Vu0.BlendMask(vf13, Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, ((((short)vi1 + (7)) & 0x3FF)) << 4)), 0xEu);
         acc = Ps2Vu0.BlendMask(acc, (Vf0 * Ps2Vu0.BroadcastBc(vf4, 0u)), 0x1u);
-        vu.P = vu.PendingP;
-        vu.PendingP = Ps2Float.Sqrt(vf7.GetElement(3));
+        regPendingP = Ps2Float.Sqrt(vf7.GetElement(3));
         acc = Ps2Vu0.BlendMask(acc, FmaAdd(Vf0, Ps2Vu0.BroadcastBc(vf4, 1u), acc), 0x1u);
         { ref byte sq_49 = ref Unsafe.Add(ref dm, (0xA) << 4); Unsafe.WriteUnaligned(ref sq_49, vf10.AsUInt64().GetElement(0)); Unsafe.WriteUnaligned(ref Unsafe.Add(ref sq_49, 8), vf10.GetElement(2)); }
         { ref byte sq_50 = ref Unsafe.Add(ref dm, (0xB) << 4); Unsafe.WriteUnaligned(ref sq_50, vf11.AsUInt64().GetElement(0)); Unsafe.WriteUnaligned(ref Unsafe.Add(ref sq_50, 8), vf11.GetElement(2)); }
-        vf8 = Ps2Vu0.BlendMask(vf8, Vector128.Create(vu.P), 0x1u);
+        vf8 = Ps2Vu0.BlendMask(vf8, Vector128.Create(regP), 0x1u);
         { ref byte sq_52 = ref Unsafe.Add(ref dm, (0xC) << 4); Unsafe.WriteUnaligned(ref sq_52, vf12.AsUInt64().GetElement(0)); Unsafe.WriteUnaligned(ref Unsafe.Add(ref sq_52, 8), vf12.GetElement(2)); }
         { ref byte sq_53 = ref Unsafe.Add(ref dm, (0xD) << 4); Unsafe.WriteUnaligned(ref sq_53, vf13.AsUInt64().GetElement(0)); Unsafe.WriteUnaligned(ref Unsafe.Add(ref sq_53, 8), vf13.GetElement(2)); }
         vf10 = Ps2Vu0.BlendMask(vf10, Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, ((((short)vi1 + (8)) & 0x3FF)) << 4)), 0xEu);
@@ -649,21 +656,21 @@ internal static class Vu1AotPrograms
         vf11 = Ps2Vu0.BlendMask(vf11, Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, ((((short)vi1 + (9)) & 0x3FF)) << 4)), 0xEu);
         vf12 = Ps2Vu0.BlendMask(vf12, Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, ((((short)vi1 + (10)) & 0x3FF)) << 4)), 0xEu);
         vf13 = Ps2Vu0.BlendMask(vf13, Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, ((((short)vi1 + (11)) & 0x3FF)) << 4)), 0xEu);
-        vu.P = vu.PendingP;
-        vu.PendingP = Ps2Float.Sqrt(vf7.GetElement(3));
+        regP = regPendingP;
+        regPendingP = Ps2Float.Sqrt(vf7.GetElement(3));
         { ref byte sq_60 = ref Unsafe.Add(ref dm, (0xE) << 4); Unsafe.WriteUnaligned(ref sq_60, vf10.AsUInt64().GetElement(0)); Unsafe.WriteUnaligned(ref Unsafe.Add(ref sq_60, 8), vf10.GetElement(2)); }
         { ref byte sq_61 = ref Unsafe.Add(ref dm, (0xF) << 4); Unsafe.WriteUnaligned(ref sq_61, vf11.AsUInt64().GetElement(0)); Unsafe.WriteUnaligned(ref Unsafe.Add(ref sq_61, 8), vf11.GetElement(2)); }
         { ref byte sq_62 = ref Unsafe.Add(ref dm, (0x10) << 4); Unsafe.WriteUnaligned(ref sq_62, vf12.AsUInt64().GetElement(0)); Unsafe.WriteUnaligned(ref Unsafe.Add(ref sq_62, 8), vf12.GetElement(2)); }
         vf3 = Ps2Vu0.BlendMask(vf3, (vf3 * Vector128.Create(regQ)), 0xEu);
-        vf8 = Ps2Vu0.BlendMask(vf8, Vector128.Create(vu.P), 0x1u);
+        vf8 = Ps2Vu0.BlendMask(vf8, Vector128.Create(regP), 0x1u);
         { ref byte sq_64 = ref Unsafe.Add(ref dm, (0x11) << 4); Unsafe.WriteUnaligned(ref sq_64, vf13.AsUInt64().GetElement(0)); Unsafe.WriteUnaligned(ref Unsafe.Add(ref sq_64, 8), vf13.GetElement(2)); }
         vf10 = Ps2Vu0.BlendMask(vf10, Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, ((((short)vi1 + (12)) & 0x3FF)) << 4)), 0xEu);
         vf11 = Ps2Vu0.BlendMask(vf11, Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, ((((short)vi1 + (13)) & 0x3FF)) << 4)), 0xEu);
         regQ = Vu1State.VuDivFast(1.0f, vf8.GetElement(3));
         vf12 = Ps2Vu0.BlendMask(vf12, Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, ((((short)vi1 + (14)) & 0x3FF)) << 4)), 0xEu);
         vf13 = Ps2Vu0.BlendMask(vf13, Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, ((((short)vi1 + (15)) & 0x3FF)) << 4)), 0xEu);
-        vu.P = vu.PendingP;
-        vf8 = Ps2Vu0.BlendMask(vf8, Vector128.Create(vu.P), 0x1u);
+        regP = regPendingP;
+        vf8 = Ps2Vu0.BlendMask(vf8, Vector128.Create(regP), 0x1u);
         { ref byte sq_72 = ref Unsafe.Add(ref dm, (0x12) << 4); Unsafe.WriteUnaligned(ref sq_72, vf10.AsUInt64().GetElement(0)); Unsafe.WriteUnaligned(ref Unsafe.Add(ref sq_72, 8), vf10.GetElement(2)); }
         vf2 = Ps2Vu0.BlendMask(vf2, (vf2 * Vector128.Create(regQ)), 0xEu);
         regQ = Vu1State.VuDivFast(1.0f, vf8.GetElement(3));
@@ -678,22 +685,24 @@ internal static class Vu1AotPrograms
         { ref byte sq_80 = ref Unsafe.Add(ref dm, (0x3C) << 4); Unsafe.WriteUnaligned(ref sq_80, vf2.AsUInt64().GetElement(0)); Unsafe.WriteUnaligned(ref Unsafe.Add(ref sq_80, 8), vf2.GetElement(2)); }
         { ref byte sq_81 = ref Unsafe.Add(ref dm, (0x3D) << 4); Unsafe.WriteUnaligned(ref sq_81, vf1.AsUInt64().GetElement(0)); Unsafe.WriteUnaligned(ref Unsafe.Add(ref sq_81, 8), vf1.GetElement(2)); }
         steps += 50;
-        Unsafe.Add(ref vf, 1) = vf1;
-        Unsafe.Add(ref vf, 2) = vf2;
-        Unsafe.Add(ref vf, 3) = vf3;
-        Unsafe.Add(ref vf, 4) = vf4;
-        Unsafe.Add(ref vf, 5) = vf5;
-        Unsafe.Add(ref vf, 6) = vf6;
-        Unsafe.Add(ref vf, 7) = vf7;
-        Unsafe.Add(ref vf, 8) = vf8;
-        Unsafe.Add(ref vf, 9) = vf9;
-        Unsafe.Add(ref vf, 10) = vf10;
-        Unsafe.Add(ref vf, 11) = vf11;
-        Unsafe.Add(ref vf, 12) = vf12;
-        Unsafe.Add(ref vf, 13) = vf13;
+        { ref Vector128<float> fl_1 = ref Unsafe.Add(ref vf, 1); fl_1 = Ps2Vu0.BlendMask(fl_1, vf1, 0xEu); }
+        { ref Vector128<float> fl_2 = ref Unsafe.Add(ref vf, 2); fl_2 = Ps2Vu0.BlendMask(fl_2, vf2, 0xEu); }
+        { ref Vector128<float> fl_3 = ref Unsafe.Add(ref vf, 3); fl_3 = Ps2Vu0.BlendMask(fl_3, vf3, 0xEu); }
+        { ref Vector128<float> fl_4 = ref Unsafe.Add(ref vf, 4); fl_4 = Ps2Vu0.BlendMask(fl_4, vf4, 0xEu); }
+        { ref Vector128<float> fl_5 = ref Unsafe.Add(ref vf, 5); fl_5 = Ps2Vu0.BlendMask(fl_5, vf5, 0xEu); }
+        { ref Vector128<float> fl_6 = ref Unsafe.Add(ref vf, 6); fl_6 = Ps2Vu0.BlendMask(fl_6, vf6, 0xEu); }
+        { ref Vector128<float> fl_7 = ref Unsafe.Add(ref vf, 7); fl_7 = Ps2Vu0.BlendMask(fl_7, vf7, 0x1u); }
+        { ref Vector128<float> fl_8 = ref Unsafe.Add(ref vf, 8); fl_8 = Ps2Vu0.BlendMask(fl_8, vf8, 0x1u); }
+        { ref Vector128<float> fl_9 = ref Unsafe.Add(ref vf, 9); fl_9 = Ps2Vu0.BlendMask(fl_9, vf9, 0xEu); }
+        { ref Vector128<float> fl_10 = ref Unsafe.Add(ref vf, 10); fl_10 = Ps2Vu0.BlendMask(fl_10, vf10, 0xEu); }
+        { ref Vector128<float> fl_11 = ref Unsafe.Add(ref vf, 11); fl_11 = Ps2Vu0.BlendMask(fl_11, vf11, 0xEu); }
+        { ref Vector128<float> fl_12 = ref Unsafe.Add(ref vf, 12); fl_12 = Ps2Vu0.BlendMask(fl_12, vf12, 0xEu); }
+        { ref Vector128<float> fl_13 = ref Unsafe.Add(ref vf, 13); fl_13 = Ps2Vu0.BlendMask(fl_13, vf13, 0xEu); }
         Unsafe.Add(ref vi, 1) = vi1;
         vu.Q = regQ;
         vu.I = regI;
+        vu.P = regP;
+        vu.PendingP = regP;
         vu.ACC = acc;
         vu.Tpc = 0x0298;
         vu.TotalInstructionsExecuted += steps;
@@ -1716,6 +1725,7 @@ internal static class Vu1AotPrograms
         ushort vi15 = Unsafe.Add(ref vi, 15);
         float regQ = vu.Q;
         float regI = vu.I;
+        ushort macFlags = vu.MacFlags;
         vi6 = vu.Top;
         vf8 = Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, (0x3AD) << 4));
         vi1 = Unsafe.ReadUnaligned<ushort>(ref Unsafe.Add(ref dm, ((vi6 & 0x3FF)) << 4));
@@ -1725,7 +1735,7 @@ internal static class Vu1AotPrograms
         vi10 = unchecked((ushort)(((ushort)0) + 32767u));
         vf27 = SanitizeFloatMask(Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, (0x3AF) << 4)), 0x3);
         vi9 = unchecked((ushort)(vi6 + vi1));
-        vf30 = Ps2Vu0.BlendMask(vf30, SanitizeFloatMask(Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, ((((short)vi9 + (1)) & 0x3FF)) << 4)), 0x1), 0x1u);
+        vf30 = SanitizeFloatMask(Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, ((((short)vi9 + (1)) & 0x3FF)) << 4)), 0x1);
         vi7 = unchecked((ushort)(vi9 + 65u));
         vi7 = unchecked((ushort)(vi7 + vi1));
         vf27 = Ps2Vu0.BlendMask(vf27, VuMin(vf27, Ps2Vu0.BroadcastBc(vf30, 3u)), 0x2u);
@@ -1741,7 +1751,7 @@ internal static class Vu1AotPrograms
         vf26 = Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, (0x3B3) << 4));
         vf14 = Ps2Vu0.BlendMask(vf14, (vf14 + vf14), 0x1u);
         vf31 = SanitizeFloat(Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, ((((short)vi7 + (1)) & 0x3FF)) << 4)));
-        vf21 = Ps2Vu0.BlendMask(vf21, (Vf0 + Vector128<float>.One), 0xCu);
+        vf21 = (Vf0 + Vector128<float>.One);
         vi1 = unchecked((ushort)(vi1 + vi1));
         vi11 = unchecked((ushort)(vi10 + 1u));
         vi1 = (ushort)(vi1 | vi11);
@@ -1750,7 +1760,7 @@ internal static class Vu1AotPrograms
         acc = Ps2Vu0.BlendMask(acc, (Vf0 + Vector128<float>.One), 0x8u);
         vf30 = Ps2Vu0.BlendMask(vf30, SanitizeFloatMask(Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, ((((short)vi9 + (17)) & 0x3FF)) << 4)), 0x2), 0x2u);
         vf25 = Ps2Vu0.BlendMask(vf25, vu.ExecRget(), 0x1u);
-        vf28 = Ps2Vu0.BlendMask(vf28, FmaAdd(vf10, Ps2Vu0.BroadcastBc(vf30, 3u), acc), 0x8u);
+        vf28 = FmaAdd(vf10, Ps2Vu0.BroadcastBc(vf30, 3u), acc);
         regI = BitConverter.UInt32BitsToSingle(0x40490FDBu);
         acc = Ps2Vu0.BlendMask(acc, (vf29 + Vector128.Create(regI)), 0x1u);
         idxTmp = vi4;
@@ -1788,7 +1798,7 @@ internal static class Vu1AotPrograms
         vf6 = Ps2Vu0.BlendMask(vf6, Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, ((((short)vi9 + (33)) & 0x3FF)) << 4)), 0x1u);
         acc = vf5;
         vf13 = Ps2Vu0.BlendMask(vf13, Vu1State.ExecMr32(vf13), 0xCu);
-        vf15 = Ps2Vu0.BlendMask(vf15, FmaAdd(vf30, Ps2Vu0.BroadcastBc(vf5, 2u), acc), 0x1u);
+        vf15 = FmaAdd(vf30, Ps2Vu0.BroadcastBc(vf5, 2u), acc);
         vf20 = Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, ((((short)vi9 + (49)) & 0x3FF)) << 4));
         acc = (vf17 * vf12);
         vf17 = Ps2Vu0.BlendMask(vf17, Vf0Mr32, 0x2u);
@@ -1802,7 +1812,7 @@ internal static class Vu1AotPrograms
         vf27 = FmaAdd(vf6, Ps2Vu0.BroadcastBc(vf30, 3u), acc);
         vf28 = Ps2Vu0.BlendMask(vf28, (vf28 * vf28), 0x8u);
         vf20 = (vf20 * vf25);
-        vf26 = Ps2Vu0.BlendMask(vf26, (vf31 - vf11), 0xEu);
+        vf26 = (vf31 - vf11);
         regI = BitConverter.UInt32BitsToSingle(0x4B400000u);
         acc = (Vf0 * Vector128.Create(regI));
         regI = BitConverter.UInt32BitsToSingle(0x3E22F983u);
@@ -1812,25 +1822,25 @@ internal static class Vu1AotPrograms
         vf2 = SanitizeFloat(Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, (0x3A4) << 4)));
         acc = FmaAdd(vf28, Vector128.Create(regI), acc);
         regI = BitConverter.UInt32BitsToSingle(0x4B400000u);
-        vf15 = Ps2Vu0.BlendMask(vf15, FmaSub(Vf0, Vector128.Create(regI), acc), 0x1u);
+        vf15 = FmaSub(Vf0, Vector128.Create(regI), acc);
         regQ = Vu1State.VuDivFast(1.0f, vf28.GetElement(0));
-        vf26 = Ps2Vu0.BlendMask(vf26, (vf26 * Ps2Vu0.BroadcastBc(vf10, 3u)), 0xEu);
+        vf26 = (vf26 * Ps2Vu0.BroadcastBc(vf10, 3u));
         vf3 = SanitizeFloat(Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, (0x3A5) << 4)));
         vf27 = VuMax(vf27, vf7);
         vf4 = SanitizeFloat(Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, (0x3A6) << 4)));
         acc = vf28;
         regI = BitConverter.UInt32BitsToSingle(0x40C90FDBu);
         tmp = FmaSub(vf15, Vector128.Create(regI), acc);
-        vu.UpdateMacFlagsOnly(tmp, 0x1u);
+        macFlags = Vu1State.ComputeMacFlagsW(tmp);
         vf28 = Ps2Vu0.BlendMask(vf28, tmp, 0x1u);
         acc = Ps2Vu0.BlendMask(acc, (vf26 + vf29), 0xEu);
         vf14 = Ps2Vu0.BlendMask(vf14, SanitizeFloatMask(Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, (0x3A9) << 4)), 0x2), 0x2u);
         acc = Ps2Vu0.BlendMask(acc, FmaAdd(vf11, Ps2Vu0.BroadcastBc(vf30, 3u), acc), 0xEu);
         regI = BitConverter.UInt32BitsToSingle(0x40490FDBu);
-        vf29 = Ps2Vu0.BlendMask(vf29, FmaSub(vf26, Vector128.Create(regQ), acc), 0xEu);
+        vf29 = FmaSub(vf26, Vector128.Create(regQ), acc);
         vi1 = unchecked((ushort)(((ushort)0) + 16u));
         vf27 = VuMin(vf27, vf8);
-        vi1 = (ushort)(vu.MacFlags & vi1);
+        vi1 = (ushort)(macFlags & vi1);
         btTmp = (vi1 != ((ushort)0));
         vf20 = Ps2Vu0.BlendMask(vf20, (Vf0 - Vector128.Create(regI)), 0x4u);
         vf21 = Ps2Vu0.BlendMask(vf21, (Vf0 + Vector128.Create(regI)), 0x4u);
@@ -1841,7 +1851,7 @@ internal static class Vu1AotPrograms
         steps += 1;
     slot_791:
         tmp = (vf28 + Vector128.Create(regI));
-        vu.UpdateMacFlagsOnly(tmp, 0x1u);
+        macFlags = Vu1State.ComputeMacFlagsOnly(tmp, 0x1u);
         vf28 = Ps2Vu0.BlendMask(vf28, tmp, 0x1u);
         vf25 = SanitizeFloatMask(Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, (0x3A8) << 4)), 0x1);
         acc = vf4;
@@ -1849,8 +1859,8 @@ internal static class Vu1AotPrograms
         vf22 = Ps2Vu0.BlendMask(vf22, Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, (0x3A9) << 4)), 0x4u);
         acc = FmaAdd(vf2, Ps2Vu0.BroadcastBc(vf29, 1u), acc);
         vf20 = Ps2Vu0.BlendMask(vf20, (vf20 - Ps2Vu0.BroadcastBc(vf28, 3u)), 0x4u);
-        vi1 = (ushort)(vu.MacFlags & vi1);
-        vf21 = Ps2Vu0.BlendMask(vf21, (vf21 - Ps2Vu0.BroadcastBc(vf28, 3u)), 0x4u);
+        vi1 = (ushort)(macFlags & vi1);
+        vf21 = (vf21 - Ps2Vu0.BroadcastBc(vf28, 3u));
         btTmp = (vi1 != ((ushort)0));
         vf23 = Ps2Vu0.BlendMask(vf23, Vu1State.ExecAbs(vf28), 0x1u);
         vf30 = FmaAdd(vf1, Ps2Vu0.BroadcastBc(vf29, 0u), acc);
@@ -1919,7 +1929,7 @@ internal static class Vu1AotPrograms
         vf15 = vf17;
         vf19 = Ps2Vu0.BlendMask(vf19, FmaAdd(Vf0, Vf0, acc), 0xCu);
         regI = BitConverter.UInt32BitsToSingle(0x3F000000u);
-        vf18 = Ps2Vu0.BlendMask(vf18, (Vf0 - Ps2Vu0.BroadcastBc(vf28, 0u)), 0x4u);
+        vf18 = (Vf0 - Ps2Vu0.BroadcastBc(vf28, 0u));
         vf18 = Ps2Vu0.BlendMask(vf18, (Vf0 + Ps2Vu0.BroadcastBc(vf28, 1u)), 0x8u);
         Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, ((((short)vi4 + (-8)) & 0x3FF)) << 4)) = vf24;
         acc = (Vf0 + Vf0);
@@ -1935,7 +1945,7 @@ internal static class Vu1AotPrograms
         vf23 = FmaAdd(vf17, Ps2Vu0.BroadcastBc(vf22, 1u), acc);
         acc = (vf16 * Ps2Vu0.BroadcastBc(vf14, 0u));
         vf14 = Ps2Vu0.BlendMask(vf14, FmaAdd(vf17, Ps2Vu0.BroadcastBc(vf14, 1u), acc), 0xEu);
-        vf18 = Ps2Vu0.BlendMask(vf18, (Vf0 - Ps2Vu0.BroadcastBc(vf28, 1u)), 0x8u);
+        vf18 = (Vf0 - Ps2Vu0.BroadcastBc(vf28, 1u));
         vf4 = Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, (0x46) << 4));
         vf18 = Ps2Vu0.BlendMask(vf18, (Vf0 + Ps2Vu0.BroadcastBc(vf28, 0u)), 0x4u);
         vf2 = Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, (0x44) << 4));
@@ -2115,7 +2125,7 @@ internal static class Vu1AotPrograms
         Unsafe.Add(ref vf, 15) = vf15;
         Unsafe.Add(ref vf, 16) = vf16;
         Unsafe.Add(ref vf, 17) = vf17;
-        Unsafe.Add(ref vf, 18) = vf18;
+        { ref Vector128<float> fl_18 = ref Unsafe.Add(ref vf, 18); fl_18 = Ps2Vu0.BlendMask(fl_18, vf18, 0xCu); }
         Unsafe.Add(ref vf, 19) = vf19;
         Unsafe.Add(ref vf, 20) = vf20;
         Unsafe.Add(ref vf, 21) = vf21;
@@ -2146,6 +2156,7 @@ internal static class Vu1AotPrograms
         Unsafe.Add(ref vi, 15) = vi15;
         vu.Q = regQ;
         vu.I = regI;
+        vu.MacFlags = macFlags;
         vu.ACC = acc;
         vu.Tpc = 0x1628;
         vu.TotalInstructionsExecuted += steps;
@@ -2165,7 +2176,7 @@ internal static class Vu1AotPrograms
     slot_980:
         vf27 = SanitizeFloatMask(Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, (0x3AF) << 4)), 0x3);
         vi9 = unchecked((ushort)(vi6 + vi2));
-        vf30 = Ps2Vu0.BlendMask(vf30, SanitizeFloatMask(Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, ((((short)vi9 + (1)) & 0x3FF)) << 4)), 0x1), 0x1u);
+        vf30 = SanitizeFloatMask(Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, ((((short)vi9 + (1)) & 0x3FF)) << 4)), 0x1);
         vi7 = unchecked((ushort)(vi9 + 65u));
         vi7 = unchecked((ushort)(vi7 + vi2));
         vf29 = Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, ((vi7 & 0x3FF)) << 4));
@@ -2182,7 +2193,7 @@ internal static class Vu1AotPrograms
         vf30 = Ps2Vu0.BlendMask(vf30, SanitizeFloatMask(Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, ((((short)vi9 + (17)) & 0x3FF)) << 4)), 0x2), 0x2u);
         vf31 = Ps2Vu0.BlendMask(vf31, (vf31 * vf27), 0x1u);
         vf25 = Ps2Vu0.BlendMask(vf25, vu.ExecRget(), 0x1u);
-        vf28 = Ps2Vu0.BlendMask(vf28, FmaAdd(vf10, Ps2Vu0.BroadcastBc(vf30, 3u), acc), 0x8u);
+        vf28 = FmaAdd(vf10, Ps2Vu0.BroadcastBc(vf30, 3u), acc);
         regI = BitConverter.UInt32BitsToSingle(0x40490FDBu);
         acc = Ps2Vu0.BlendMask(acc, (vf29 + Vector128.Create(regI)), 0x1u);
         vi1 = unchecked((ushort)(vi1 + vi2));
@@ -2204,7 +2215,7 @@ internal static class Vu1AotPrograms
         Unsafe.Add(ref vf, 15) = vf15;
         Unsafe.Add(ref vf, 16) = vf16;
         Unsafe.Add(ref vf, 17) = vf17;
-        Unsafe.Add(ref vf, 18) = vf18;
+        { ref Vector128<float> fl_18 = ref Unsafe.Add(ref vf, 18); fl_18 = Ps2Vu0.BlendMask(fl_18, vf18, 0xCu); }
         Unsafe.Add(ref vf, 19) = vf19;
         Unsafe.Add(ref vf, 20) = vf20;
         Unsafe.Add(ref vf, 21) = vf21;
@@ -2235,6 +2246,7 @@ internal static class Vu1AotPrograms
         Unsafe.Add(ref vi, 15) = vi15;
         vu.Q = regQ;
         vu.I = regI;
+        vu.MacFlags = macFlags;
         vu.ACC = acc;
         vu.TotalInstructionsExecuted += steps;
         return;
@@ -2301,8 +2313,9 @@ internal static class Vu1AotPrograms
         ushort vi15 = Unsafe.Add(ref vi, 15);
         float regQ = vu.Q;
         float regI = vu.I;
+        ushort macFlags = vu.MacFlags;
         vf25 = Ps2Vu0.BlendMask(vf25, vu.ExecRget(), 0x1u);
-        vf28 = Ps2Vu0.BlendMask(vf28, FmaAdd(vf10, Ps2Vu0.BroadcastBc(vf30, 3u), acc), 0x8u);
+        vf28 = FmaAdd(vf10, Ps2Vu0.BroadcastBc(vf30, 3u), acc);
         regI = BitConverter.UInt32BitsToSingle(0x40490FDBu);
         acc = Ps2Vu0.BlendMask(acc, (vf29 + Vector128.Create(regI)), 0x1u);
         idxTmp = vi4;
@@ -2340,7 +2353,7 @@ internal static class Vu1AotPrograms
         vf6 = Ps2Vu0.BlendMask(vf6, Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, ((((short)vi9 + (33)) & 0x3FF)) << 4)), 0x1u);
         acc = vf5;
         vf13 = Ps2Vu0.BlendMask(vf13, Vu1State.ExecMr32(vf13), 0xCu);
-        vf15 = Ps2Vu0.BlendMask(vf15, FmaAdd(vf30, Ps2Vu0.BroadcastBc(vf5, 2u), acc), 0x1u);
+        vf15 = FmaAdd(vf30, Ps2Vu0.BroadcastBc(vf5, 2u), acc);
         vf20 = Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, ((((short)vi9 + (49)) & 0x3FF)) << 4));
         acc = (vf17 * vf12);
         vf17 = Ps2Vu0.BlendMask(vf17, Vf0Mr32, 0x2u);
@@ -2354,7 +2367,7 @@ internal static class Vu1AotPrograms
         vf27 = FmaAdd(vf6, Ps2Vu0.BroadcastBc(vf30, 3u), acc);
         vf28 = Ps2Vu0.BlendMask(vf28, (vf28 * vf28), 0x8u);
         vf20 = (vf20 * vf25);
-        vf26 = Ps2Vu0.BlendMask(vf26, (vf31 - vf11), 0xEu);
+        vf26 = (vf31 - vf11);
         regI = BitConverter.UInt32BitsToSingle(0x4B400000u);
         acc = (Vf0 * Vector128.Create(regI));
         regI = BitConverter.UInt32BitsToSingle(0x3E22F983u);
@@ -2364,25 +2377,25 @@ internal static class Vu1AotPrograms
         vf2 = SanitizeFloat(Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, (0x3A4) << 4)));
         acc = FmaAdd(vf28, Vector128.Create(regI), acc);
         regI = BitConverter.UInt32BitsToSingle(0x4B400000u);
-        vf15 = Ps2Vu0.BlendMask(vf15, FmaSub(Vf0, Vector128.Create(regI), acc), 0x1u);
+        vf15 = FmaSub(Vf0, Vector128.Create(regI), acc);
         regQ = Vu1State.VuDivFast(1.0f, vf28.GetElement(0));
-        vf26 = Ps2Vu0.BlendMask(vf26, (vf26 * Ps2Vu0.BroadcastBc(vf10, 3u)), 0xEu);
+        vf26 = (vf26 * Ps2Vu0.BroadcastBc(vf10, 3u));
         vf3 = SanitizeFloat(Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, (0x3A5) << 4)));
         vf27 = VuMax(vf27, vf7);
         vf4 = SanitizeFloat(Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, (0x3A6) << 4)));
         acc = vf28;
         regI = BitConverter.UInt32BitsToSingle(0x40C90FDBu);
         tmp = FmaSub(vf15, Vector128.Create(regI), acc);
-        vu.UpdateMacFlagsOnly(tmp, 0x1u);
+        macFlags = Vu1State.ComputeMacFlagsW(tmp);
         vf28 = Ps2Vu0.BlendMask(vf28, tmp, 0x1u);
         acc = Ps2Vu0.BlendMask(acc, (vf26 + vf29), 0xEu);
-        vf14 = Ps2Vu0.BlendMask(vf14, SanitizeFloatMask(Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, (0x3A9) << 4)), 0x2), 0x2u);
+        vf14 = SanitizeFloatMask(Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, (0x3A9) << 4)), 0x2);
         acc = Ps2Vu0.BlendMask(acc, FmaAdd(vf11, Ps2Vu0.BroadcastBc(vf30, 3u), acc), 0xEu);
         regI = BitConverter.UInt32BitsToSingle(0x40490FDBu);
-        vf29 = Ps2Vu0.BlendMask(vf29, FmaSub(vf26, Vector128.Create(regQ), acc), 0xEu);
+        vf29 = FmaSub(vf26, Vector128.Create(regQ), acc);
         vi1 = unchecked((ushort)(((ushort)0) + 16u));
         vf27 = VuMin(vf27, vf8);
-        vi1 = (ushort)(vu.MacFlags & vi1);
+        vi1 = (ushort)(macFlags & vi1);
         btTmp = (vi1 != ((ushort)0));
         vf20 = Ps2Vu0.BlendMask(vf20, (Vf0 - Vector128.Create(regI)), 0x4u);
         vf21 = Ps2Vu0.BlendMask(vf21, (Vf0 + Vector128.Create(regI)), 0x4u);
@@ -2393,7 +2406,7 @@ internal static class Vu1AotPrograms
         steps += 1;
     slot_791:
         tmp = (vf28 + Vector128.Create(regI));
-        vu.UpdateMacFlagsOnly(tmp, 0x1u);
+        macFlags = Vu1State.ComputeMacFlagsOnly(tmp, 0x1u);
         vf28 = Ps2Vu0.BlendMask(vf28, tmp, 0x1u);
         vf25 = SanitizeFloatMask(Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, (0x3A8) << 4)), 0x1);
         acc = vf4;
@@ -2401,8 +2414,8 @@ internal static class Vu1AotPrograms
         vf22 = Ps2Vu0.BlendMask(vf22, Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, (0x3A9) << 4)), 0x4u);
         acc = FmaAdd(vf2, Ps2Vu0.BroadcastBc(vf29, 1u), acc);
         vf20 = Ps2Vu0.BlendMask(vf20, (vf20 - Ps2Vu0.BroadcastBc(vf28, 3u)), 0x4u);
-        vi1 = (ushort)(vu.MacFlags & vi1);
-        vf21 = Ps2Vu0.BlendMask(vf21, (vf21 - Ps2Vu0.BroadcastBc(vf28, 3u)), 0x4u);
+        vi1 = (ushort)(macFlags & vi1);
+        vf21 = (vf21 - Ps2Vu0.BroadcastBc(vf28, 3u));
         btTmp = (vi1 != ((ushort)0));
         vf23 = Ps2Vu0.BlendMask(vf23, Vu1State.ExecAbs(vf28), 0x1u);
         vf30 = FmaAdd(vf1, Ps2Vu0.BroadcastBc(vf29, 0u), acc);
@@ -2431,7 +2444,7 @@ internal static class Vu1AotPrograms
         vf17 = Ps2Vu0.BlendMask(vf17, (vf17 * Ps2Vu0.BroadcastBc(vf20, 3u)), 0x8u);
         vf26 = Ps2Vu0.BlendMask(vf26, (vf28 * Vector128.Create(regI)), 0xCu);
         regI = BitConverter.UInt32BitsToSingle(0xBE2AAAA4u);
-        vf14 = Ps2Vu0.BlendMask(vf14, (vf28 * Vector128.Create(regI)), 0xCu);
+        vf14 = (vf28 * Vector128.Create(regI));
         regI = BitConverter.UInt32BitsToSingle(0x3C08873Eu);
         vf15 = (vf28 * Vector128.Create(regI));
         vf30 = Ps2Vu0.BlendMask(vf30, Vu1State.ExecMr32(vf22), 0x1u);
@@ -2439,7 +2452,7 @@ internal static class Vu1AotPrograms
         vf26 = Ps2Vu0.BlendMask(vf26, (vf26 * vf20), 0xCu);
         acc = (vf14 * vf20);
         regI = BitConverter.UInt32BitsToSingle(0x362E9C14u);
-        vf14 = Ps2Vu0.BlendMask(vf14, (vf28 * Vector128.Create(regI)), 0xCu);
+        vf14 = (vf28 * Vector128.Create(regI));
         vf20 = (vf23 * vf23);
         vi4 = unchecked((ushort)(vi4 + (12)));
         acc = FmaAdd(vf26, vf23, acc);
@@ -2453,13 +2466,13 @@ internal static class Vu1AotPrograms
         Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, ((((short)vi4 + (-2)) & 0x3FF)) << 4)) = vf24;
         vf27 = Ps2Vu0.BlendMask(vf27, (Vf0 + Ps2Vu0.BroadcastBc(vf28, 0u)), 0x4u);
         vf27 = Ps2Vu0.BlendMask(vf27, (Vf0 + Ps2Vu0.BroadcastBc(vf28, 1u)), 0x8u);
-        vf14 = Ps2Vu0.BlendMask(vf14, SanitizeFloatMask(Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, (0x3AF) << 4)), 0xC), 0xCu);
+        vf14 = SanitizeFloatMask(Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, (0x3AF) << 4)), 0xC);
         vf28 = Ps2Vu0.BlendMask(vf28, (Vf0 - Ps2Vu0.BroadcastBc(vf28, 1u)), 0x4u);
         regI = BitConverter.UInt32BitsToSingle(0x3F800000u);
         vf27 = Ps2Vu0.BlendMask(vf27, (vf27 * Vector128.Create(regI)), 0x2u);
         acc = (Vf0 - Ps2Vu0.BroadcastBc(vf14, 0u));
         acc = Ps2Vu0.BlendMask(acc, (Vf0 + vf14), 0x8u);
-        vf14 = Ps2Vu0.BlendMask(vf14, (Vf0 + Ps2Vu0.BroadcastBc(vf14, 1u)), 0xCu);
+        vf14 = (Vf0 + Ps2Vu0.BroadcastBc(vf14, 1u));
         vf19 = Ps2Vu0.BlendMask(vf19, (Vf0 + Vector128<float>.One), 0x8u);
         vf30 = SanitizeFloatMask(Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, (0x3A7) << 4)), 0x3);
         vf28 = (vf28 * Ps2Vu0.BroadcastBc(vf27, 2u));
@@ -2471,7 +2484,7 @@ internal static class Vu1AotPrograms
         vf15 = vf17;
         vf19 = Ps2Vu0.BlendMask(vf19, FmaAdd(Vf0, Vf0, acc), 0xCu);
         regI = BitConverter.UInt32BitsToSingle(0x3F000000u);
-        vf18 = Ps2Vu0.BlendMask(vf18, (Vf0 - Ps2Vu0.BroadcastBc(vf28, 0u)), 0x4u);
+        vf18 = (Vf0 - Ps2Vu0.BroadcastBc(vf28, 0u));
         vf18 = Ps2Vu0.BlendMask(vf18, (Vf0 + Ps2Vu0.BroadcastBc(vf28, 1u)), 0x8u);
         Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, ((((short)vi4 + (-8)) & 0x3FF)) << 4)) = vf24;
         acc = (Vf0 + Vf0);
@@ -2482,12 +2495,12 @@ internal static class Vu1AotPrograms
         vf18 = Ps2Vu0.BlendMask(vf18, (vf18 + Ps2Vu0.BroadcastBc(vf27, 1u)), 0x8u);
         vf22 = (vf28 + vf27);
         acc = FmaSub(vf18, Ps2Vu0.BroadcastBc(vf19, 1u), acc);
-        vf14 = Ps2Vu0.BlendMask(vf14, FmaAdd(vf22, Ps2Vu0.BroadcastBc(vf19, 0u), acc), 0xCu);
+        vf14 = FmaAdd(vf22, Ps2Vu0.BroadcastBc(vf19, 0u), acc);
         acc = (vf16 * Ps2Vu0.BroadcastBc(vf22, 0u));
         vf23 = FmaAdd(vf17, Ps2Vu0.BroadcastBc(vf22, 1u), acc);
         acc = (vf16 * Ps2Vu0.BroadcastBc(vf14, 0u));
-        vf14 = Ps2Vu0.BlendMask(vf14, FmaAdd(vf17, Ps2Vu0.BroadcastBc(vf14, 1u), acc), 0xEu);
-        vf18 = Ps2Vu0.BlendMask(vf18, (Vf0 - Ps2Vu0.BroadcastBc(vf28, 1u)), 0x8u);
+        vf14 = FmaAdd(vf17, Ps2Vu0.BroadcastBc(vf14, 1u), acc);
+        vf18 = (Vf0 - Ps2Vu0.BroadcastBc(vf28, 1u));
         vf4 = Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, (0x46) << 4));
         vf18 = Ps2Vu0.BlendMask(vf18, (Vf0 + Ps2Vu0.BroadcastBc(vf28, 0u)), 0x4u);
         vf2 = Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, (0x44) << 4));
@@ -2662,11 +2675,11 @@ internal static class Vu1AotPrograms
         Unsafe.Add(ref vf, 4) = vf4;
         Unsafe.Add(ref vf, 6) = vf6;
         Unsafe.Add(ref vf, 13) = vf13;
-        Unsafe.Add(ref vf, 14) = vf14;
+        { ref Vector128<float> fl_14 = ref Unsafe.Add(ref vf, 14); fl_14 = Ps2Vu0.BlendMask(fl_14, vf14, 0xEu); }
         Unsafe.Add(ref vf, 15) = vf15;
         Unsafe.Add(ref vf, 16) = vf16;
         Unsafe.Add(ref vf, 17) = vf17;
-        Unsafe.Add(ref vf, 18) = vf18;
+        { ref Vector128<float> fl_18 = ref Unsafe.Add(ref vf, 18); fl_18 = Ps2Vu0.BlendMask(fl_18, vf18, 0xCu); }
         Unsafe.Add(ref vf, 19) = vf19;
         Unsafe.Add(ref vf, 20) = vf20;
         Unsafe.Add(ref vf, 21) = vf21;
@@ -2694,6 +2707,7 @@ internal static class Vu1AotPrograms
         Unsafe.Add(ref vi, 15) = vi15;
         vu.Q = regQ;
         vu.I = regI;
+        vu.MacFlags = macFlags;
         vu.ACC = acc;
         vu.Tpc = 0x1628;
         vu.TotalInstructionsExecuted += steps;
@@ -2713,7 +2727,7 @@ internal static class Vu1AotPrograms
     slot_980:
         vf27 = SanitizeFloatMask(Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, (0x3AF) << 4)), 0x3);
         vi9 = unchecked((ushort)(vi6 + vi2));
-        vf30 = Ps2Vu0.BlendMask(vf30, SanitizeFloatMask(Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, ((((short)vi9 + (1)) & 0x3FF)) << 4)), 0x1), 0x1u);
+        vf30 = SanitizeFloatMask(Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, ((((short)vi9 + (1)) & 0x3FF)) << 4)), 0x1);
         vi7 = unchecked((ushort)(vi9 + 65u));
         vi7 = unchecked((ushort)(vi7 + vi2));
         vf29 = Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, ((vi7 & 0x3FF)) << 4));
@@ -2730,7 +2744,7 @@ internal static class Vu1AotPrograms
         vf30 = Ps2Vu0.BlendMask(vf30, SanitizeFloatMask(Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, ((((short)vi9 + (17)) & 0x3FF)) << 4)), 0x2), 0x2u);
         vf31 = Ps2Vu0.BlendMask(vf31, (vf31 * vf27), 0x1u);
         vf25 = Ps2Vu0.BlendMask(vf25, vu.ExecRget(), 0x1u);
-        vf28 = Ps2Vu0.BlendMask(vf28, FmaAdd(vf10, Ps2Vu0.BroadcastBc(vf30, 3u), acc), 0x8u);
+        vf28 = FmaAdd(vf10, Ps2Vu0.BroadcastBc(vf30, 3u), acc);
         regI = BitConverter.UInt32BitsToSingle(0x40490FDBu);
         acc = Ps2Vu0.BlendMask(acc, (vf29 + Vector128.Create(regI)), 0x1u);
         vi1 = unchecked((ushort)(vi1 + vi2));
@@ -2747,11 +2761,11 @@ internal static class Vu1AotPrograms
         Unsafe.Add(ref vf, 4) = vf4;
         Unsafe.Add(ref vf, 6) = vf6;
         Unsafe.Add(ref vf, 13) = vf13;
-        Unsafe.Add(ref vf, 14) = vf14;
+        { ref Vector128<float> fl_14 = ref Unsafe.Add(ref vf, 14); fl_14 = Ps2Vu0.BlendMask(fl_14, vf14, 0xEu); }
         Unsafe.Add(ref vf, 15) = vf15;
         Unsafe.Add(ref vf, 16) = vf16;
         Unsafe.Add(ref vf, 17) = vf17;
-        Unsafe.Add(ref vf, 18) = vf18;
+        { ref Vector128<float> fl_18 = ref Unsafe.Add(ref vf, 18); fl_18 = Ps2Vu0.BlendMask(fl_18, vf18, 0xCu); }
         Unsafe.Add(ref vf, 19) = vf19;
         Unsafe.Add(ref vf, 20) = vf20;
         Unsafe.Add(ref vf, 21) = vf21;
@@ -2779,6 +2793,7 @@ internal static class Vu1AotPrograms
         Unsafe.Add(ref vi, 15) = vi15;
         vu.Q = regQ;
         vu.I = regI;
+        vu.MacFlags = macFlags;
         vu.ACC = acc;
         vu.TotalInstructionsExecuted += steps;
         return;
@@ -2845,6 +2860,7 @@ internal static class Vu1AotPrograms
         ushort vi15 = Unsafe.Add(ref vi, 15);
         float regQ = vu.Q;
         float regI = vu.I;
+        ushort macFlags = vu.MacFlags;
         goto slot_772;
     slot_740:
         vf28 = Ps2Vu0.BlendMask(vf28, (vf28 * vf28), 0x8u);
@@ -2873,7 +2889,7 @@ internal static class Vu1AotPrograms
         vf6 = Ps2Vu0.BlendMask(vf6, Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, ((((short)vi9 + (33)) & 0x3FF)) << 4)), 0x1u);
         acc = vf5;
         vf13 = Ps2Vu0.BlendMask(vf13, Vu1State.ExecMr32(vf13), 0xCu);
-        vf15 = Ps2Vu0.BlendMask(vf15, FmaAdd(vf30, Ps2Vu0.BroadcastBc(vf5, 2u), acc), 0x1u);
+        vf15 = FmaAdd(vf30, Ps2Vu0.BroadcastBc(vf5, 2u), acc);
         vf20 = Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, ((((short)vi9 + (49)) & 0x3FF)) << 4));
         acc = (vf17 * vf12);
         vf17 = Ps2Vu0.BlendMask(vf17, Vf0Mr32, 0x2u);
@@ -2889,7 +2905,7 @@ internal static class Vu1AotPrograms
     slot_772:
         vf28 = Ps2Vu0.BlendMask(vf28, (vf28 * vf28), 0x8u);
         vf20 = (vf20 * vf25);
-        vf26 = Ps2Vu0.BlendMask(vf26, (vf31 - vf11), 0xEu);
+        vf26 = (vf31 - vf11);
         regI = BitConverter.UInt32BitsToSingle(0x4B400000u);
         acc = (Vf0 * Vector128.Create(regI));
         regI = BitConverter.UInt32BitsToSingle(0x3E22F983u);
@@ -2899,25 +2915,25 @@ internal static class Vu1AotPrograms
         vf2 = SanitizeFloat(Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, (0x3A4) << 4)));
         acc = FmaAdd(vf28, Vector128.Create(regI), acc);
         regI = BitConverter.UInt32BitsToSingle(0x4B400000u);
-        vf15 = Ps2Vu0.BlendMask(vf15, FmaSub(Vf0, Vector128.Create(regI), acc), 0x1u);
+        vf15 = FmaSub(Vf0, Vector128.Create(regI), acc);
         regQ = Vu1State.VuDivFast(1.0f, vf28.GetElement(0));
-        vf26 = Ps2Vu0.BlendMask(vf26, (vf26 * Ps2Vu0.BroadcastBc(vf10, 3u)), 0xEu);
+        vf26 = (vf26 * Ps2Vu0.BroadcastBc(vf10, 3u));
         vf3 = SanitizeFloat(Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, (0x3A5) << 4)));
         vf27 = VuMax(vf27, vf7);
         vf4 = SanitizeFloat(Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, (0x3A6) << 4)));
         acc = vf28;
         regI = BitConverter.UInt32BitsToSingle(0x40C90FDBu);
         tmp = FmaSub(vf15, Vector128.Create(regI), acc);
-        vu.UpdateMacFlagsOnly(tmp, 0x1u);
+        macFlags = Vu1State.ComputeMacFlagsW(tmp);
         vf28 = Ps2Vu0.BlendMask(vf28, tmp, 0x1u);
         acc = Ps2Vu0.BlendMask(acc, (vf26 + vf29), 0xEu);
-        vf14 = Ps2Vu0.BlendMask(vf14, SanitizeFloatMask(Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, (0x3A9) << 4)), 0x2), 0x2u);
+        vf14 = SanitizeFloatMask(Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, (0x3A9) << 4)), 0x2);
         acc = Ps2Vu0.BlendMask(acc, FmaAdd(vf11, Ps2Vu0.BroadcastBc(vf30, 3u), acc), 0xEu);
         regI = BitConverter.UInt32BitsToSingle(0x40490FDBu);
-        vf29 = Ps2Vu0.BlendMask(vf29, FmaSub(vf26, Vector128.Create(regQ), acc), 0xEu);
+        vf29 = FmaSub(vf26, Vector128.Create(regQ), acc);
         vi1 = unchecked((ushort)(((ushort)0) + 16u));
         vf27 = VuMin(vf27, vf8);
-        vi1 = (ushort)(vu.MacFlags & vi1);
+        vi1 = (ushort)(macFlags & vi1);
         btTmp = (vi1 != ((ushort)0));
         vf20 = Ps2Vu0.BlendMask(vf20, (Vf0 - Vector128.Create(regI)), 0x4u);
         vf21 = Ps2Vu0.BlendMask(vf21, (Vf0 + Vector128.Create(regI)), 0x4u);
@@ -2928,7 +2944,7 @@ internal static class Vu1AotPrograms
         steps += 1;
     slot_791:
         tmp = (vf28 + Vector128.Create(regI));
-        vu.UpdateMacFlagsOnly(tmp, 0x1u);
+        macFlags = Vu1State.ComputeMacFlagsOnly(tmp, 0x1u);
         vf28 = Ps2Vu0.BlendMask(vf28, tmp, 0x1u);
         vf25 = SanitizeFloatMask(Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, (0x3A8) << 4)), 0x1);
         acc = vf4;
@@ -2936,8 +2952,8 @@ internal static class Vu1AotPrograms
         vf22 = Ps2Vu0.BlendMask(vf22, Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, (0x3A9) << 4)), 0x4u);
         acc = FmaAdd(vf2, Ps2Vu0.BroadcastBc(vf29, 1u), acc);
         vf20 = Ps2Vu0.BlendMask(vf20, (vf20 - Ps2Vu0.BroadcastBc(vf28, 3u)), 0x4u);
-        vi1 = (ushort)(vu.MacFlags & vi1);
-        vf21 = Ps2Vu0.BlendMask(vf21, (vf21 - Ps2Vu0.BroadcastBc(vf28, 3u)), 0x4u);
+        vi1 = (ushort)(macFlags & vi1);
+        vf21 = (vf21 - Ps2Vu0.BroadcastBc(vf28, 3u));
         btTmp = (vi1 != ((ushort)0));
         vf23 = Ps2Vu0.BlendMask(vf23, Vu1State.ExecAbs(vf28), 0x1u);
         vf30 = FmaAdd(vf1, Ps2Vu0.BroadcastBc(vf29, 0u), acc);
@@ -2966,7 +2982,7 @@ internal static class Vu1AotPrograms
         vf17 = Ps2Vu0.BlendMask(vf17, (vf17 * Ps2Vu0.BroadcastBc(vf20, 3u)), 0x8u);
         vf26 = Ps2Vu0.BlendMask(vf26, (vf28 * Vector128.Create(regI)), 0xCu);
         regI = BitConverter.UInt32BitsToSingle(0xBE2AAAA4u);
-        vf14 = Ps2Vu0.BlendMask(vf14, (vf28 * Vector128.Create(regI)), 0xCu);
+        vf14 = (vf28 * Vector128.Create(regI));
         regI = BitConverter.UInt32BitsToSingle(0x3C08873Eu);
         vf15 = (vf28 * Vector128.Create(regI));
         vf30 = Ps2Vu0.BlendMask(vf30, Vu1State.ExecMr32(vf22), 0x1u);
@@ -2974,7 +2990,7 @@ internal static class Vu1AotPrograms
         vf26 = Ps2Vu0.BlendMask(vf26, (vf26 * vf20), 0xCu);
         acc = (vf14 * vf20);
         regI = BitConverter.UInt32BitsToSingle(0x362E9C14u);
-        vf14 = Ps2Vu0.BlendMask(vf14, (vf28 * Vector128.Create(regI)), 0xCu);
+        vf14 = (vf28 * Vector128.Create(regI));
         vf20 = (vf23 * vf23);
         vi4 = unchecked((ushort)(vi4 + (12)));
         acc = FmaAdd(vf26, vf23, acc);
@@ -2988,13 +3004,13 @@ internal static class Vu1AotPrograms
         Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, ((((short)vi4 + (-2)) & 0x3FF)) << 4)) = vf24;
         vf27 = Ps2Vu0.BlendMask(vf27, (Vf0 + Ps2Vu0.BroadcastBc(vf28, 0u)), 0x4u);
         vf27 = Ps2Vu0.BlendMask(vf27, (Vf0 + Ps2Vu0.BroadcastBc(vf28, 1u)), 0x8u);
-        vf14 = Ps2Vu0.BlendMask(vf14, SanitizeFloatMask(Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, (0x3AF) << 4)), 0xC), 0xCu);
+        vf14 = SanitizeFloatMask(Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, (0x3AF) << 4)), 0xC);
         vf28 = Ps2Vu0.BlendMask(vf28, (Vf0 - Ps2Vu0.BroadcastBc(vf28, 1u)), 0x4u);
         regI = BitConverter.UInt32BitsToSingle(0x3F800000u);
         vf27 = Ps2Vu0.BlendMask(vf27, (vf27 * Vector128.Create(regI)), 0x2u);
         acc = (Vf0 - Ps2Vu0.BroadcastBc(vf14, 0u));
         acc = Ps2Vu0.BlendMask(acc, (Vf0 + vf14), 0x8u);
-        vf14 = Ps2Vu0.BlendMask(vf14, (Vf0 + Ps2Vu0.BroadcastBc(vf14, 1u)), 0xCu);
+        vf14 = (Vf0 + Ps2Vu0.BroadcastBc(vf14, 1u));
         vf19 = Ps2Vu0.BlendMask(vf19, (Vf0 + Vector128<float>.One), 0x8u);
         vf30 = SanitizeFloatMask(Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, (0x3A7) << 4)), 0x3);
         vf28 = (vf28 * Ps2Vu0.BroadcastBc(vf27, 2u));
@@ -3006,7 +3022,7 @@ internal static class Vu1AotPrograms
         vf15 = vf17;
         vf19 = Ps2Vu0.BlendMask(vf19, FmaAdd(Vf0, Vf0, acc), 0xCu);
         regI = BitConverter.UInt32BitsToSingle(0x3F000000u);
-        vf18 = Ps2Vu0.BlendMask(vf18, (Vf0 - Ps2Vu0.BroadcastBc(vf28, 0u)), 0x4u);
+        vf18 = (Vf0 - Ps2Vu0.BroadcastBc(vf28, 0u));
         vf18 = Ps2Vu0.BlendMask(vf18, (Vf0 + Ps2Vu0.BroadcastBc(vf28, 1u)), 0x8u);
         Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, ((((short)vi4 + (-8)) & 0x3FF)) << 4)) = vf24;
         acc = (Vf0 + Vf0);
@@ -3017,12 +3033,12 @@ internal static class Vu1AotPrograms
         vf18 = Ps2Vu0.BlendMask(vf18, (vf18 + Ps2Vu0.BroadcastBc(vf27, 1u)), 0x8u);
         vf22 = (vf28 + vf27);
         acc = FmaSub(vf18, Ps2Vu0.BroadcastBc(vf19, 1u), acc);
-        vf14 = Ps2Vu0.BlendMask(vf14, FmaAdd(vf22, Ps2Vu0.BroadcastBc(vf19, 0u), acc), 0xCu);
+        vf14 = FmaAdd(vf22, Ps2Vu0.BroadcastBc(vf19, 0u), acc);
         acc = (vf16 * Ps2Vu0.BroadcastBc(vf22, 0u));
         vf23 = FmaAdd(vf17, Ps2Vu0.BroadcastBc(vf22, 1u), acc);
         acc = (vf16 * Ps2Vu0.BroadcastBc(vf14, 0u));
-        vf14 = Ps2Vu0.BlendMask(vf14, FmaAdd(vf17, Ps2Vu0.BroadcastBc(vf14, 1u), acc), 0xEu);
-        vf18 = Ps2Vu0.BlendMask(vf18, (Vf0 - Ps2Vu0.BroadcastBc(vf28, 1u)), 0x8u);
+        vf14 = FmaAdd(vf17, Ps2Vu0.BroadcastBc(vf14, 1u), acc);
+        vf18 = (Vf0 - Ps2Vu0.BroadcastBc(vf28, 1u));
         vf4 = Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, (0x46) << 4));
         vf18 = Ps2Vu0.BlendMask(vf18, (Vf0 + Ps2Vu0.BroadcastBc(vf28, 0u)), 0x4u);
         vf2 = Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, (0x44) << 4));
@@ -3197,11 +3213,11 @@ internal static class Vu1AotPrograms
         Unsafe.Add(ref vf, 4) = vf4;
         Unsafe.Add(ref vf, 6) = vf6;
         Unsafe.Add(ref vf, 13) = vf13;
-        Unsafe.Add(ref vf, 14) = vf14;
+        { ref Vector128<float> fl_14 = ref Unsafe.Add(ref vf, 14); fl_14 = Ps2Vu0.BlendMask(fl_14, vf14, 0xEu); }
         Unsafe.Add(ref vf, 15) = vf15;
         Unsafe.Add(ref vf, 16) = vf16;
         Unsafe.Add(ref vf, 17) = vf17;
-        Unsafe.Add(ref vf, 18) = vf18;
+        { ref Vector128<float> fl_18 = ref Unsafe.Add(ref vf, 18); fl_18 = Ps2Vu0.BlendMask(fl_18, vf18, 0xCu); }
         Unsafe.Add(ref vf, 19) = vf19;
         Unsafe.Add(ref vf, 20) = vf20;
         Unsafe.Add(ref vf, 21) = vf21;
@@ -3228,6 +3244,7 @@ internal static class Vu1AotPrograms
         Unsafe.Add(ref vi, 15) = vi15;
         vu.Q = regQ;
         vu.I = regI;
+        vu.MacFlags = macFlags;
         vu.ACC = acc;
         vu.Tpc = 0x1628;
         vu.TotalInstructionsExecuted += steps;
@@ -3247,7 +3264,7 @@ internal static class Vu1AotPrograms
     slot_980:
         vf27 = SanitizeFloatMask(Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, (0x3AF) << 4)), 0x3);
         vi9 = unchecked((ushort)(vi6 + vi2));
-        vf30 = Ps2Vu0.BlendMask(vf30, SanitizeFloatMask(Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, ((((short)vi9 + (1)) & 0x3FF)) << 4)), 0x1), 0x1u);
+        vf30 = SanitizeFloatMask(Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, ((((short)vi9 + (1)) & 0x3FF)) << 4)), 0x1);
         vi7 = unchecked((ushort)(vi9 + 65u));
         vi7 = unchecked((ushort)(vi7 + vi2));
         vf29 = Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, ((vi7 & 0x3FF)) << 4));
@@ -3264,7 +3281,7 @@ internal static class Vu1AotPrograms
         vf30 = Ps2Vu0.BlendMask(vf30, SanitizeFloatMask(Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, ((((short)vi9 + (17)) & 0x3FF)) << 4)), 0x2), 0x2u);
         vf31 = Ps2Vu0.BlendMask(vf31, (vf31 * vf27), 0x1u);
         vf25 = Ps2Vu0.BlendMask(vf25, vu.ExecRget(), 0x1u);
-        vf28 = Ps2Vu0.BlendMask(vf28, FmaAdd(vf10, Ps2Vu0.BroadcastBc(vf30, 3u), acc), 0x8u);
+        vf28 = FmaAdd(vf10, Ps2Vu0.BroadcastBc(vf30, 3u), acc);
         regI = BitConverter.UInt32BitsToSingle(0x40490FDBu);
         acc = Ps2Vu0.BlendMask(acc, (vf29 + Vector128.Create(regI)), 0x1u);
         vi1 = unchecked((ushort)(vi1 + vi2));
@@ -3281,11 +3298,11 @@ internal static class Vu1AotPrograms
         Unsafe.Add(ref vf, 4) = vf4;
         Unsafe.Add(ref vf, 6) = vf6;
         Unsafe.Add(ref vf, 13) = vf13;
-        Unsafe.Add(ref vf, 14) = vf14;
+        { ref Vector128<float> fl_14 = ref Unsafe.Add(ref vf, 14); fl_14 = Ps2Vu0.BlendMask(fl_14, vf14, 0xEu); }
         Unsafe.Add(ref vf, 15) = vf15;
         Unsafe.Add(ref vf, 16) = vf16;
         Unsafe.Add(ref vf, 17) = vf17;
-        Unsafe.Add(ref vf, 18) = vf18;
+        { ref Vector128<float> fl_18 = ref Unsafe.Add(ref vf, 18); fl_18 = Ps2Vu0.BlendMask(fl_18, vf18, 0xCu); }
         Unsafe.Add(ref vf, 19) = vf19;
         Unsafe.Add(ref vf, 20) = vf20;
         Unsafe.Add(ref vf, 21) = vf21;
@@ -3312,6 +3329,7 @@ internal static class Vu1AotPrograms
         Unsafe.Add(ref vi, 15) = vi15;
         vu.Q = regQ;
         vu.I = regI;
+        vu.MacFlags = macFlags;
         vu.ACC = acc;
         vu.TotalInstructionsExecuted += steps;
         return;
@@ -3378,6 +3396,7 @@ internal static class Vu1AotPrograms
         ushort vi15 = Unsafe.Add(ref vi, 15);
         float regQ = vu.Q;
         float regI = vu.I;
+        ushort macFlags = vu.MacFlags;
         goto slot_801;
     slot_740:
         vf28 = Ps2Vu0.BlendMask(vf28, (vf28 * vf28), 0x8u);
@@ -3406,7 +3425,7 @@ internal static class Vu1AotPrograms
         vf6 = Ps2Vu0.BlendMask(vf6, Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, ((((short)vi9 + (33)) & 0x3FF)) << 4)), 0x1u);
         acc = vf5;
         vf13 = Ps2Vu0.BlendMask(vf13, Vu1State.ExecMr32(vf13), 0xCu);
-        vf15 = Ps2Vu0.BlendMask(vf15, FmaAdd(vf30, Ps2Vu0.BroadcastBc(vf5, 2u), acc), 0x1u);
+        vf15 = FmaAdd(vf30, Ps2Vu0.BroadcastBc(vf5, 2u), acc);
         vf20 = Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, ((((short)vi9 + (49)) & 0x3FF)) << 4));
         acc = (vf17 * vf12);
         vf17 = Ps2Vu0.BlendMask(vf17, Vf0Mr32, 0x2u);
@@ -3420,7 +3439,7 @@ internal static class Vu1AotPrograms
         vf27 = FmaAdd(vf6, Ps2Vu0.BroadcastBc(vf30, 3u), acc);
         vf28 = Ps2Vu0.BlendMask(vf28, (vf28 * vf28), 0x8u);
         vf20 = (vf20 * vf25);
-        vf26 = Ps2Vu0.BlendMask(vf26, (vf31 - vf11), 0xEu);
+        vf26 = (vf31 - vf11);
         regI = BitConverter.UInt32BitsToSingle(0x4B400000u);
         acc = (Vf0 * Vector128.Create(regI));
         regI = BitConverter.UInt32BitsToSingle(0x3E22F983u);
@@ -3430,25 +3449,25 @@ internal static class Vu1AotPrograms
         vf2 = SanitizeFloat(Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, (0x3A4) << 4)));
         acc = FmaAdd(vf28, Vector128.Create(regI), acc);
         regI = BitConverter.UInt32BitsToSingle(0x4B400000u);
-        vf15 = Ps2Vu0.BlendMask(vf15, FmaSub(Vf0, Vector128.Create(regI), acc), 0x1u);
+        vf15 = FmaSub(Vf0, Vector128.Create(regI), acc);
         regQ = Vu1State.VuDivFast(1.0f, vf28.GetElement(0));
-        vf26 = Ps2Vu0.BlendMask(vf26, (vf26 * Ps2Vu0.BroadcastBc(vf10, 3u)), 0xEu);
+        vf26 = (vf26 * Ps2Vu0.BroadcastBc(vf10, 3u));
         vf3 = SanitizeFloat(Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, (0x3A5) << 4)));
         vf27 = VuMax(vf27, vf7);
         vf4 = SanitizeFloat(Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, (0x3A6) << 4)));
         acc = vf28;
         regI = BitConverter.UInt32BitsToSingle(0x40C90FDBu);
         tmp = FmaSub(vf15, Vector128.Create(regI), acc);
-        vu.UpdateMacFlagsOnly(tmp, 0x1u);
+        macFlags = Vu1State.ComputeMacFlagsW(tmp);
         vf28 = Ps2Vu0.BlendMask(vf28, tmp, 0x1u);
         acc = Ps2Vu0.BlendMask(acc, (vf26 + vf29), 0xEu);
-        vf14 = Ps2Vu0.BlendMask(vf14, SanitizeFloatMask(Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, (0x3A9) << 4)), 0x2), 0x2u);
+        vf14 = SanitizeFloatMask(Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, (0x3A9) << 4)), 0x2);
         acc = Ps2Vu0.BlendMask(acc, FmaAdd(vf11, Ps2Vu0.BroadcastBc(vf30, 3u), acc), 0xEu);
         regI = BitConverter.UInt32BitsToSingle(0x40490FDBu);
-        vf29 = Ps2Vu0.BlendMask(vf29, FmaSub(vf26, Vector128.Create(regQ), acc), 0xEu);
+        vf29 = FmaSub(vf26, Vector128.Create(regQ), acc);
         vi1 = unchecked((ushort)(((ushort)0) + 16u));
         vf27 = VuMin(vf27, vf8);
-        vi1 = (ushort)(vu.MacFlags & vi1);
+        vi1 = (ushort)(macFlags & vi1);
         btTmp = (vi1 != ((ushort)0));
         vf20 = Ps2Vu0.BlendMask(vf20, (Vf0 - Vector128.Create(regI)), 0x4u);
         vf21 = Ps2Vu0.BlendMask(vf21, (Vf0 + Vector128.Create(regI)), 0x4u);
@@ -3459,7 +3478,7 @@ internal static class Vu1AotPrograms
         steps += 1;
     slot_791:
         tmp = (vf28 + Vector128.Create(regI));
-        vu.UpdateMacFlagsOnly(tmp, 0x1u);
+        macFlags = Vu1State.ComputeMacFlagsOnly(tmp, 0x1u);
         vf28 = Ps2Vu0.BlendMask(vf28, tmp, 0x1u);
         vf25 = SanitizeFloatMask(Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, (0x3A8) << 4)), 0x1);
         acc = vf4;
@@ -3467,8 +3486,8 @@ internal static class Vu1AotPrograms
         vf22 = Ps2Vu0.BlendMask(vf22, Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, (0x3A9) << 4)), 0x4u);
         acc = FmaAdd(vf2, Ps2Vu0.BroadcastBc(vf29, 1u), acc);
         vf20 = Ps2Vu0.BlendMask(vf20, (vf20 - Ps2Vu0.BroadcastBc(vf28, 3u)), 0x4u);
-        vi1 = (ushort)(vu.MacFlags & vi1);
-        vf21 = Ps2Vu0.BlendMask(vf21, (vf21 - Ps2Vu0.BroadcastBc(vf28, 3u)), 0x4u);
+        vi1 = (ushort)(macFlags & vi1);
+        vf21 = (vf21 - Ps2Vu0.BroadcastBc(vf28, 3u));
         btTmp = (vi1 != ((ushort)0));
         vf23 = Ps2Vu0.BlendMask(vf23, Vu1State.ExecAbs(vf28), 0x1u);
         vf30 = FmaAdd(vf1, Ps2Vu0.BroadcastBc(vf29, 0u), acc);
@@ -3497,7 +3516,7 @@ internal static class Vu1AotPrograms
         vf17 = Ps2Vu0.BlendMask(vf17, (vf17 * Ps2Vu0.BroadcastBc(vf20, 3u)), 0x8u);
         vf26 = Ps2Vu0.BlendMask(vf26, (vf28 * Vector128.Create(regI)), 0xCu);
         regI = BitConverter.UInt32BitsToSingle(0xBE2AAAA4u);
-        vf14 = Ps2Vu0.BlendMask(vf14, (vf28 * Vector128.Create(regI)), 0xCu);
+        vf14 = (vf28 * Vector128.Create(regI));
         regI = BitConverter.UInt32BitsToSingle(0x3C08873Eu);
         vf15 = (vf28 * Vector128.Create(regI));
         vf30 = Ps2Vu0.BlendMask(vf30, Vu1State.ExecMr32(vf22), 0x1u);
@@ -3505,7 +3524,7 @@ internal static class Vu1AotPrograms
         vf26 = Ps2Vu0.BlendMask(vf26, (vf26 * vf20), 0xCu);
         acc = (vf14 * vf20);
         regI = BitConverter.UInt32BitsToSingle(0x362E9C14u);
-        vf14 = Ps2Vu0.BlendMask(vf14, (vf28 * Vector128.Create(regI)), 0xCu);
+        vf14 = (vf28 * Vector128.Create(regI));
         vf20 = (vf23 * vf23);
         vi4 = unchecked((ushort)(vi4 + (12)));
         acc = FmaAdd(vf26, vf23, acc);
@@ -3519,13 +3538,13 @@ internal static class Vu1AotPrograms
         Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, ((((short)vi4 + (-2)) & 0x3FF)) << 4)) = vf24;
         vf27 = Ps2Vu0.BlendMask(vf27, (Vf0 + Ps2Vu0.BroadcastBc(vf28, 0u)), 0x4u);
         vf27 = Ps2Vu0.BlendMask(vf27, (Vf0 + Ps2Vu0.BroadcastBc(vf28, 1u)), 0x8u);
-        vf14 = Ps2Vu0.BlendMask(vf14, SanitizeFloatMask(Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, (0x3AF) << 4)), 0xC), 0xCu);
+        vf14 = SanitizeFloatMask(Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, (0x3AF) << 4)), 0xC);
         vf28 = Ps2Vu0.BlendMask(vf28, (Vf0 - Ps2Vu0.BroadcastBc(vf28, 1u)), 0x4u);
         regI = BitConverter.UInt32BitsToSingle(0x3F800000u);
         vf27 = Ps2Vu0.BlendMask(vf27, (vf27 * Vector128.Create(regI)), 0x2u);
         acc = (Vf0 - Ps2Vu0.BroadcastBc(vf14, 0u));
         acc = Ps2Vu0.BlendMask(acc, (Vf0 + vf14), 0x8u);
-        vf14 = Ps2Vu0.BlendMask(vf14, (Vf0 + Ps2Vu0.BroadcastBc(vf14, 1u)), 0xCu);
+        vf14 = (Vf0 + Ps2Vu0.BroadcastBc(vf14, 1u));
         vf19 = Ps2Vu0.BlendMask(vf19, (Vf0 + Vector128<float>.One), 0x8u);
         vf30 = SanitizeFloatMask(Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, (0x3A7) << 4)), 0x3);
         vf28 = (vf28 * Ps2Vu0.BroadcastBc(vf27, 2u));
@@ -3537,7 +3556,7 @@ internal static class Vu1AotPrograms
         vf15 = vf17;
         vf19 = Ps2Vu0.BlendMask(vf19, FmaAdd(Vf0, Vf0, acc), 0xCu);
         regI = BitConverter.UInt32BitsToSingle(0x3F000000u);
-        vf18 = Ps2Vu0.BlendMask(vf18, (Vf0 - Ps2Vu0.BroadcastBc(vf28, 0u)), 0x4u);
+        vf18 = (Vf0 - Ps2Vu0.BroadcastBc(vf28, 0u));
         vf18 = Ps2Vu0.BlendMask(vf18, (Vf0 + Ps2Vu0.BroadcastBc(vf28, 1u)), 0x8u);
         Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, ((((short)vi4 + (-8)) & 0x3FF)) << 4)) = vf24;
         acc = (Vf0 + Vf0);
@@ -3548,12 +3567,12 @@ internal static class Vu1AotPrograms
         vf18 = Ps2Vu0.BlendMask(vf18, (vf18 + Ps2Vu0.BroadcastBc(vf27, 1u)), 0x8u);
         vf22 = (vf28 + vf27);
         acc = FmaSub(vf18, Ps2Vu0.BroadcastBc(vf19, 1u), acc);
-        vf14 = Ps2Vu0.BlendMask(vf14, FmaAdd(vf22, Ps2Vu0.BroadcastBc(vf19, 0u), acc), 0xCu);
+        vf14 = FmaAdd(vf22, Ps2Vu0.BroadcastBc(vf19, 0u), acc);
         acc = (vf16 * Ps2Vu0.BroadcastBc(vf22, 0u));
         vf23 = FmaAdd(vf17, Ps2Vu0.BroadcastBc(vf22, 1u), acc);
         acc = (vf16 * Ps2Vu0.BroadcastBc(vf14, 0u));
-        vf14 = Ps2Vu0.BlendMask(vf14, FmaAdd(vf17, Ps2Vu0.BroadcastBc(vf14, 1u), acc), 0xEu);
-        vf18 = Ps2Vu0.BlendMask(vf18, (Vf0 - Ps2Vu0.BroadcastBc(vf28, 1u)), 0x8u);
+        vf14 = FmaAdd(vf17, Ps2Vu0.BroadcastBc(vf14, 1u), acc);
+        vf18 = (Vf0 - Ps2Vu0.BroadcastBc(vf28, 1u));
         vf4 = Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, (0x46) << 4));
         vf18 = Ps2Vu0.BlendMask(vf18, (Vf0 + Ps2Vu0.BroadcastBc(vf28, 0u)), 0x4u);
         vf2 = Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, (0x44) << 4));
@@ -3728,11 +3747,11 @@ internal static class Vu1AotPrograms
         Unsafe.Add(ref vf, 4) = vf4;
         Unsafe.Add(ref vf, 6) = vf6;
         Unsafe.Add(ref vf, 13) = vf13;
-        Unsafe.Add(ref vf, 14) = vf14;
+        { ref Vector128<float> fl_14 = ref Unsafe.Add(ref vf, 14); fl_14 = Ps2Vu0.BlendMask(fl_14, vf14, 0xEu); }
         Unsafe.Add(ref vf, 15) = vf15;
         Unsafe.Add(ref vf, 16) = vf16;
         Unsafe.Add(ref vf, 17) = vf17;
-        Unsafe.Add(ref vf, 18) = vf18;
+        { ref Vector128<float> fl_18 = ref Unsafe.Add(ref vf, 18); fl_18 = Ps2Vu0.BlendMask(fl_18, vf18, 0xCu); }
         Unsafe.Add(ref vf, 19) = vf19;
         Unsafe.Add(ref vf, 20) = vf20;
         Unsafe.Add(ref vf, 21) = vf21;
@@ -3759,6 +3778,7 @@ internal static class Vu1AotPrograms
         Unsafe.Add(ref vi, 15) = vi15;
         vu.Q = regQ;
         vu.I = regI;
+        vu.MacFlags = macFlags;
         vu.ACC = acc;
         vu.Tpc = 0x1628;
         vu.TotalInstructionsExecuted += steps;
@@ -3778,7 +3798,7 @@ internal static class Vu1AotPrograms
     slot_980:
         vf27 = SanitizeFloatMask(Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, (0x3AF) << 4)), 0x3);
         vi9 = unchecked((ushort)(vi6 + vi2));
-        vf30 = Ps2Vu0.BlendMask(vf30, SanitizeFloatMask(Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, ((((short)vi9 + (1)) & 0x3FF)) << 4)), 0x1), 0x1u);
+        vf30 = SanitizeFloatMask(Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, ((((short)vi9 + (1)) & 0x3FF)) << 4)), 0x1);
         vi7 = unchecked((ushort)(vi9 + 65u));
         vi7 = unchecked((ushort)(vi7 + vi2));
         vf29 = Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, ((vi7 & 0x3FF)) << 4));
@@ -3795,7 +3815,7 @@ internal static class Vu1AotPrograms
         vf30 = Ps2Vu0.BlendMask(vf30, SanitizeFloatMask(Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, ((((short)vi9 + (17)) & 0x3FF)) << 4)), 0x2), 0x2u);
         vf31 = Ps2Vu0.BlendMask(vf31, (vf31 * vf27), 0x1u);
         vf25 = Ps2Vu0.BlendMask(vf25, vu.ExecRget(), 0x1u);
-        vf28 = Ps2Vu0.BlendMask(vf28, FmaAdd(vf10, Ps2Vu0.BroadcastBc(vf30, 3u), acc), 0x8u);
+        vf28 = FmaAdd(vf10, Ps2Vu0.BroadcastBc(vf30, 3u), acc);
         regI = BitConverter.UInt32BitsToSingle(0x40490FDBu);
         acc = Ps2Vu0.BlendMask(acc, (vf29 + Vector128.Create(regI)), 0x1u);
         vi1 = unchecked((ushort)(vi1 + vi2));
@@ -3812,11 +3832,11 @@ internal static class Vu1AotPrograms
         Unsafe.Add(ref vf, 4) = vf4;
         Unsafe.Add(ref vf, 6) = vf6;
         Unsafe.Add(ref vf, 13) = vf13;
-        Unsafe.Add(ref vf, 14) = vf14;
+        { ref Vector128<float> fl_14 = ref Unsafe.Add(ref vf, 14); fl_14 = Ps2Vu0.BlendMask(fl_14, vf14, 0xEu); }
         Unsafe.Add(ref vf, 15) = vf15;
         Unsafe.Add(ref vf, 16) = vf16;
         Unsafe.Add(ref vf, 17) = vf17;
-        Unsafe.Add(ref vf, 18) = vf18;
+        { ref Vector128<float> fl_18 = ref Unsafe.Add(ref vf, 18); fl_18 = Ps2Vu0.BlendMask(fl_18, vf18, 0xCu); }
         Unsafe.Add(ref vf, 19) = vf19;
         Unsafe.Add(ref vf, 20) = vf20;
         Unsafe.Add(ref vf, 21) = vf21;
@@ -3843,6 +3863,7 @@ internal static class Vu1AotPrograms
         Unsafe.Add(ref vi, 15) = vi15;
         vu.Q = regQ;
         vu.I = regI;
+        vu.MacFlags = macFlags;
         vu.ACC = acc;
         vu.TotalInstructionsExecuted += steps;
         return;
@@ -3909,6 +3930,7 @@ internal static class Vu1AotPrograms
         ushort vi15 = Unsafe.Add(ref vi, 15);
         float regQ = vu.Q;
         float regI = vu.I;
+        ushort macFlags = vu.MacFlags;
         goto slot_925;
     slot_740:
         vf28 = Ps2Vu0.BlendMask(vf28, (vf28 * vf28), 0x8u);
@@ -3937,7 +3959,7 @@ internal static class Vu1AotPrograms
         vf6 = Ps2Vu0.BlendMask(vf6, Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, ((((short)vi9 + (33)) & 0x3FF)) << 4)), 0x1u);
         acc = vf5;
         vf13 = Ps2Vu0.BlendMask(vf13, Vu1State.ExecMr32(vf13), 0xCu);
-        vf15 = Ps2Vu0.BlendMask(vf15, FmaAdd(vf30, Ps2Vu0.BroadcastBc(vf5, 2u), acc), 0x1u);
+        vf15 = FmaAdd(vf30, Ps2Vu0.BroadcastBc(vf5, 2u), acc);
         vf20 = Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, ((((short)vi9 + (49)) & 0x3FF)) << 4));
         acc = (vf17 * vf12);
         vf17 = Ps2Vu0.BlendMask(vf17, Vf0Mr32, 0x2u);
@@ -3951,7 +3973,7 @@ internal static class Vu1AotPrograms
         vf27 = FmaAdd(vf6, Ps2Vu0.BroadcastBc(vf30, 3u), acc);
         vf28 = Ps2Vu0.BlendMask(vf28, (vf28 * vf28), 0x8u);
         vf20 = (vf20 * vf25);
-        vf26 = Ps2Vu0.BlendMask(vf26, (vf31 - vf11), 0xEu);
+        vf26 = (vf31 - vf11);
         regI = BitConverter.UInt32BitsToSingle(0x4B400000u);
         acc = (Vf0 * Vector128.Create(regI));
         regI = BitConverter.UInt32BitsToSingle(0x3E22F983u);
@@ -3961,25 +3983,25 @@ internal static class Vu1AotPrograms
         vf2 = SanitizeFloat(Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, (0x3A4) << 4)));
         acc = FmaAdd(vf28, Vector128.Create(regI), acc);
         regI = BitConverter.UInt32BitsToSingle(0x4B400000u);
-        vf15 = Ps2Vu0.BlendMask(vf15, FmaSub(Vf0, Vector128.Create(regI), acc), 0x1u);
+        vf15 = FmaSub(Vf0, Vector128.Create(regI), acc);
         regQ = Vu1State.VuDivFast(1.0f, vf28.GetElement(0));
-        vf26 = Ps2Vu0.BlendMask(vf26, (vf26 * Ps2Vu0.BroadcastBc(vf10, 3u)), 0xEu);
+        vf26 = (vf26 * Ps2Vu0.BroadcastBc(vf10, 3u));
         vf3 = SanitizeFloat(Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, (0x3A5) << 4)));
         vf27 = VuMax(vf27, vf7);
         vf4 = SanitizeFloat(Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, (0x3A6) << 4)));
         acc = vf28;
         regI = BitConverter.UInt32BitsToSingle(0x40C90FDBu);
         tmp = FmaSub(vf15, Vector128.Create(regI), acc);
-        vu.UpdateMacFlagsOnly(tmp, 0x1u);
+        macFlags = Vu1State.ComputeMacFlagsW(tmp);
         vf28 = Ps2Vu0.BlendMask(vf28, tmp, 0x1u);
         acc = Ps2Vu0.BlendMask(acc, (vf26 + vf29), 0xEu);
-        vf14 = Ps2Vu0.BlendMask(vf14, SanitizeFloatMask(Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, (0x3A9) << 4)), 0x2), 0x2u);
+        vf14 = SanitizeFloatMask(Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, (0x3A9) << 4)), 0x2);
         acc = Ps2Vu0.BlendMask(acc, FmaAdd(vf11, Ps2Vu0.BroadcastBc(vf30, 3u), acc), 0xEu);
         regI = BitConverter.UInt32BitsToSingle(0x40490FDBu);
-        vf29 = Ps2Vu0.BlendMask(vf29, FmaSub(vf26, Vector128.Create(regQ), acc), 0xEu);
+        vf29 = FmaSub(vf26, Vector128.Create(regQ), acc);
         vi1 = unchecked((ushort)(((ushort)0) + 16u));
         vf27 = VuMin(vf27, vf8);
-        vi1 = (ushort)(vu.MacFlags & vi1);
+        vi1 = (ushort)(macFlags & vi1);
         btTmp = (vi1 != ((ushort)0));
         vf20 = Ps2Vu0.BlendMask(vf20, (Vf0 - Vector128.Create(regI)), 0x4u);
         vf21 = Ps2Vu0.BlendMask(vf21, (Vf0 + Vector128.Create(regI)), 0x4u);
@@ -3990,7 +4012,7 @@ internal static class Vu1AotPrograms
         steps += 1;
     slot_791:
         tmp = (vf28 + Vector128.Create(regI));
-        vu.UpdateMacFlagsOnly(tmp, 0x1u);
+        macFlags = Vu1State.ComputeMacFlagsOnly(tmp, 0x1u);
         vf28 = Ps2Vu0.BlendMask(vf28, tmp, 0x1u);
         vf25 = SanitizeFloatMask(Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, (0x3A8) << 4)), 0x1);
         acc = vf4;
@@ -3998,8 +4020,8 @@ internal static class Vu1AotPrograms
         vf22 = Ps2Vu0.BlendMask(vf22, Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, (0x3A9) << 4)), 0x4u);
         acc = FmaAdd(vf2, Ps2Vu0.BroadcastBc(vf29, 1u), acc);
         vf20 = Ps2Vu0.BlendMask(vf20, (vf20 - Ps2Vu0.BroadcastBc(vf28, 3u)), 0x4u);
-        vi1 = (ushort)(vu.MacFlags & vi1);
-        vf21 = Ps2Vu0.BlendMask(vf21, (vf21 - Ps2Vu0.BroadcastBc(vf28, 3u)), 0x4u);
+        vi1 = (ushort)(macFlags & vi1);
+        vf21 = (vf21 - Ps2Vu0.BroadcastBc(vf28, 3u));
         btTmp = (vi1 != ((ushort)0));
         vf23 = Ps2Vu0.BlendMask(vf23, Vu1State.ExecAbs(vf28), 0x1u);
         vf30 = FmaAdd(vf1, Ps2Vu0.BroadcastBc(vf29, 0u), acc);
@@ -4028,7 +4050,7 @@ internal static class Vu1AotPrograms
         vf17 = Ps2Vu0.BlendMask(vf17, (vf17 * Ps2Vu0.BroadcastBc(vf20, 3u)), 0x8u);
         vf26 = Ps2Vu0.BlendMask(vf26, (vf28 * Vector128.Create(regI)), 0xCu);
         regI = BitConverter.UInt32BitsToSingle(0xBE2AAAA4u);
-        vf14 = Ps2Vu0.BlendMask(vf14, (vf28 * Vector128.Create(regI)), 0xCu);
+        vf14 = (vf28 * Vector128.Create(regI));
         regI = BitConverter.UInt32BitsToSingle(0x3C08873Eu);
         vf15 = (vf28 * Vector128.Create(regI));
         vf30 = Ps2Vu0.BlendMask(vf30, Vu1State.ExecMr32(vf22), 0x1u);
@@ -4036,7 +4058,7 @@ internal static class Vu1AotPrograms
         vf26 = Ps2Vu0.BlendMask(vf26, (vf26 * vf20), 0xCu);
         acc = (vf14 * vf20);
         regI = BitConverter.UInt32BitsToSingle(0x362E9C14u);
-        vf14 = Ps2Vu0.BlendMask(vf14, (vf28 * Vector128.Create(regI)), 0xCu);
+        vf14 = (vf28 * Vector128.Create(regI));
         vf20 = (vf23 * vf23);
         vi4 = unchecked((ushort)(vi4 + (12)));
         acc = FmaAdd(vf26, vf23, acc);
@@ -4050,16 +4072,16 @@ internal static class Vu1AotPrograms
         Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, ((((short)vi4 + (-2)) & 0x3FF)) << 4)) = vf24;
         vf27 = Ps2Vu0.BlendMask(vf27, (Vf0 + Ps2Vu0.BroadcastBc(vf28, 0u)), 0x4u);
         vf27 = Ps2Vu0.BlendMask(vf27, (Vf0 + Ps2Vu0.BroadcastBc(vf28, 1u)), 0x8u);
-        vf14 = Ps2Vu0.BlendMask(vf14, SanitizeFloatMask(Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, (0x3AF) << 4)), 0xC), 0xCu);
+        vf14 = SanitizeFloatMask(Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, (0x3AF) << 4)), 0xC);
         vf28 = Ps2Vu0.BlendMask(vf28, (Vf0 - Ps2Vu0.BroadcastBc(vf28, 1u)), 0x4u);
         regI = BitConverter.UInt32BitsToSingle(0x3F800000u);
         vf27 = Ps2Vu0.BlendMask(vf27, (vf27 * Vector128.Create(regI)), 0x2u);
         acc = (Vf0 - Ps2Vu0.BroadcastBc(vf14, 0u));
         acc = Ps2Vu0.BlendMask(acc, (Vf0 + vf14), 0x8u);
-        vf14 = Ps2Vu0.BlendMask(vf14, (Vf0 + Ps2Vu0.BroadcastBc(vf14, 1u)), 0xCu);
+        vf14 = (Vf0 + Ps2Vu0.BroadcastBc(vf14, 1u));
         vf19 = Ps2Vu0.BlendMask(vf19, (Vf0 + Vector128<float>.One), 0x8u);
         vf30 = SanitizeFloatMask(Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, (0x3A7) << 4)), 0x3);
-        vf28 = Ps2Vu0.BlendMask(vf28, (vf28 * Ps2Vu0.BroadcastBc(vf27, 2u)), 0xCu);
+        vf28 = (vf28 * Ps2Vu0.BroadcastBc(vf27, 2u));
         vf27 = Ps2Vu0.BlendMask(vf27, (vf27 * Ps2Vu0.BroadcastBc(vf27, 2u)), 0xCu);
         Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, ((((short)vi4 + (-5)) & 0x3FF)) << 4)) = vf24;
         acc = (acc + vf14);
@@ -4068,7 +4090,7 @@ internal static class Vu1AotPrograms
         vf15 = vf17;
         vf19 = Ps2Vu0.BlendMask(vf19, FmaAdd(Vf0, Vf0, acc), 0xCu);
         regI = BitConverter.UInt32BitsToSingle(0x3F000000u);
-        vf18 = Ps2Vu0.BlendMask(vf18, (Vf0 - Ps2Vu0.BroadcastBc(vf28, 0u)), 0x4u);
+        vf18 = (Vf0 - Ps2Vu0.BroadcastBc(vf28, 0u));
         vf18 = Ps2Vu0.BlendMask(vf18, (Vf0 + Ps2Vu0.BroadcastBc(vf28, 1u)), 0x8u);
         Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, ((((short)vi4 + (-8)) & 0x3FF)) << 4)) = vf24;
         acc = (Vf0 + Vf0);
@@ -4079,12 +4101,12 @@ internal static class Vu1AotPrograms
         vf18 = Ps2Vu0.BlendMask(vf18, (vf18 + Ps2Vu0.BroadcastBc(vf27, 1u)), 0x8u);
         vf22 = (vf28 + vf27);
         acc = FmaSub(vf18, Ps2Vu0.BroadcastBc(vf19, 1u), acc);
-        vf14 = Ps2Vu0.BlendMask(vf14, FmaAdd(vf22, Ps2Vu0.BroadcastBc(vf19, 0u), acc), 0xCu);
+        vf14 = FmaAdd(vf22, Ps2Vu0.BroadcastBc(vf19, 0u), acc);
         acc = (vf16 * Ps2Vu0.BroadcastBc(vf22, 0u));
         vf23 = FmaAdd(vf17, Ps2Vu0.BroadcastBc(vf22, 1u), acc);
         acc = (vf16 * Ps2Vu0.BroadcastBc(vf14, 0u));
-        vf14 = Ps2Vu0.BlendMask(vf14, FmaAdd(vf17, Ps2Vu0.BroadcastBc(vf14, 1u), acc), 0xEu);
-        vf18 = Ps2Vu0.BlendMask(vf18, (Vf0 - Ps2Vu0.BroadcastBc(vf28, 1u)), 0x8u);
+        vf14 = FmaAdd(vf17, Ps2Vu0.BroadcastBc(vf14, 1u), acc);
+        vf18 = (Vf0 - Ps2Vu0.BroadcastBc(vf28, 1u));
         vf4 = Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, (0x46) << 4));
         vf18 = Ps2Vu0.BlendMask(vf18, (Vf0 + Ps2Vu0.BroadcastBc(vf28, 0u)), 0x4u);
         vf2 = Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, (0x44) << 4));
@@ -4261,11 +4283,11 @@ internal static class Vu1AotPrograms
         Unsafe.Add(ref vf, 4) = vf4;
         Unsafe.Add(ref vf, 6) = vf6;
         Unsafe.Add(ref vf, 13) = vf13;
-        Unsafe.Add(ref vf, 14) = vf14;
+        { ref Vector128<float> fl_14 = ref Unsafe.Add(ref vf, 14); fl_14 = Ps2Vu0.BlendMask(fl_14, vf14, 0xEu); }
         Unsafe.Add(ref vf, 15) = vf15;
         Unsafe.Add(ref vf, 16) = vf16;
         Unsafe.Add(ref vf, 17) = vf17;
-        Unsafe.Add(ref vf, 18) = vf18;
+        { ref Vector128<float> fl_18 = ref Unsafe.Add(ref vf, 18); fl_18 = Ps2Vu0.BlendMask(fl_18, vf18, 0xCu); }
         Unsafe.Add(ref vf, 19) = vf19;
         Unsafe.Add(ref vf, 20) = vf20;
         Unsafe.Add(ref vf, 21) = vf21;
@@ -4292,6 +4314,7 @@ internal static class Vu1AotPrograms
         Unsafe.Add(ref vi, 15) = vi15;
         vu.Q = regQ;
         vu.I = regI;
+        vu.MacFlags = macFlags;
         vu.ACC = acc;
         vu.Tpc = 0x1628;
         vu.TotalInstructionsExecuted += steps;
@@ -4311,7 +4334,7 @@ internal static class Vu1AotPrograms
     slot_980:
         vf27 = SanitizeFloatMask(Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, (0x3AF) << 4)), 0x3);
         vi9 = unchecked((ushort)(vi6 + vi2));
-        vf30 = Ps2Vu0.BlendMask(vf30, SanitizeFloatMask(Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, ((((short)vi9 + (1)) & 0x3FF)) << 4)), 0x1), 0x1u);
+        vf30 = SanitizeFloatMask(Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, ((((short)vi9 + (1)) & 0x3FF)) << 4)), 0x1);
         vi7 = unchecked((ushort)(vi9 + 65u));
         vi7 = unchecked((ushort)(vi7 + vi2));
         vf29 = Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, ((vi7 & 0x3FF)) << 4));
@@ -4328,7 +4351,7 @@ internal static class Vu1AotPrograms
         vf30 = Ps2Vu0.BlendMask(vf30, SanitizeFloatMask(Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, ((((short)vi9 + (17)) & 0x3FF)) << 4)), 0x2), 0x2u);
         vf31 = Ps2Vu0.BlendMask(vf31, (vf31 * vf27), 0x1u);
         vf25 = Ps2Vu0.BlendMask(vf25, vu.ExecRget(), 0x1u);
-        vf28 = Ps2Vu0.BlendMask(vf28, FmaAdd(vf10, Ps2Vu0.BroadcastBc(vf30, 3u), acc), 0x8u);
+        vf28 = FmaAdd(vf10, Ps2Vu0.BroadcastBc(vf30, 3u), acc);
         regI = BitConverter.UInt32BitsToSingle(0x40490FDBu);
         acc = Ps2Vu0.BlendMask(acc, (vf29 + Vector128.Create(regI)), 0x1u);
         vi1 = unchecked((ushort)(vi1 + vi2));
@@ -4345,11 +4368,11 @@ internal static class Vu1AotPrograms
         Unsafe.Add(ref vf, 4) = vf4;
         Unsafe.Add(ref vf, 6) = vf6;
         Unsafe.Add(ref vf, 13) = vf13;
-        Unsafe.Add(ref vf, 14) = vf14;
+        { ref Vector128<float> fl_14 = ref Unsafe.Add(ref vf, 14); fl_14 = Ps2Vu0.BlendMask(fl_14, vf14, 0xEu); }
         Unsafe.Add(ref vf, 15) = vf15;
         Unsafe.Add(ref vf, 16) = vf16;
         Unsafe.Add(ref vf, 17) = vf17;
-        Unsafe.Add(ref vf, 18) = vf18;
+        { ref Vector128<float> fl_18 = ref Unsafe.Add(ref vf, 18); fl_18 = Ps2Vu0.BlendMask(fl_18, vf18, 0xCu); }
         Unsafe.Add(ref vf, 19) = vf19;
         Unsafe.Add(ref vf, 20) = vf20;
         Unsafe.Add(ref vf, 21) = vf21;
@@ -4376,6 +4399,7 @@ internal static class Vu1AotPrograms
         Unsafe.Add(ref vi, 15) = vi15;
         vu.Q = regQ;
         vu.I = regI;
+        vu.MacFlags = macFlags;
         vu.ACC = acc;
         vu.TotalInstructionsExecuted += steps;
         return;
@@ -4442,6 +4466,7 @@ internal static class Vu1AotPrograms
         ushort vi15 = Unsafe.Add(ref vi, 15);
         float regQ = vu.Q;
         float regI = vu.I;
+        ushort macFlags = vu.MacFlags;
         goto slot_975;
     slot_740:
         vf28 = Ps2Vu0.BlendMask(vf28, (vf28 * vf28), 0x8u);
@@ -4470,7 +4495,7 @@ internal static class Vu1AotPrograms
         vf6 = Ps2Vu0.BlendMask(vf6, Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, ((((short)vi9 + (33)) & 0x3FF)) << 4)), 0x1u);
         acc = vf5;
         vf13 = Ps2Vu0.BlendMask(vf13, Vu1State.ExecMr32(vf13), 0xCu);
-        vf15 = Ps2Vu0.BlendMask(vf15, FmaAdd(vf30, Ps2Vu0.BroadcastBc(vf5, 2u), acc), 0x1u);
+        vf15 = FmaAdd(vf30, Ps2Vu0.BroadcastBc(vf5, 2u), acc);
         vf20 = Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, ((((short)vi9 + (49)) & 0x3FF)) << 4));
         acc = (vf17 * vf12);
         vf17 = Ps2Vu0.BlendMask(vf17, Vf0Mr32, 0x2u);
@@ -4484,7 +4509,7 @@ internal static class Vu1AotPrograms
         vf27 = FmaAdd(vf6, Ps2Vu0.BroadcastBc(vf30, 3u), acc);
         vf28 = Ps2Vu0.BlendMask(vf28, (vf28 * vf28), 0x8u);
         vf20 = (vf20 * vf25);
-        vf26 = Ps2Vu0.BlendMask(vf26, (vf31 - vf11), 0xEu);
+        vf26 = (vf31 - vf11);
         regI = BitConverter.UInt32BitsToSingle(0x4B400000u);
         acc = (Vf0 * Vector128.Create(regI));
         regI = BitConverter.UInt32BitsToSingle(0x3E22F983u);
@@ -4494,25 +4519,25 @@ internal static class Vu1AotPrograms
         vf2 = SanitizeFloat(Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, (0x3A4) << 4)));
         acc = FmaAdd(vf28, Vector128.Create(regI), acc);
         regI = BitConverter.UInt32BitsToSingle(0x4B400000u);
-        vf15 = Ps2Vu0.BlendMask(vf15, FmaSub(Vf0, Vector128.Create(regI), acc), 0x1u);
+        vf15 = FmaSub(Vf0, Vector128.Create(regI), acc);
         regQ = Vu1State.VuDivFast(1.0f, vf28.GetElement(0));
-        vf26 = Ps2Vu0.BlendMask(vf26, (vf26 * Ps2Vu0.BroadcastBc(vf10, 3u)), 0xEu);
+        vf26 = (vf26 * Ps2Vu0.BroadcastBc(vf10, 3u));
         vf3 = SanitizeFloat(Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, (0x3A5) << 4)));
         vf27 = VuMax(vf27, vf7);
         vf4 = SanitizeFloat(Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, (0x3A6) << 4)));
         acc = vf28;
         regI = BitConverter.UInt32BitsToSingle(0x40C90FDBu);
         tmp = FmaSub(vf15, Vector128.Create(regI), acc);
-        vu.UpdateMacFlagsOnly(tmp, 0x1u);
+        macFlags = Vu1State.ComputeMacFlagsW(tmp);
         vf28 = Ps2Vu0.BlendMask(vf28, tmp, 0x1u);
         acc = Ps2Vu0.BlendMask(acc, (vf26 + vf29), 0xEu);
-        vf14 = Ps2Vu0.BlendMask(vf14, SanitizeFloatMask(Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, (0x3A9) << 4)), 0x2), 0x2u);
+        vf14 = SanitizeFloatMask(Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, (0x3A9) << 4)), 0x2);
         acc = Ps2Vu0.BlendMask(acc, FmaAdd(vf11, Ps2Vu0.BroadcastBc(vf30, 3u), acc), 0xEu);
         regI = BitConverter.UInt32BitsToSingle(0x40490FDBu);
-        vf29 = Ps2Vu0.BlendMask(vf29, FmaSub(vf26, Vector128.Create(regQ), acc), 0xEu);
+        vf29 = FmaSub(vf26, Vector128.Create(regQ), acc);
         vi1 = unchecked((ushort)(((ushort)0) + 16u));
         vf27 = VuMin(vf27, vf8);
-        vi1 = (ushort)(vu.MacFlags & vi1);
+        vi1 = (ushort)(macFlags & vi1);
         btTmp = (vi1 != ((ushort)0));
         vf20 = Ps2Vu0.BlendMask(vf20, (Vf0 - Vector128.Create(regI)), 0x4u);
         vf21 = Ps2Vu0.BlendMask(vf21, (Vf0 + Vector128.Create(regI)), 0x4u);
@@ -4523,7 +4548,7 @@ internal static class Vu1AotPrograms
         steps += 1;
     slot_791:
         tmp = (vf28 + Vector128.Create(regI));
-        vu.UpdateMacFlagsOnly(tmp, 0x1u);
+        macFlags = Vu1State.ComputeMacFlagsOnly(tmp, 0x1u);
         vf28 = Ps2Vu0.BlendMask(vf28, tmp, 0x1u);
         vf25 = SanitizeFloatMask(Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, (0x3A8) << 4)), 0x1);
         acc = vf4;
@@ -4531,8 +4556,8 @@ internal static class Vu1AotPrograms
         vf22 = Ps2Vu0.BlendMask(vf22, Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, (0x3A9) << 4)), 0x4u);
         acc = FmaAdd(vf2, Ps2Vu0.BroadcastBc(vf29, 1u), acc);
         vf20 = Ps2Vu0.BlendMask(vf20, (vf20 - Ps2Vu0.BroadcastBc(vf28, 3u)), 0x4u);
-        vi1 = (ushort)(vu.MacFlags & vi1);
-        vf21 = Ps2Vu0.BlendMask(vf21, (vf21 - Ps2Vu0.BroadcastBc(vf28, 3u)), 0x4u);
+        vi1 = (ushort)(macFlags & vi1);
+        vf21 = (vf21 - Ps2Vu0.BroadcastBc(vf28, 3u));
         btTmp = (vi1 != ((ushort)0));
         vf23 = Ps2Vu0.BlendMask(vf23, Vu1State.ExecAbs(vf28), 0x1u);
         vf30 = FmaAdd(vf1, Ps2Vu0.BroadcastBc(vf29, 0u), acc);
@@ -4561,7 +4586,7 @@ internal static class Vu1AotPrograms
         vf17 = Ps2Vu0.BlendMask(vf17, (vf17 * Ps2Vu0.BroadcastBc(vf20, 3u)), 0x8u);
         vf26 = Ps2Vu0.BlendMask(vf26, (vf28 * Vector128.Create(regI)), 0xCu);
         regI = BitConverter.UInt32BitsToSingle(0xBE2AAAA4u);
-        vf14 = Ps2Vu0.BlendMask(vf14, (vf28 * Vector128.Create(regI)), 0xCu);
+        vf14 = (vf28 * Vector128.Create(regI));
         regI = BitConverter.UInt32BitsToSingle(0x3C08873Eu);
         vf15 = (vf28 * Vector128.Create(regI));
         vf30 = Ps2Vu0.BlendMask(vf30, Vu1State.ExecMr32(vf22), 0x1u);
@@ -4569,7 +4594,7 @@ internal static class Vu1AotPrograms
         vf26 = Ps2Vu0.BlendMask(vf26, (vf26 * vf20), 0xCu);
         acc = (vf14 * vf20);
         regI = BitConverter.UInt32BitsToSingle(0x362E9C14u);
-        vf14 = Ps2Vu0.BlendMask(vf14, (vf28 * Vector128.Create(regI)), 0xCu);
+        vf14 = (vf28 * Vector128.Create(regI));
         vf20 = (vf23 * vf23);
         vi4 = unchecked((ushort)(vi4 + (12)));
         acc = FmaAdd(vf26, vf23, acc);
@@ -4583,13 +4608,13 @@ internal static class Vu1AotPrograms
         Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, ((((short)vi4 + (-2)) & 0x3FF)) << 4)) = vf24;
         vf27 = Ps2Vu0.BlendMask(vf27, (Vf0 + Ps2Vu0.BroadcastBc(vf28, 0u)), 0x4u);
         vf27 = Ps2Vu0.BlendMask(vf27, (Vf0 + Ps2Vu0.BroadcastBc(vf28, 1u)), 0x8u);
-        vf14 = Ps2Vu0.BlendMask(vf14, SanitizeFloatMask(Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, (0x3AF) << 4)), 0xC), 0xCu);
+        vf14 = SanitizeFloatMask(Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, (0x3AF) << 4)), 0xC);
         vf28 = Ps2Vu0.BlendMask(vf28, (Vf0 - Ps2Vu0.BroadcastBc(vf28, 1u)), 0x4u);
         regI = BitConverter.UInt32BitsToSingle(0x3F800000u);
         vf27 = Ps2Vu0.BlendMask(vf27, (vf27 * Vector128.Create(regI)), 0x2u);
         acc = (Vf0 - Ps2Vu0.BroadcastBc(vf14, 0u));
         acc = Ps2Vu0.BlendMask(acc, (Vf0 + vf14), 0x8u);
-        vf14 = Ps2Vu0.BlendMask(vf14, (Vf0 + Ps2Vu0.BroadcastBc(vf14, 1u)), 0xCu);
+        vf14 = (Vf0 + Ps2Vu0.BroadcastBc(vf14, 1u));
         vf19 = Ps2Vu0.BlendMask(vf19, (Vf0 + Vector128<float>.One), 0x8u);
         vf30 = SanitizeFloatMask(Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, (0x3A7) << 4)), 0x3);
         vf28 = (vf28 * Ps2Vu0.BroadcastBc(vf27, 2u));
@@ -4601,7 +4626,7 @@ internal static class Vu1AotPrograms
         vf15 = vf17;
         vf19 = Ps2Vu0.BlendMask(vf19, FmaAdd(Vf0, Vf0, acc), 0xCu);
         regI = BitConverter.UInt32BitsToSingle(0x3F000000u);
-        vf18 = Ps2Vu0.BlendMask(vf18, (Vf0 - Ps2Vu0.BroadcastBc(vf28, 0u)), 0x4u);
+        vf18 = (Vf0 - Ps2Vu0.BroadcastBc(vf28, 0u));
         vf18 = Ps2Vu0.BlendMask(vf18, (Vf0 + Ps2Vu0.BroadcastBc(vf28, 1u)), 0x8u);
         Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, ((((short)vi4 + (-8)) & 0x3FF)) << 4)) = vf24;
         acc = (Vf0 + Vf0);
@@ -4612,12 +4637,12 @@ internal static class Vu1AotPrograms
         vf18 = Ps2Vu0.BlendMask(vf18, (vf18 + Ps2Vu0.BroadcastBc(vf27, 1u)), 0x8u);
         vf22 = (vf28 + vf27);
         acc = FmaSub(vf18, Ps2Vu0.BroadcastBc(vf19, 1u), acc);
-        vf14 = Ps2Vu0.BlendMask(vf14, FmaAdd(vf22, Ps2Vu0.BroadcastBc(vf19, 0u), acc), 0xCu);
+        vf14 = FmaAdd(vf22, Ps2Vu0.BroadcastBc(vf19, 0u), acc);
         acc = (vf16 * Ps2Vu0.BroadcastBc(vf22, 0u));
         vf23 = FmaAdd(vf17, Ps2Vu0.BroadcastBc(vf22, 1u), acc);
         acc = (vf16 * Ps2Vu0.BroadcastBc(vf14, 0u));
-        vf14 = Ps2Vu0.BlendMask(vf14, FmaAdd(vf17, Ps2Vu0.BroadcastBc(vf14, 1u), acc), 0xEu);
-        vf18 = Ps2Vu0.BlendMask(vf18, (Vf0 - Ps2Vu0.BroadcastBc(vf28, 1u)), 0x8u);
+        vf14 = FmaAdd(vf17, Ps2Vu0.BroadcastBc(vf14, 1u), acc);
+        vf18 = (Vf0 - Ps2Vu0.BroadcastBc(vf28, 1u));
         vf4 = Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, (0x46) << 4));
         vf18 = Ps2Vu0.BlendMask(vf18, (Vf0 + Ps2Vu0.BroadcastBc(vf28, 0u)), 0x4u);
         vf2 = Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, (0x44) << 4));
@@ -4792,11 +4817,11 @@ internal static class Vu1AotPrograms
         Unsafe.Add(ref vf, 4) = vf4;
         Unsafe.Add(ref vf, 6) = vf6;
         Unsafe.Add(ref vf, 13) = vf13;
-        Unsafe.Add(ref vf, 14) = vf14;
+        { ref Vector128<float> fl_14 = ref Unsafe.Add(ref vf, 14); fl_14 = Ps2Vu0.BlendMask(fl_14, vf14, 0xEu); }
         Unsafe.Add(ref vf, 15) = vf15;
         Unsafe.Add(ref vf, 16) = vf16;
         Unsafe.Add(ref vf, 17) = vf17;
-        Unsafe.Add(ref vf, 18) = vf18;
+        { ref Vector128<float> fl_18 = ref Unsafe.Add(ref vf, 18); fl_18 = Ps2Vu0.BlendMask(fl_18, vf18, 0xCu); }
         Unsafe.Add(ref vf, 19) = vf19;
         Unsafe.Add(ref vf, 20) = vf20;
         Unsafe.Add(ref vf, 21) = vf21;
@@ -4823,6 +4848,7 @@ internal static class Vu1AotPrograms
         Unsafe.Add(ref vi, 15) = vi15;
         vu.Q = regQ;
         vu.I = regI;
+        vu.MacFlags = macFlags;
         vu.ACC = acc;
         vu.Tpc = 0x1628;
         vu.TotalInstructionsExecuted += steps;
@@ -4842,7 +4868,7 @@ internal static class Vu1AotPrograms
     slot_980:
         vf27 = SanitizeFloatMask(Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, (0x3AF) << 4)), 0x3);
         vi9 = unchecked((ushort)(vi6 + vi2));
-        vf30 = Ps2Vu0.BlendMask(vf30, SanitizeFloatMask(Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, ((((short)vi9 + (1)) & 0x3FF)) << 4)), 0x1), 0x1u);
+        vf30 = SanitizeFloatMask(Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, ((((short)vi9 + (1)) & 0x3FF)) << 4)), 0x1);
         vi7 = unchecked((ushort)(vi9 + 65u));
         vi7 = unchecked((ushort)(vi7 + vi2));
         vf29 = Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, ((vi7 & 0x3FF)) << 4));
@@ -4859,7 +4885,7 @@ internal static class Vu1AotPrograms
         vf30 = Ps2Vu0.BlendMask(vf30, SanitizeFloatMask(Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, ((((short)vi9 + (17)) & 0x3FF)) << 4)), 0x2), 0x2u);
         vf31 = Ps2Vu0.BlendMask(vf31, (vf31 * vf27), 0x1u);
         vf25 = Ps2Vu0.BlendMask(vf25, vu.ExecRget(), 0x1u);
-        vf28 = Ps2Vu0.BlendMask(vf28, FmaAdd(vf10, Ps2Vu0.BroadcastBc(vf30, 3u), acc), 0x8u);
+        vf28 = FmaAdd(vf10, Ps2Vu0.BroadcastBc(vf30, 3u), acc);
         regI = BitConverter.UInt32BitsToSingle(0x40490FDBu);
         acc = Ps2Vu0.BlendMask(acc, (vf29 + Vector128.Create(regI)), 0x1u);
         vi1 = unchecked((ushort)(vi1 + vi2));
@@ -4876,11 +4902,11 @@ internal static class Vu1AotPrograms
         Unsafe.Add(ref vf, 4) = vf4;
         Unsafe.Add(ref vf, 6) = vf6;
         Unsafe.Add(ref vf, 13) = vf13;
-        Unsafe.Add(ref vf, 14) = vf14;
+        { ref Vector128<float> fl_14 = ref Unsafe.Add(ref vf, 14); fl_14 = Ps2Vu0.BlendMask(fl_14, vf14, 0xEu); }
         Unsafe.Add(ref vf, 15) = vf15;
         Unsafe.Add(ref vf, 16) = vf16;
         Unsafe.Add(ref vf, 17) = vf17;
-        Unsafe.Add(ref vf, 18) = vf18;
+        { ref Vector128<float> fl_18 = ref Unsafe.Add(ref vf, 18); fl_18 = Ps2Vu0.BlendMask(fl_18, vf18, 0xCu); }
         Unsafe.Add(ref vf, 19) = vf19;
         Unsafe.Add(ref vf, 20) = vf20;
         Unsafe.Add(ref vf, 21) = vf21;
@@ -4907,6 +4933,7 @@ internal static class Vu1AotPrograms
         Unsafe.Add(ref vi, 15) = vi15;
         vu.Q = regQ;
         vu.I = regI;
+        vu.MacFlags = macFlags;
         vu.ACC = acc;
         vu.TotalInstructionsExecuted += steps;
         return;
@@ -5152,6 +5179,7 @@ internal static class Vu1AotPrograms
         ushort vi11 = Unsafe.Add(ref vi, 11);
         float regQ = vu.Q;
         float regI = vu.I;
+        ushort macFlags = vu.MacFlags;
         vi6 = vu.Top;
         vf8 = Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, (0x3AD) << 4));
         vi1 = Unsafe.ReadUnaligned<ushort>(ref Unsafe.Add(ref dm, ((vi6 & 0x3FF)) << 4));
@@ -5161,7 +5189,7 @@ internal static class Vu1AotPrograms
         vi10 = unchecked((ushort)(((ushort)0) + 32767u));
         vf27 = SanitizeFloatMask(Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, (0x3AF) << 4)), 0x3);
         vi9 = unchecked((ushort)(vi6 + vi1));
-        vf30 = Ps2Vu0.BlendMask(vf30, SanitizeFloatMask(Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, ((((short)vi9 + (1)) & 0x3FF)) << 4)), 0x1), 0x1u);
+        vf30 = SanitizeFloatMask(Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, ((((short)vi9 + (1)) & 0x3FF)) << 4)), 0x1);
         vi7 = unchecked((ushort)(vi9 + 65u));
         vi7 = unchecked((ushort)(vi7 + vi1));
         vf27 = Ps2Vu0.BlendMask(vf27, VuMin(vf27, Ps2Vu0.BroadcastBc(vf30, 3u)), 0x2u);
@@ -5177,7 +5205,7 @@ internal static class Vu1AotPrograms
         vf26 = Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, (0x3B3) << 4));
         vf14 = Ps2Vu0.BlendMask(vf14, (vf14 + vf14), 0x1u);
         vf31 = SanitizeFloat(Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, ((((short)vi7 + (1)) & 0x3FF)) << 4)));
-        vf21 = Ps2Vu0.BlendMask(vf21, (Vf0 + Vector128<float>.One), 0xCu);
+        vf21 = (Vf0 + Vector128<float>.One);
         vi1 = unchecked((ushort)(vi1 + vi1));
         vi11 = unchecked((ushort)(vi10 + 1u));
         vi1 = (ushort)(vi1 | vi11);
@@ -5186,7 +5214,7 @@ internal static class Vu1AotPrograms
         acc = Ps2Vu0.BlendMask(acc, (Vf0 + Vector128<float>.One), 0x8u);
         vf30 = Ps2Vu0.BlendMask(vf30, SanitizeFloatMask(Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, ((((short)vi9 + (17)) & 0x3FF)) << 4)), 0x2), 0x2u);
         vf25 = Ps2Vu0.BlendMask(vf25, vu.ExecRget(), 0x1u);
-        vf28 = Ps2Vu0.BlendMask(vf28, FmaAdd(vf10, Ps2Vu0.BroadcastBc(vf30, 3u), acc), 0x8u);
+        vf28 = FmaAdd(vf10, Ps2Vu0.BroadcastBc(vf30, 3u), acc);
         regI = BitConverter.UInt32BitsToSingle(0x40490FDBu);
         acc = Ps2Vu0.BlendMask(acc, (vf29 + Vector128.Create(regI)), 0x1u);
         idxTmp = vi4;
@@ -5200,7 +5228,7 @@ internal static class Vu1AotPrograms
     slot_766:
         vf28 = Ps2Vu0.BlendMask(vf28, (vf28 * vf28), 0x8u);
         regI = BitConverter.UInt32BitsToSingle(0x3FC90FDBu);
-        vf19 = Ps2Vu0.BlendMask(vf19, (Vf0 + Vector128.Create(regI)), 0x8u);
+        vf19 = (Vf0 + Vector128.Create(regI));
         Unsafe.WriteUnaligned(ref Unsafe.Add(ref dm, ((vi5 & 0x3FF)) << 4), (uint)vi1);
         steps += 2;
     slot_768:
@@ -5238,7 +5266,7 @@ internal static class Vu1AotPrograms
         vf27 = FmaAdd(vf6, Ps2Vu0.BroadcastBc(vf30, 3u), acc);
         vf28 = Ps2Vu0.BlendMask(vf28, (vf28 * vf28), 0x8u);
         vf20 = (vf20 * vf25);
-        vf26 = Ps2Vu0.BlendMask(vf26, (vf31 - vf11), 0xEu);
+        vf26 = (vf31 - vf11);
         regI = BitConverter.UInt32BitsToSingle(0x4B400000u);
         acc = (Vf0 * Vector128.Create(regI));
         regI = BitConverter.UInt32BitsToSingle(0x3E22F983u);
@@ -5248,21 +5276,21 @@ internal static class Vu1AotPrograms
         regI = BitConverter.UInt32BitsToSingle(0x4B400000u);
         vf15 = Ps2Vu0.BlendMask(vf15, FmaSub(Vf0, Vector128.Create(regI), acc), 0x1u);
         regQ = Vu1State.VuDivFast(1.0f, vf28.GetElement(0));
-        vf26 = Ps2Vu0.BlendMask(vf26, (vf26 * Ps2Vu0.BroadcastBc(vf10, 3u)), 0xEu);
+        vf26 = (vf26 * Ps2Vu0.BroadcastBc(vf10, 3u));
         vf27 = VuMax(vf27, vf7);
         acc = vf28;
         regI = BitConverter.UInt32BitsToSingle(0x40C90FDBu);
         tmp = FmaSub(vf15, Vector128.Create(regI), acc);
-        vu.UpdateMacFlagsOnly(tmp, 0x1u);
+        macFlags = Vu1State.ComputeMacFlagsW(tmp);
         vf28 = Ps2Vu0.BlendMask(vf28, tmp, 0x1u);
         acc = Ps2Vu0.BlendMask(acc, (vf26 + vf29), 0xEu);
         vf14 = Ps2Vu0.BlendMask(vf14, Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, (0x3A9) << 4)), 0x2u);
         acc = Ps2Vu0.BlendMask(acc, FmaAdd(vf11, Ps2Vu0.BroadcastBc(vf30, 3u), acc), 0xEu);
         regI = BitConverter.UInt32BitsToSingle(0x40490FDBu);
-        vf29 = Ps2Vu0.BlendMask(vf29, FmaSub(vf26, Vector128.Create(regQ), acc), 0xEu);
+        vf29 = FmaSub(vf26, Vector128.Create(regQ), acc);
         vi1 = unchecked((ushort)(((ushort)0) + 16u));
         vf27 = VuMin(vf27, vf8);
-        vi1 = (ushort)(vu.MacFlags & vi1);
+        vi1 = (ushort)(macFlags & vi1);
         btTmp = (vi1 != ((ushort)0));
         vf20 = Ps2Vu0.BlendMask(vf20, (Vf0 - Vector128.Create(regI)), 0x4u);
         vf21 = Ps2Vu0.BlendMask(vf21, (Vf0 + Vector128.Create(regI)), 0x4u);
@@ -5273,7 +5301,7 @@ internal static class Vu1AotPrograms
         steps += 1;
     slot_817:
         tmp = (vf28 + Vector128.Create(regI));
-        vu.UpdateMacFlagsOnly(tmp, 0x1u);
+        macFlags = Vu1State.ComputeMacFlagsOnly(tmp, 0x1u);
         vf28 = Ps2Vu0.BlendMask(vf28, tmp, 0x1u);
         vf25 = SanitizeFloatMask(Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, (0x3A8) << 4)), 0x1);
         acc = vf4;
@@ -5281,8 +5309,8 @@ internal static class Vu1AotPrograms
         vf22 = Ps2Vu0.BlendMask(vf22, Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, (0x3A9) << 4)), 0x4u);
         acc = FmaAdd(vf2, Ps2Vu0.BroadcastBc(vf29, 1u), acc);
         vf20 = Ps2Vu0.BlendMask(vf20, (vf20 - Ps2Vu0.BroadcastBc(vf28, 3u)), 0x4u);
-        vi1 = (ushort)(vu.MacFlags & vi1);
-        vf21 = Ps2Vu0.BlendMask(vf21, (vf21 - Ps2Vu0.BroadcastBc(vf28, 3u)), 0x4u);
+        vi1 = (ushort)(macFlags & vi1);
+        vf21 = (vf21 - Ps2Vu0.BroadcastBc(vf28, 3u));
         btTmp = (vi1 != ((ushort)0));
         vf23 = Ps2Vu0.BlendMask(vf23, Vu1State.ExecAbs(vf28), 0x1u);
         vf30 = FmaAdd(vf1, Ps2Vu0.BroadcastBc(vf29, 0u), acc);
@@ -5491,6 +5519,7 @@ internal static class Vu1AotPrograms
         Unsafe.Add(ref vi, 11) = vi11;
         vu.Q = regQ;
         vu.I = regI;
+        vu.MacFlags = macFlags;
         vu.ACC = acc;
         vu.Tpc = 0x16F8;
         vu.TotalInstructionsExecuted += steps;
@@ -5510,7 +5539,7 @@ internal static class Vu1AotPrograms
     slot_930:
         vf27 = SanitizeFloatMask(Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, (0x3AF) << 4)), 0x3);
         vi9 = unchecked((ushort)(vi6 + vi2));
-        vf30 = Ps2Vu0.BlendMask(vf30, SanitizeFloatMask(Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, ((((short)vi9 + (1)) & 0x3FF)) << 4)), 0x1), 0x1u);
+        vf30 = SanitizeFloatMask(Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, ((((short)vi9 + (1)) & 0x3FF)) << 4)), 0x1);
         vi7 = unchecked((ushort)(vi9 + 65u));
         vi7 = unchecked((ushort)(vi7 + vi2));
         vf29 = Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, ((vi7 & 0x3FF)) << 4));
@@ -5527,7 +5556,7 @@ internal static class Vu1AotPrograms
         vf30 = Ps2Vu0.BlendMask(vf30, SanitizeFloatMask(Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, ((((short)vi9 + (17)) & 0x3FF)) << 4)), 0x2), 0x2u);
         vf31 = Ps2Vu0.BlendMask(vf31, (vf31 * vf27), 0x1u);
         vf25 = Ps2Vu0.BlendMask(vf25, vu.ExecRget(), 0x1u);
-        vf28 = Ps2Vu0.BlendMask(vf28, FmaAdd(vf10, Ps2Vu0.BroadcastBc(vf30, 3u), acc), 0x8u);
+        vf28 = FmaAdd(vf10, Ps2Vu0.BroadcastBc(vf30, 3u), acc);
         regI = BitConverter.UInt32BitsToSingle(0x40490FDBu);
         acc = Ps2Vu0.BlendMask(acc, (vf29 + Vector128.Create(regI)), 0x1u);
         vi1 = unchecked((ushort)(vi1 + vi2));
@@ -5572,6 +5601,7 @@ internal static class Vu1AotPrograms
         Unsafe.Add(ref vi, 11) = vi11;
         vu.Q = regQ;
         vu.I = regI;
+        vu.MacFlags = macFlags;
         vu.ACC = acc;
         vu.TotalInstructionsExecuted += steps;
         return;
@@ -5634,11 +5664,12 @@ internal static class Vu1AotPrograms
         ushort vi11 = Unsafe.Add(ref vi, 11);
         float regQ = vu.Q;
         float regI = vu.I;
+        ushort macFlags = vu.MacFlags;
         goto slot_772;
     slot_766:
         vf28 = Ps2Vu0.BlendMask(vf28, (vf28 * vf28), 0x8u);
         regI = BitConverter.UInt32BitsToSingle(0x3FC90FDBu);
-        vf19 = Ps2Vu0.BlendMask(vf19, (Vf0 + Vector128.Create(regI)), 0x8u);
+        vf19 = (Vf0 + Vector128.Create(regI));
         Unsafe.WriteUnaligned(ref Unsafe.Add(ref dm, ((vi5 & 0x3FF)) << 4), (uint)vi1);
         steps += 2;
     slot_768:
@@ -5678,7 +5709,7 @@ internal static class Vu1AotPrograms
         vf27 = FmaAdd(vf6, Ps2Vu0.BroadcastBc(vf30, 3u), acc);
         vf28 = Ps2Vu0.BlendMask(vf28, (vf28 * vf28), 0x8u);
         vf20 = (vf20 * vf25);
-        vf26 = Ps2Vu0.BlendMask(vf26, (vf31 - vf11), 0xEu);
+        vf26 = (vf31 - vf11);
         regI = BitConverter.UInt32BitsToSingle(0x4B400000u);
         acc = (Vf0 * Vector128.Create(regI));
         regI = BitConverter.UInt32BitsToSingle(0x3E22F983u);
@@ -5688,21 +5719,21 @@ internal static class Vu1AotPrograms
         regI = BitConverter.UInt32BitsToSingle(0x4B400000u);
         vf15 = Ps2Vu0.BlendMask(vf15, FmaSub(Vf0, Vector128.Create(regI), acc), 0x1u);
         regQ = Vu1State.VuDivFast(1.0f, vf28.GetElement(0));
-        vf26 = Ps2Vu0.BlendMask(vf26, (vf26 * Ps2Vu0.BroadcastBc(vf10, 3u)), 0xEu);
+        vf26 = (vf26 * Ps2Vu0.BroadcastBc(vf10, 3u));
         vf27 = VuMax(vf27, vf7);
         acc = vf28;
         regI = BitConverter.UInt32BitsToSingle(0x40C90FDBu);
         tmp = FmaSub(vf15, Vector128.Create(regI), acc);
-        vu.UpdateMacFlagsOnly(tmp, 0x1u);
+        macFlags = Vu1State.ComputeMacFlagsW(tmp);
         vf28 = Ps2Vu0.BlendMask(vf28, tmp, 0x1u);
         acc = Ps2Vu0.BlendMask(acc, (vf26 + vf29), 0xEu);
-        vf14 = Ps2Vu0.BlendMask(vf14, Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, (0x3A9) << 4)), 0x2u);
+        vf14 = Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, (0x3A9) << 4));
         acc = Ps2Vu0.BlendMask(acc, FmaAdd(vf11, Ps2Vu0.BroadcastBc(vf30, 3u), acc), 0xEu);
         regI = BitConverter.UInt32BitsToSingle(0x40490FDBu);
-        vf29 = Ps2Vu0.BlendMask(vf29, FmaSub(vf26, Vector128.Create(regQ), acc), 0xEu);
+        vf29 = FmaSub(vf26, Vector128.Create(regQ), acc);
         vi1 = unchecked((ushort)(((ushort)0) + 16u));
         vf27 = VuMin(vf27, vf8);
-        vi1 = (ushort)(vu.MacFlags & vi1);
+        vi1 = (ushort)(macFlags & vi1);
         btTmp = (vi1 != ((ushort)0));
         vf20 = Ps2Vu0.BlendMask(vf20, (Vf0 - Vector128.Create(regI)), 0x4u);
         vf21 = Ps2Vu0.BlendMask(vf21, (Vf0 + Vector128.Create(regI)), 0x4u);
@@ -5713,7 +5744,7 @@ internal static class Vu1AotPrograms
         steps += 1;
     slot_817:
         tmp = (vf28 + Vector128.Create(regI));
-        vu.UpdateMacFlagsOnly(tmp, 0x1u);
+        macFlags = Vu1State.ComputeMacFlagsOnly(tmp, 0x1u);
         vf28 = Ps2Vu0.BlendMask(vf28, tmp, 0x1u);
         vf25 = SanitizeFloatMask(Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, (0x3A8) << 4)), 0x1);
         acc = vf4;
@@ -5721,8 +5752,8 @@ internal static class Vu1AotPrograms
         vf22 = Ps2Vu0.BlendMask(vf22, Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, (0x3A9) << 4)), 0x4u);
         acc = FmaAdd(vf2, Ps2Vu0.BroadcastBc(vf29, 1u), acc);
         vf20 = Ps2Vu0.BlendMask(vf20, (vf20 - Ps2Vu0.BroadcastBc(vf28, 3u)), 0x4u);
-        vi1 = (ushort)(vu.MacFlags & vi1);
-        vf21 = Ps2Vu0.BlendMask(vf21, (vf21 - Ps2Vu0.BroadcastBc(vf28, 3u)), 0x4u);
+        vi1 = (ushort)(macFlags & vi1);
+        vf21 = (vf21 - Ps2Vu0.BroadcastBc(vf28, 3u));
         btTmp = (vi1 != ((ushort)0));
         vf23 = Ps2Vu0.BlendMask(vf23, Vu1State.ExecAbs(vf28), 0x1u);
         vf30 = FmaAdd(vf1, Ps2Vu0.BroadcastBc(vf29, 0u), acc);
@@ -5899,7 +5930,7 @@ internal static class Vu1AotPrograms
         steps += 4;
         Unsafe.Add(ref vf, 6) = vf6;
         Unsafe.Add(ref vf, 13) = vf13;
-        Unsafe.Add(ref vf, 14) = vf14;
+        { ref Vector128<float> fl_14 = ref Unsafe.Add(ref vf, 14); fl_14 = Ps2Vu0.BlendMask(fl_14, vf14, 0xEu); }
         Unsafe.Add(ref vf, 15) = vf15;
         Unsafe.Add(ref vf, 16) = vf16;
         Unsafe.Add(ref vf, 17) = vf17;
@@ -5926,6 +5957,7 @@ internal static class Vu1AotPrograms
         Unsafe.Add(ref vi, 11) = vi11;
         vu.Q = regQ;
         vu.I = regI;
+        vu.MacFlags = macFlags;
         vu.ACC = acc;
         vu.Tpc = 0x16F8;
         vu.TotalInstructionsExecuted += steps;
@@ -5945,7 +5977,7 @@ internal static class Vu1AotPrograms
     slot_930:
         vf27 = SanitizeFloatMask(Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, (0x3AF) << 4)), 0x3);
         vi9 = unchecked((ushort)(vi6 + vi2));
-        vf30 = Ps2Vu0.BlendMask(vf30, SanitizeFloatMask(Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, ((((short)vi9 + (1)) & 0x3FF)) << 4)), 0x1), 0x1u);
+        vf30 = SanitizeFloatMask(Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, ((((short)vi9 + (1)) & 0x3FF)) << 4)), 0x1);
         vi7 = unchecked((ushort)(vi9 + 65u));
         vi7 = unchecked((ushort)(vi7 + vi2));
         vf29 = Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, ((vi7 & 0x3FF)) << 4));
@@ -5962,7 +5994,7 @@ internal static class Vu1AotPrograms
         vf30 = Ps2Vu0.BlendMask(vf30, SanitizeFloatMask(Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, ((((short)vi9 + (17)) & 0x3FF)) << 4)), 0x2), 0x2u);
         vf31 = Ps2Vu0.BlendMask(vf31, (vf31 * vf27), 0x1u);
         vf25 = Ps2Vu0.BlendMask(vf25, vu.ExecRget(), 0x1u);
-        vf28 = Ps2Vu0.BlendMask(vf28, FmaAdd(vf10, Ps2Vu0.BroadcastBc(vf30, 3u), acc), 0x8u);
+        vf28 = FmaAdd(vf10, Ps2Vu0.BroadcastBc(vf30, 3u), acc);
         regI = BitConverter.UInt32BitsToSingle(0x40490FDBu);
         acc = Ps2Vu0.BlendMask(acc, (vf29 + Vector128.Create(regI)), 0x1u);
         vi1 = unchecked((ushort)(vi1 + vi2));
@@ -5975,7 +6007,7 @@ internal static class Vu1AotPrograms
     exit_stepcap:
         Unsafe.Add(ref vf, 6) = vf6;
         Unsafe.Add(ref vf, 13) = vf13;
-        Unsafe.Add(ref vf, 14) = vf14;
+        { ref Vector128<float> fl_14 = ref Unsafe.Add(ref vf, 14); fl_14 = Ps2Vu0.BlendMask(fl_14, vf14, 0xEu); }
         Unsafe.Add(ref vf, 15) = vf15;
         Unsafe.Add(ref vf, 16) = vf16;
         Unsafe.Add(ref vf, 17) = vf17;
@@ -6002,6 +6034,7 @@ internal static class Vu1AotPrograms
         Unsafe.Add(ref vi, 11) = vi11;
         vu.Q = regQ;
         vu.I = regI;
+        vu.MacFlags = macFlags;
         vu.ACC = acc;
         vu.TotalInstructionsExecuted += steps;
         return;
@@ -6064,11 +6097,12 @@ internal static class Vu1AotPrograms
         ushort vi11 = Unsafe.Add(ref vi, 11);
         float regQ = vu.Q;
         float regI = vu.I;
+        ushort macFlags = vu.MacFlags;
         goto slot_827;
     slot_766:
         vf28 = Ps2Vu0.BlendMask(vf28, (vf28 * vf28), 0x8u);
         regI = BitConverter.UInt32BitsToSingle(0x3FC90FDBu);
-        vf19 = Ps2Vu0.BlendMask(vf19, (Vf0 + Vector128.Create(regI)), 0x8u);
+        vf19 = (Vf0 + Vector128.Create(regI));
         Unsafe.WriteUnaligned(ref Unsafe.Add(ref dm, ((vi5 & 0x3FF)) << 4), (uint)vi1);
         steps += 2;
     slot_768:
@@ -6106,7 +6140,7 @@ internal static class Vu1AotPrograms
         vf27 = FmaAdd(vf6, Ps2Vu0.BroadcastBc(vf30, 3u), acc);
         vf28 = Ps2Vu0.BlendMask(vf28, (vf28 * vf28), 0x8u);
         vf20 = (vf20 * vf25);
-        vf26 = Ps2Vu0.BlendMask(vf26, (vf31 - vf11), 0xEu);
+        vf26 = (vf31 - vf11);
         regI = BitConverter.UInt32BitsToSingle(0x4B400000u);
         acc = (Vf0 * Vector128.Create(regI));
         regI = BitConverter.UInt32BitsToSingle(0x3E22F983u);
@@ -6116,21 +6150,21 @@ internal static class Vu1AotPrograms
         regI = BitConverter.UInt32BitsToSingle(0x4B400000u);
         vf15 = Ps2Vu0.BlendMask(vf15, FmaSub(Vf0, Vector128.Create(regI), acc), 0x1u);
         regQ = Vu1State.VuDivFast(1.0f, vf28.GetElement(0));
-        vf26 = Ps2Vu0.BlendMask(vf26, (vf26 * Ps2Vu0.BroadcastBc(vf10, 3u)), 0xEu);
+        vf26 = (vf26 * Ps2Vu0.BroadcastBc(vf10, 3u));
         vf27 = VuMax(vf27, vf7);
         acc = vf28;
         regI = BitConverter.UInt32BitsToSingle(0x40C90FDBu);
         tmp = FmaSub(vf15, Vector128.Create(regI), acc);
-        vu.UpdateMacFlagsOnly(tmp, 0x1u);
+        macFlags = Vu1State.ComputeMacFlagsW(tmp);
         vf28 = Ps2Vu0.BlendMask(vf28, tmp, 0x1u);
         acc = Ps2Vu0.BlendMask(acc, (vf26 + vf29), 0xEu);
-        vf14 = Ps2Vu0.BlendMask(vf14, Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, (0x3A9) << 4)), 0x2u);
+        vf14 = Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, (0x3A9) << 4));
         acc = Ps2Vu0.BlendMask(acc, FmaAdd(vf11, Ps2Vu0.BroadcastBc(vf30, 3u), acc), 0xEu);
         regI = BitConverter.UInt32BitsToSingle(0x40490FDBu);
-        vf29 = Ps2Vu0.BlendMask(vf29, FmaSub(vf26, Vector128.Create(regQ), acc), 0xEu);
+        vf29 = FmaSub(vf26, Vector128.Create(regQ), acc);
         vi1 = unchecked((ushort)(((ushort)0) + 16u));
         vf27 = VuMin(vf27, vf8);
-        vi1 = (ushort)(vu.MacFlags & vi1);
+        vi1 = (ushort)(macFlags & vi1);
         btTmp = (vi1 != ((ushort)0));
         vf20 = Ps2Vu0.BlendMask(vf20, (Vf0 - Vector128.Create(regI)), 0x4u);
         vf21 = Ps2Vu0.BlendMask(vf21, (Vf0 + Vector128.Create(regI)), 0x4u);
@@ -6141,7 +6175,7 @@ internal static class Vu1AotPrograms
         steps += 1;
     slot_817:
         tmp = (vf28 + Vector128.Create(regI));
-        vu.UpdateMacFlagsOnly(tmp, 0x1u);
+        macFlags = Vu1State.ComputeMacFlagsOnly(tmp, 0x1u);
         vf28 = Ps2Vu0.BlendMask(vf28, tmp, 0x1u);
         vf25 = SanitizeFloatMask(Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, (0x3A8) << 4)), 0x1);
         acc = vf4;
@@ -6149,8 +6183,8 @@ internal static class Vu1AotPrograms
         vf22 = Ps2Vu0.BlendMask(vf22, Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, (0x3A9) << 4)), 0x4u);
         acc = FmaAdd(vf2, Ps2Vu0.BroadcastBc(vf29, 1u), acc);
         vf20 = Ps2Vu0.BlendMask(vf20, (vf20 - Ps2Vu0.BroadcastBc(vf28, 3u)), 0x4u);
-        vi1 = (ushort)(vu.MacFlags & vi1);
-        vf21 = Ps2Vu0.BlendMask(vf21, (vf21 - Ps2Vu0.BroadcastBc(vf28, 3u)), 0x4u);
+        vi1 = (ushort)(macFlags & vi1);
+        vf21 = (vf21 - Ps2Vu0.BroadcastBc(vf28, 3u));
         btTmp = (vi1 != ((ushort)0));
         vf23 = Ps2Vu0.BlendMask(vf23, Vu1State.ExecAbs(vf28), 0x1u);
         vf30 = FmaAdd(vf1, Ps2Vu0.BroadcastBc(vf29, 0u), acc);
@@ -6327,7 +6361,7 @@ internal static class Vu1AotPrograms
         steps += 4;
         Unsafe.Add(ref vf, 6) = vf6;
         Unsafe.Add(ref vf, 13) = vf13;
-        Unsafe.Add(ref vf, 14) = vf14;
+        { ref Vector128<float> fl_14 = ref Unsafe.Add(ref vf, 14); fl_14 = Ps2Vu0.BlendMask(fl_14, vf14, 0xEu); }
         Unsafe.Add(ref vf, 15) = vf15;
         Unsafe.Add(ref vf, 16) = vf16;
         Unsafe.Add(ref vf, 17) = vf17;
@@ -6354,6 +6388,7 @@ internal static class Vu1AotPrograms
         Unsafe.Add(ref vi, 11) = vi11;
         vu.Q = regQ;
         vu.I = regI;
+        vu.MacFlags = macFlags;
         vu.ACC = acc;
         vu.Tpc = 0x16F8;
         vu.TotalInstructionsExecuted += steps;
@@ -6373,7 +6408,7 @@ internal static class Vu1AotPrograms
     slot_930:
         vf27 = SanitizeFloatMask(Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, (0x3AF) << 4)), 0x3);
         vi9 = unchecked((ushort)(vi6 + vi2));
-        vf30 = Ps2Vu0.BlendMask(vf30, SanitizeFloatMask(Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, ((((short)vi9 + (1)) & 0x3FF)) << 4)), 0x1), 0x1u);
+        vf30 = SanitizeFloatMask(Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, ((((short)vi9 + (1)) & 0x3FF)) << 4)), 0x1);
         vi7 = unchecked((ushort)(vi9 + 65u));
         vi7 = unchecked((ushort)(vi7 + vi2));
         vf29 = Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, ((vi7 & 0x3FF)) << 4));
@@ -6390,7 +6425,7 @@ internal static class Vu1AotPrograms
         vf30 = Ps2Vu0.BlendMask(vf30, SanitizeFloatMask(Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, ((((short)vi9 + (17)) & 0x3FF)) << 4)), 0x2), 0x2u);
         vf31 = Ps2Vu0.BlendMask(vf31, (vf31 * vf27), 0x1u);
         vf25 = Ps2Vu0.BlendMask(vf25, vu.ExecRget(), 0x1u);
-        vf28 = Ps2Vu0.BlendMask(vf28, FmaAdd(vf10, Ps2Vu0.BroadcastBc(vf30, 3u), acc), 0x8u);
+        vf28 = FmaAdd(vf10, Ps2Vu0.BroadcastBc(vf30, 3u), acc);
         regI = BitConverter.UInt32BitsToSingle(0x40490FDBu);
         acc = Ps2Vu0.BlendMask(acc, (vf29 + Vector128.Create(regI)), 0x1u);
         vi1 = unchecked((ushort)(vi1 + vi2));
@@ -6403,7 +6438,7 @@ internal static class Vu1AotPrograms
     exit_stepcap:
         Unsafe.Add(ref vf, 6) = vf6;
         Unsafe.Add(ref vf, 13) = vf13;
-        Unsafe.Add(ref vf, 14) = vf14;
+        { ref Vector128<float> fl_14 = ref Unsafe.Add(ref vf, 14); fl_14 = Ps2Vu0.BlendMask(fl_14, vf14, 0xEu); }
         Unsafe.Add(ref vf, 15) = vf15;
         Unsafe.Add(ref vf, 16) = vf16;
         Unsafe.Add(ref vf, 17) = vf17;
@@ -6430,6 +6465,7 @@ internal static class Vu1AotPrograms
         Unsafe.Add(ref vi, 11) = vi11;
         vu.Q = regQ;
         vu.I = regI;
+        vu.MacFlags = macFlags;
         vu.ACC = acc;
         vu.TotalInstructionsExecuted += steps;
         return;
@@ -6492,11 +6528,12 @@ internal static class Vu1AotPrograms
         ushort vi11 = Unsafe.Add(ref vi, 11);
         float regQ = vu.Q;
         float regI = vu.I;
+        ushort macFlags = vu.MacFlags;
         goto slot_925;
     slot_766:
         vf28 = Ps2Vu0.BlendMask(vf28, (vf28 * vf28), 0x8u);
         regI = BitConverter.UInt32BitsToSingle(0x3FC90FDBu);
-        vf19 = Ps2Vu0.BlendMask(vf19, (Vf0 + Vector128.Create(regI)), 0x8u);
+        vf19 = (Vf0 + Vector128.Create(regI));
         Unsafe.WriteUnaligned(ref Unsafe.Add(ref dm, ((vi5 & 0x3FF)) << 4), (uint)vi1);
         steps += 2;
     slot_768:
@@ -6534,7 +6571,7 @@ internal static class Vu1AotPrograms
         vf27 = FmaAdd(vf6, Ps2Vu0.BroadcastBc(vf30, 3u), acc);
         vf28 = Ps2Vu0.BlendMask(vf28, (vf28 * vf28), 0x8u);
         vf20 = (vf20 * vf25);
-        vf26 = Ps2Vu0.BlendMask(vf26, (vf31 - vf11), 0xEu);
+        vf26 = (vf31 - vf11);
         regI = BitConverter.UInt32BitsToSingle(0x4B400000u);
         acc = (Vf0 * Vector128.Create(regI));
         regI = BitConverter.UInt32BitsToSingle(0x3E22F983u);
@@ -6544,21 +6581,21 @@ internal static class Vu1AotPrograms
         regI = BitConverter.UInt32BitsToSingle(0x4B400000u);
         vf15 = Ps2Vu0.BlendMask(vf15, FmaSub(Vf0, Vector128.Create(regI), acc), 0x1u);
         regQ = Vu1State.VuDivFast(1.0f, vf28.GetElement(0));
-        vf26 = Ps2Vu0.BlendMask(vf26, (vf26 * Ps2Vu0.BroadcastBc(vf10, 3u)), 0xEu);
+        vf26 = (vf26 * Ps2Vu0.BroadcastBc(vf10, 3u));
         vf27 = VuMax(vf27, vf7);
         acc = vf28;
         regI = BitConverter.UInt32BitsToSingle(0x40C90FDBu);
         tmp = FmaSub(vf15, Vector128.Create(regI), acc);
-        vu.UpdateMacFlagsOnly(tmp, 0x1u);
+        macFlags = Vu1State.ComputeMacFlagsW(tmp);
         vf28 = Ps2Vu0.BlendMask(vf28, tmp, 0x1u);
         acc = Ps2Vu0.BlendMask(acc, (vf26 + vf29), 0xEu);
-        vf14 = Ps2Vu0.BlendMask(vf14, Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, (0x3A9) << 4)), 0x2u);
+        vf14 = Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, (0x3A9) << 4));
         acc = Ps2Vu0.BlendMask(acc, FmaAdd(vf11, Ps2Vu0.BroadcastBc(vf30, 3u), acc), 0xEu);
         regI = BitConverter.UInt32BitsToSingle(0x40490FDBu);
-        vf29 = Ps2Vu0.BlendMask(vf29, FmaSub(vf26, Vector128.Create(regQ), acc), 0xEu);
+        vf29 = FmaSub(vf26, Vector128.Create(regQ), acc);
         vi1 = unchecked((ushort)(((ushort)0) + 16u));
         vf27 = VuMin(vf27, vf8);
-        vi1 = (ushort)(vu.MacFlags & vi1);
+        vi1 = (ushort)(macFlags & vi1);
         btTmp = (vi1 != ((ushort)0));
         vf20 = Ps2Vu0.BlendMask(vf20, (Vf0 - Vector128.Create(regI)), 0x4u);
         vf21 = Ps2Vu0.BlendMask(vf21, (Vf0 + Vector128.Create(regI)), 0x4u);
@@ -6569,7 +6606,7 @@ internal static class Vu1AotPrograms
         steps += 1;
     slot_817:
         tmp = (vf28 + Vector128.Create(regI));
-        vu.UpdateMacFlagsOnly(tmp, 0x1u);
+        macFlags = Vu1State.ComputeMacFlagsOnly(tmp, 0x1u);
         vf28 = Ps2Vu0.BlendMask(vf28, tmp, 0x1u);
         vf25 = SanitizeFloatMask(Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, (0x3A8) << 4)), 0x1);
         acc = vf4;
@@ -6577,8 +6614,8 @@ internal static class Vu1AotPrograms
         vf22 = Ps2Vu0.BlendMask(vf22, Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, (0x3A9) << 4)), 0x4u);
         acc = FmaAdd(vf2, Ps2Vu0.BroadcastBc(vf29, 1u), acc);
         vf20 = Ps2Vu0.BlendMask(vf20, (vf20 - Ps2Vu0.BroadcastBc(vf28, 3u)), 0x4u);
-        vi1 = (ushort)(vu.MacFlags & vi1);
-        vf21 = Ps2Vu0.BlendMask(vf21, (vf21 - Ps2Vu0.BroadcastBc(vf28, 3u)), 0x4u);
+        vi1 = (ushort)(macFlags & vi1);
+        vf21 = (vf21 - Ps2Vu0.BroadcastBc(vf28, 3u));
         btTmp = (vi1 != ((ushort)0));
         vf23 = Ps2Vu0.BlendMask(vf23, Vu1State.ExecAbs(vf28), 0x1u);
         vf30 = FmaAdd(vf1, Ps2Vu0.BroadcastBc(vf29, 0u), acc);
@@ -6755,7 +6792,7 @@ internal static class Vu1AotPrograms
         steps += 4;
         Unsafe.Add(ref vf, 6) = vf6;
         Unsafe.Add(ref vf, 13) = vf13;
-        Unsafe.Add(ref vf, 14) = vf14;
+        { ref Vector128<float> fl_14 = ref Unsafe.Add(ref vf, 14); fl_14 = Ps2Vu0.BlendMask(fl_14, vf14, 0xEu); }
         Unsafe.Add(ref vf, 15) = vf15;
         Unsafe.Add(ref vf, 16) = vf16;
         Unsafe.Add(ref vf, 17) = vf17;
@@ -6782,6 +6819,7 @@ internal static class Vu1AotPrograms
         Unsafe.Add(ref vi, 11) = vi11;
         vu.Q = regQ;
         vu.I = regI;
+        vu.MacFlags = macFlags;
         vu.ACC = acc;
         vu.Tpc = 0x16F8;
         vu.TotalInstructionsExecuted += steps;
@@ -6801,7 +6839,7 @@ internal static class Vu1AotPrograms
     slot_930:
         vf27 = SanitizeFloatMask(Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, (0x3AF) << 4)), 0x3);
         vi9 = unchecked((ushort)(vi6 + vi2));
-        vf30 = Ps2Vu0.BlendMask(vf30, SanitizeFloatMask(Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, ((((short)vi9 + (1)) & 0x3FF)) << 4)), 0x1), 0x1u);
+        vf30 = SanitizeFloatMask(Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, ((((short)vi9 + (1)) & 0x3FF)) << 4)), 0x1);
         vi7 = unchecked((ushort)(vi9 + 65u));
         vi7 = unchecked((ushort)(vi7 + vi2));
         vf29 = Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, ((vi7 & 0x3FF)) << 4));
@@ -6818,7 +6856,7 @@ internal static class Vu1AotPrograms
         vf30 = Ps2Vu0.BlendMask(vf30, SanitizeFloatMask(Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, ((((short)vi9 + (17)) & 0x3FF)) << 4)), 0x2), 0x2u);
         vf31 = Ps2Vu0.BlendMask(vf31, (vf31 * vf27), 0x1u);
         vf25 = Ps2Vu0.BlendMask(vf25, vu.ExecRget(), 0x1u);
-        vf28 = Ps2Vu0.BlendMask(vf28, FmaAdd(vf10, Ps2Vu0.BroadcastBc(vf30, 3u), acc), 0x8u);
+        vf28 = FmaAdd(vf10, Ps2Vu0.BroadcastBc(vf30, 3u), acc);
         regI = BitConverter.UInt32BitsToSingle(0x40490FDBu);
         acc = Ps2Vu0.BlendMask(acc, (vf29 + Vector128.Create(regI)), 0x1u);
         vi1 = unchecked((ushort)(vi1 + vi2));
@@ -6831,7 +6869,7 @@ internal static class Vu1AotPrograms
     exit_stepcap:
         Unsafe.Add(ref vf, 6) = vf6;
         Unsafe.Add(ref vf, 13) = vf13;
-        Unsafe.Add(ref vf, 14) = vf14;
+        { ref Vector128<float> fl_14 = ref Unsafe.Add(ref vf, 14); fl_14 = Ps2Vu0.BlendMask(fl_14, vf14, 0xEu); }
         Unsafe.Add(ref vf, 15) = vf15;
         Unsafe.Add(ref vf, 16) = vf16;
         Unsafe.Add(ref vf, 17) = vf17;
@@ -6858,6 +6896,7 @@ internal static class Vu1AotPrograms
         Unsafe.Add(ref vi, 11) = vi11;
         vu.Q = regQ;
         vu.I = regI;
+        vu.MacFlags = macFlags;
         vu.ACC = acc;
         vu.TotalInstructionsExecuted += steps;
         return;
@@ -6963,7 +7002,7 @@ internal static class Vu1AotPrograms
         steps += 5;
         goto slot_952;
     slot_944:
-        vf6 = Ps2Vu0.BlendMask(vf6, (vf19 * Ps2Vu0.BroadcastBc(vf26, 2u)), 0x4u);
+        vf6 = (vf19 * Ps2Vu0.BroadcastBc(vf26, 2u));
         vf24 = Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, (0x3A8) << 4));
         vf25 = Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, (0x3A9) << 4));
         vf6 = Ps2Vu0.BlendMask(vf6, (Vf0 + Ps2Vu0.BroadcastBc(vf6, 1u)), 0x8u);
@@ -6977,17 +7016,17 @@ internal static class Vu1AotPrograms
         btTmp = (vi8 == ((ushort)0));
         steps += 8;
         if (btTmp) goto slot_968;
-        vf7 = Ps2Vu0.BlendMask(vf7, (vf16 * Ps2Vu0.BroadcastBc(vf30, 0u)), 0x8u);
+        vf7 = (vf16 * Ps2Vu0.BroadcastBc(vf30, 0u));
         vf28 = Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, (0x3AA) << 4));
         vf29 = Ps2Vu0.BlendMask(vf29, (Vf0 + Ps2Vu0.BroadcastBc(vf28, 1u)), 0x8u);
         steps += 8;
         goto slot_982;
     slot_968:
-        vf7 = Ps2Vu0.BlendMask(vf7, (vf19 * Ps2Vu0.BroadcastBc(vf30, 1u)), 0x2u);
+        vf7 = (vf19 * Ps2Vu0.BroadcastBc(vf30, 1u));
         vf28 = Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, (0x3AA) << 4));
         vf28 = Ps2Vu0.BlendMask(vf28, (Vf0 + Ps2Vu0.BroadcastBc(vf28, 1u)), 0x8u);
         vf29 = Ps2Vu0.BlendMask(vf29, (Vf0 + Ps2Vu0.BroadcastBc(vf28, 2u)), 0x8u);
-        vf7 = Ps2Vu0.BlendMask(vf7, (Vf0 + Ps2Vu0.BroadcastBc(vf7, 2u)), 0x8u);
+        vf7 = (Vf0 + Ps2Vu0.BroadcastBc(vf7, 2u));
         steps += 14;
     slot_982:
         acc = (vf29 * Ps2Vu0.BroadcastBc(vf7, 0u));
@@ -6999,19 +7038,19 @@ internal static class Vu1AotPrograms
         vf7 = Ps2Vu0.BlendMask(vf7, (Vf0 + Ps2Vu0.BroadcastBc(vf7, 0u)), 0xCu);
         regI = BitConverter.UInt32BitsToSingle(0x42DC0000u);
         vf10 = Ps2Vu0.BlendMask(vf10, (vf10 * Vector128.Create(regI)), 0xEu);
-        vf16 = Ps2Vu0.BlendMask(vf16, (vf7 * Ps2Vu0.BroadcastBc(vf30, 2u)), 0x8u);
+        vf16 = (vf7 * Ps2Vu0.BroadcastBc(vf30, 2u));
         vf16 = Ps2Vu0.BlendMask(vf16, (vf7 * Ps2Vu0.BroadcastBc(vf30, 3u)), 0x4u);
         regI = BitConverter.UInt32BitsToSingle(0x42E80000u);
         vf10 = Ps2Vu0.BlendMask(vf10, (vf10 * Vector128.Create(regI)), 0x1u);
         vf10 = Vu1State.ExecFtoi0(vf10);
         jtTmp = vi15 & 0x7FF;
         steps += 19;
-        Unsafe.Add(ref vf, 6) = vf6;
+        { ref Vector128<float> fl_6 = ref Unsafe.Add(ref vf, 6); fl_6 = Ps2Vu0.BlendMask(fl_6, vf6, 0xCu); }
         Unsafe.Add(ref vf, 7) = vf7;
         Unsafe.Add(ref vf, 10) = vf10;
-        Unsafe.Add(ref vf, 16) = vf16;
+        { ref Vector128<float> fl_16 = ref Unsafe.Add(ref vf, 16); fl_16 = Ps2Vu0.BlendMask(fl_16, vf16, 0xCu); }
         Unsafe.Add(ref vf, 18) = vf18;
-        Unsafe.Add(ref vf, 19) = vf19;
+        { ref Vector128<float> fl_19 = ref Unsafe.Add(ref vf, 19); fl_19 = Ps2Vu0.BlendMask(fl_19, vf19, 0xEu); }
         Unsafe.Add(ref vf, 24) = vf24;
         Unsafe.Add(ref vf, 25) = vf25;
         Unsafe.Add(ref vf, 26) = vf26;
@@ -7061,11 +7100,11 @@ internal static class Vu1AotPrograms
         ushort vi15 = Unsafe.Add(ref vi, 15);
         float regQ = vu.Q;
         float regI = vu.I;
-        vf6 = Ps2Vu0.BlendMask(vf6, (vf5 + vf18), 0xEu);
+        vf6 = (vf5 + vf18);
         regI = BitConverter.UInt32BitsToSingle(0x457FFF00u);
-        vf24 = Ps2Vu0.BlendMask(vf24, (vf5 + vf19), 0xEu);
-        vf27 = Ps2Vu0.BlendMask(vf27, (vf5 - vf19), 0xEu);
-        vf11 = Ps2Vu0.BlendMask(vf11, (vf5 - vf18), 0xEu);
+        vf24 = (vf5 + vf19);
+        vf27 = (vf5 - vf19);
+        vf11 = (vf5 - vf18);
         acc = (vf1 * Ps2Vu0.BroadcastBc(vf6, 0u));
         acc = FmaAdd(vf2, Ps2Vu0.BroadcastBc(vf6, 1u), acc);
         acc = FmaAdd(vf3, Ps2Vu0.BroadcastBc(vf6, 2u), acc);
@@ -7135,16 +7174,16 @@ internal static class Vu1AotPrograms
         { ref byte sq_1056 = ref Unsafe.Add(ref dm, ((((short)vi2 + (11)) & 0x3FF)) << 4); Unsafe.WriteUnaligned(ref sq_1056, vf12.AsUInt64().GetElement(0)); Unsafe.WriteUnaligned(ref Unsafe.Add(ref sq_1056, 8), vf12.GetElement(2)); }
         jtTmp = vi15 & 0x7FF;
         steps += 58;
-        Unsafe.Add(ref vf, 6) = vf6;
+        { ref Vector128<float> fl_6 = ref Unsafe.Add(ref vf, 6); fl_6 = Ps2Vu0.BlendMask(fl_6, vf6, 0xEu); }
         Unsafe.Add(ref vf, 7) = vf7;
         Unsafe.Add(ref vf, 8) = vf8;
-        Unsafe.Add(ref vf, 11) = vf11;
+        { ref Vector128<float> fl_11 = ref Unsafe.Add(ref vf, 11); fl_11 = Ps2Vu0.BlendMask(fl_11, vf11, 0xEu); }
         Unsafe.Add(ref vf, 12) = vf12;
         Unsafe.Add(ref vf, 15) = vf15;
-        Unsafe.Add(ref vf, 24) = vf24;
+        { ref Vector128<float> fl_24 = ref Unsafe.Add(ref vf, 24); fl_24 = Ps2Vu0.BlendMask(fl_24, vf24, 0xEu); }
         Unsafe.Add(ref vf, 25) = vf25;
         Unsafe.Add(ref vf, 26) = vf26;
-        Unsafe.Add(ref vf, 27) = vf27;
+        { ref Vector128<float> fl_27 = ref Unsafe.Add(ref vf, 27); fl_27 = Ps2Vu0.BlendMask(fl_27, vf27, 0xEu); }
         Unsafe.Add(ref vf, 28) = vf28;
         Unsafe.Add(ref vf, 29) = vf29;
         vu.Q = regQ;
@@ -7185,11 +7224,11 @@ internal static class Vu1AotPrograms
         vi2 = Unsafe.ReadUnaligned<ushort>(ref Unsafe.Add(ref dm, ((0x48) << 4) + 12));
         vf3 = Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, (0x1) << 4));
         vi3 = unchecked((ushort)(vi3 + vi3));
-        vf1 = Ps2Vu0.BlendMask(vf1, Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, (0x25) << 4)), 0xCu);
-        vf2 = Ps2Vu0.BlendMask(vf2, Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, (0x22) << 4)), 0x8u);
+        vf1 = Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, (0x25) << 4));
+        vf2 = Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, (0x22) << 4));
         vi6 = Unsafe.ReadUnaligned<ushort>(ref Unsafe.Add(ref dm, ((0x39) << 4) + 4));
         vf2 = Ps2Vu0.BlendMask(vf2, Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, (0x23) << 4)), 0x4u);
-        vf4 = Ps2Vu0.BlendMask(vf4, Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, (0x0) << 4)), 0x7u);
+        vf4 = Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, (0x0) << 4));
         vi1 = unchecked((ushort)(vi5 + 2u));
         vi6 = (ushort)(vi6 | vi4);
         vi4 = Unsafe.ReadUnaligned<ushort>(ref Unsafe.Add(ref dm, (0x0) << 4));
@@ -7200,7 +7239,7 @@ internal static class Vu1AotPrograms
         { ref Vector128<float> st_719 = ref Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, ((((short)vi2 + (2)) & 0x3FF)) << 4)); st_719 = Ps2Vu0.BlendMask(st_719, vf4, 0x7u); }
         Unsafe.WriteUnaligned(ref Unsafe.Add(ref dm, ((((short)vi2 + (2)) & 0x3FF)) << 4), (uint)vi3);
         vi3 = unchecked((ushort)(vi2 + 3u));
-        vf3 = Ps2Vu0.BlendMask(vf3, Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, ((vi5 & 0x3FF)) << 4)), 0x3u);
+        vf3 = Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, ((vi5 & 0x3FF)) << 4));
         vi4 = Unsafe.ReadUnaligned<ushort>(ref Unsafe.Add(ref dm, ((vi5 & 0x3FF)) << 4));
         vf4 = Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, ((((short)vi5 + (1)) & 0x3FF)) << 4));
         steps += 25;
@@ -7213,7 +7252,7 @@ internal static class Vu1AotPrograms
         vi1 = (ushort)((idxTmp + 1) & 0x3FF);
         vf3 = Ps2Vu0.BlendMask(vf3, (vf7 * vf2), 0xCu);
         vf7 = Ps2Vu0.BlendMask(vf7, Vu1State.ExecMr32(vf7), 0x6u);
-        vf6 = Ps2Vu0.BlendMask(vf6, vf5, 0xCu);
+        vf6 = vf5;
         regI = BitConverter.UInt32BitsToSingle(0x457FFF00u);
         vf5 = Ps2Vu0.BlendMask(vf5, (vf1 + vf3), 0xCu);
         vf3 = Ps2Vu0.BlendMask(vf3, Vu1State.ExecMr32(vf7), 0xCu);
@@ -7234,7 +7273,7 @@ internal static class Vu1AotPrograms
         vf5 = Ps2Vu0.BlendMask(vf5, Vu1State.ExecFtoi(vf5, 4), 0xCu);
         regI = BitConverter.UInt32BitsToSingle(0x457FFF00u);
         vf3 = Ps2Vu0.BlendMask(vf3, VuMin(vf3, Vector128.Create(regI)), 0xCu);
-        vf6 = Ps2Vu0.BlendMask(vf6, Vu1State.ExecMr32(vf6), 0xCu);
+        vf6 = Vu1State.ExecMr32(vf6);
         vf6 = Ps2Vu0.BlendMask(vf6, Vf0Mr32, 0x3u);
         tmp = vf3;
         idxTmp = vi3;
@@ -7266,8 +7305,8 @@ internal static class Vu1AotPrograms
         vi1 = unchecked((ushort)(((ushort)0) + 613u));
         Unsafe.WriteUnaligned(ref Unsafe.Add(ref dm, ((0x48) << 4) + 12), (uint)vi1);
         steps += 3;
-        Unsafe.Add(ref vf, 1) = vf1;
-        Unsafe.Add(ref vf, 2) = vf2;
+        { ref Vector128<float> fl_1 = ref Unsafe.Add(ref vf, 1); fl_1 = Ps2Vu0.BlendMask(fl_1, vf1, 0xCu); }
+        { ref Vector128<float> fl_2 = ref Unsafe.Add(ref vf, 2); fl_2 = Ps2Vu0.BlendMask(fl_2, vf2, 0xCu); }
         Unsafe.Add(ref vf, 3) = vf3;
         Unsafe.Add(ref vf, 4) = vf4;
         Unsafe.Add(ref vf, 5) = vf5;
@@ -7286,8 +7325,8 @@ internal static class Vu1AotPrograms
         return;
     slot_755:
         steps += 2;
-        Unsafe.Add(ref vf, 1) = vf1;
-        Unsafe.Add(ref vf, 2) = vf2;
+        { ref Vector128<float> fl_1 = ref Unsafe.Add(ref vf, 1); fl_1 = Ps2Vu0.BlendMask(fl_1, vf1, 0xCu); }
+        { ref Vector128<float> fl_2 = ref Unsafe.Add(ref vf, 2); fl_2 = Ps2Vu0.BlendMask(fl_2, vf2, 0xCu); }
         Unsafe.Add(ref vf, 3) = vf3;
         Unsafe.Add(ref vf, 4) = vf4;
         Unsafe.Add(ref vf, 5) = vf5;
@@ -7305,8 +7344,8 @@ internal static class Vu1AotPrograms
         vu.TotalInstructionsExecuted += steps;
         return;
     exit_stepcap:
-        Unsafe.Add(ref vf, 1) = vf1;
-        Unsafe.Add(ref vf, 2) = vf2;
+        { ref Vector128<float> fl_1 = ref Unsafe.Add(ref vf, 1); fl_1 = Ps2Vu0.BlendMask(fl_1, vf1, 0xCu); }
+        { ref Vector128<float> fl_2 = ref Unsafe.Add(ref vf, 2); fl_2 = Ps2Vu0.BlendMask(fl_2, vf2, 0xCu); }
         Unsafe.Add(ref vf, 3) = vf3;
         Unsafe.Add(ref vf, 4) = vf4;
         Unsafe.Add(ref vf, 5) = vf5;
@@ -7357,11 +7396,11 @@ internal static class Vu1AotPrograms
         vi2 = Unsafe.ReadUnaligned<ushort>(ref Unsafe.Add(ref dm, ((0x48) << 4) + 12));
         vf3 = Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, (0x1) << 4));
         vi3 = unchecked((ushort)(vi3 + vi3));
-        vf1 = Ps2Vu0.BlendMask(vf1, Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, (0x25) << 4)), 0xCu);
-        vf2 = Ps2Vu0.BlendMask(vf2, Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, (0x22) << 4)), 0x8u);
+        vf1 = Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, (0x25) << 4));
+        vf2 = Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, (0x22) << 4));
         vi6 = Unsafe.ReadUnaligned<ushort>(ref Unsafe.Add(ref dm, ((0x39) << 4) + 4));
         vf2 = Ps2Vu0.BlendMask(vf2, Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, (0x23) << 4)), 0x4u);
-        vf4 = Ps2Vu0.BlendMask(vf4, Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, (0x0) << 4)), 0x7u);
+        vf4 = Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, (0x0) << 4));
         vi1 = unchecked((ushort)(vi5 + 2u));
         vi6 = (ushort)(vi6 | vi4);
         vi4 = Unsafe.ReadUnaligned<ushort>(ref Unsafe.Add(ref dm, (0x0) << 4));
@@ -7372,7 +7411,7 @@ internal static class Vu1AotPrograms
         { ref Vector128<float> st_719 = ref Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, ((((short)vi2 + (2)) & 0x3FF)) << 4)); st_719 = Ps2Vu0.BlendMask(st_719, vf4, 0x7u); }
         Unsafe.WriteUnaligned(ref Unsafe.Add(ref dm, ((((short)vi2 + (2)) & 0x3FF)) << 4), (uint)vi3);
         vi3 = unchecked((ushort)(vi2 + 3u));
-        vf3 = Ps2Vu0.BlendMask(vf3, Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, ((vi5 & 0x3FF)) << 4)), 0x3u);
+        vf3 = Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, ((vi5 & 0x3FF)) << 4));
         vi4 = Unsafe.ReadUnaligned<ushort>(ref Unsafe.Add(ref dm, ((vi5 & 0x3FF)) << 4));
         vf4 = Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, ((((short)vi5 + (1)) & 0x3FF)) << 4));
         steps += 24;
@@ -7385,7 +7424,7 @@ internal static class Vu1AotPrograms
         vi1 = (ushort)((idxTmp + 1) & 0x3FF);
         vf3 = Ps2Vu0.BlendMask(vf3, (vf7 * vf2), 0xCu);
         vf7 = Ps2Vu0.BlendMask(vf7, Vu1State.ExecMr32(vf7), 0x6u);
-        vf6 = Ps2Vu0.BlendMask(vf6, vf5, 0xCu);
+        vf6 = vf5;
         regI = BitConverter.UInt32BitsToSingle(0x457FFF00u);
         vf5 = Ps2Vu0.BlendMask(vf5, (vf1 + vf3), 0xCu);
         vf3 = Ps2Vu0.BlendMask(vf3, Vu1State.ExecMr32(vf7), 0xCu);
@@ -7406,7 +7445,7 @@ internal static class Vu1AotPrograms
         vf5 = Ps2Vu0.BlendMask(vf5, Vu1State.ExecFtoi(vf5, 4), 0xCu);
         regI = BitConverter.UInt32BitsToSingle(0x457FFF00u);
         vf3 = Ps2Vu0.BlendMask(vf3, VuMin(vf3, Vector128.Create(regI)), 0xCu);
-        vf6 = Ps2Vu0.BlendMask(vf6, Vu1State.ExecMr32(vf6), 0xCu);
+        vf6 = Vu1State.ExecMr32(vf6);
         vf6 = Ps2Vu0.BlendMask(vf6, Vf0Mr32, 0x3u);
         tmp = vf3;
         idxTmp = vi3;
@@ -7438,8 +7477,8 @@ internal static class Vu1AotPrograms
         vi1 = unchecked((ushort)(((ushort)0) + 613u));
         Unsafe.WriteUnaligned(ref Unsafe.Add(ref dm, ((0x48) << 4) + 12), (uint)vi1);
         steps += 3;
-        Unsafe.Add(ref vf, 1) = vf1;
-        Unsafe.Add(ref vf, 2) = vf2;
+        { ref Vector128<float> fl_1 = ref Unsafe.Add(ref vf, 1); fl_1 = Ps2Vu0.BlendMask(fl_1, vf1, 0xCu); }
+        { ref Vector128<float> fl_2 = ref Unsafe.Add(ref vf, 2); fl_2 = Ps2Vu0.BlendMask(fl_2, vf2, 0xCu); }
         Unsafe.Add(ref vf, 3) = vf3;
         Unsafe.Add(ref vf, 4) = vf4;
         Unsafe.Add(ref vf, 5) = vf5;
@@ -7458,8 +7497,8 @@ internal static class Vu1AotPrograms
         return;
     slot_755:
         steps += 2;
-        Unsafe.Add(ref vf, 1) = vf1;
-        Unsafe.Add(ref vf, 2) = vf2;
+        { ref Vector128<float> fl_1 = ref Unsafe.Add(ref vf, 1); fl_1 = Ps2Vu0.BlendMask(fl_1, vf1, 0xCu); }
+        { ref Vector128<float> fl_2 = ref Unsafe.Add(ref vf, 2); fl_2 = Ps2Vu0.BlendMask(fl_2, vf2, 0xCu); }
         Unsafe.Add(ref vf, 3) = vf3;
         Unsafe.Add(ref vf, 4) = vf4;
         Unsafe.Add(ref vf, 5) = vf5;
@@ -7477,8 +7516,8 @@ internal static class Vu1AotPrograms
         vu.TotalInstructionsExecuted += steps;
         return;
     exit_stepcap:
-        Unsafe.Add(ref vf, 1) = vf1;
-        Unsafe.Add(ref vf, 2) = vf2;
+        { ref Vector128<float> fl_1 = ref Unsafe.Add(ref vf, 1); fl_1 = Ps2Vu0.BlendMask(fl_1, vf1, 0xCu); }
+        { ref Vector128<float> fl_2 = ref Unsafe.Add(ref vf, 2); fl_2 = Ps2Vu0.BlendMask(fl_2, vf2, 0xCu); }
         Unsafe.Add(ref vf, 3) = vf3;
         Unsafe.Add(ref vf, 4) = vf4;
         Unsafe.Add(ref vf, 5) = vf5;
@@ -7531,7 +7570,7 @@ internal static class Vu1AotPrograms
         vi1 = (ushort)((idxTmp + 1) & 0x3FF);
         vf3 = Ps2Vu0.BlendMask(vf3, (vf7 * vf2), 0xCu);
         vf7 = Ps2Vu0.BlendMask(vf7, Vu1State.ExecMr32(vf7), 0x6u);
-        vf6 = Ps2Vu0.BlendMask(vf6, vf5, 0xCu);
+        vf6 = vf5;
         regI = BitConverter.UInt32BitsToSingle(0x457FFF00u);
         vf5 = Ps2Vu0.BlendMask(vf5, (vf1 + vf3), 0xCu);
         vf3 = Ps2Vu0.BlendMask(vf3, Vu1State.ExecMr32(vf7), 0xCu);
@@ -7554,7 +7593,7 @@ internal static class Vu1AotPrograms
         vf5 = Ps2Vu0.BlendMask(vf5, Vu1State.ExecFtoi(vf5, 4), 0xCu);
         regI = BitConverter.UInt32BitsToSingle(0x457FFF00u);
         vf3 = Ps2Vu0.BlendMask(vf3, VuMin(vf3, Vector128.Create(regI)), 0xCu);
-        vf6 = Ps2Vu0.BlendMask(vf6, Vu1State.ExecMr32(vf6), 0xCu);
+        vf6 = Vu1State.ExecMr32(vf6);
         vf6 = Ps2Vu0.BlendMask(vf6, Vf0Mr32, 0x3u);
         tmp = vf3;
         idxTmp = vi3;
@@ -7714,9 +7753,9 @@ internal static class Vu1AotPrograms
         vf6 = Ps2Vu0.BlendMask(vf6, (vf1 - Ps2Vu0.BroadcastBc(vf1, 3u)), 0x4u);
         vf27 = Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, ((((short)vi1 + (1)) & 0x3FF)) << 4));
         vf4 = Ps2Vu0.BlendMask(vf4, (Vf0 + Ps2Vu0.BroadcastBc(vf1, 2u)), 0x8u);
-        vf29 = Ps2Vu0.BlendMask(vf29, Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, (0x25) << 4)), 0xCu);
+        vf29 = Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, (0x25) << 4));
         vf4 = Ps2Vu0.BlendMask(vf4, (Vf0 + Ps2Vu0.BroadcastBc(vf1, 3u)), 0x4u);
-        vf28 = Ps2Vu0.BlendMask(vf28, Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, (0x22) << 4)), 0x8u);
+        vf28 = Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, (0x22) << 4));
         vf2 = Ps2Vu0.BlendMask(vf2, (Vf0 + Ps2Vu0.BroadcastBc(vf1, 0u)), 0x8u);
         vi13 = unchecked((ushort)(vi3 + vi3));
         vf2 = Ps2Vu0.BlendMask(vf2, (Vf0 + Ps2Vu0.BroadcastBc(vf1, 3u)), 0x4u);
@@ -7745,7 +7784,7 @@ internal static class Vu1AotPrograms
         idxTmp = vi4;
         vf26 = SanitizeFloat(Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, ((idxTmp & 0x3FF)) << 4)));
         vi4 = (ushort)((idxTmp + 1) & 0x3FF);
-        vf11 = Ps2Vu0.BlendMask(vf11, (Vf0 + Ps2Vu0.BroadcastBc(vf5, 0u)), 0x8u);
+        vf11 = (Vf0 + Ps2Vu0.BroadcastBc(vf5, 0u));
         { ref Vector128<float> st_794 = ref Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, ((((short)vi5 + (1)) & 0x3FF)) << 4)); st_794 = Ps2Vu0.BlendMask(st_794, Vf0, 0x7u); }
         vf11 = Ps2Vu0.BlendMask(vf11, (Vf0 + Ps2Vu0.BroadcastBc(vf5, 3u)), 0x4u);
         Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, ((vi5 & 0x3FF)) << 4)) = vf30;
@@ -7753,7 +7792,7 @@ internal static class Vu1AotPrograms
         vi11 = Unsafe.ReadUnaligned<ushort>(ref Unsafe.Add(ref dm, ((0x39) << 4) + 4));
         vf26 = Ps2Vu0.BlendMask(vf26, (vf26 + Ps2Vu0.BroadcastBc(vf6, 1u)), 0x2u);
         vf30 = Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, (0x0) << 4));
-        vf12 = Ps2Vu0.BlendMask(vf12, (Vf0 + Ps2Vu0.BroadcastBc(vf5, 2u)), 0x8u);
+        vf12 = (Vf0 + Ps2Vu0.BroadcastBc(vf5, 2u));
         vi10 = Unsafe.ReadUnaligned<ushort>(ref Unsafe.Add(ref dm, (0x0) << 4));
         vf12 = Ps2Vu0.BlendMask(vf12, (Vf0 + Ps2Vu0.BroadcastBc(vf5, 1u)), 0x4u);
         vi2 = unchecked((ushort)(vi5 + 3u));
@@ -7764,8 +7803,8 @@ internal static class Vu1AotPrograms
         { ref Vector128<float> st_802 = ref Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, ((((short)vi5 + (2)) & 0x3FF)) << 4)); st_802 = Ps2Vu0.BlendMask(st_802, vf30, 0x7u); }
         vi10 = (ushort)(vi10 | vi13);
         Unsafe.WriteUnaligned(ref Unsafe.Add(ref dm, ((((short)vi5 + (2)) & 0x3FF)) << 4), (uint)vi10);
-        vf17 = Ps2Vu0.BlendMask(vf17, vf23, 0x3u);
-        vf18 = Ps2Vu0.BlendMask(vf18, vf23, 0x3u);
+        vf17 = vf23;
+        vf18 = vf23;
         steps += 35;
     slot_807:
         acc = (vf25 * Ps2Vu0.BroadcastBc(vf4, 0u));
@@ -7896,8 +7935,8 @@ internal static class Vu1AotPrograms
         Unsafe.Add(ref vf, 25) = vf25;
         Unsafe.Add(ref vf, 26) = vf26;
         Unsafe.Add(ref vf, 27) = vf27;
-        Unsafe.Add(ref vf, 28) = vf28;
-        Unsafe.Add(ref vf, 29) = vf29;
+        { ref Vector128<float> fl_28 = ref Unsafe.Add(ref vf, 28); fl_28 = Ps2Vu0.BlendMask(fl_28, vf28, 0xCu); }
+        { ref Vector128<float> fl_29 = ref Unsafe.Add(ref vf, 29); fl_29 = Ps2Vu0.BlendMask(fl_29, vf29, 0xCu); }
         Unsafe.Add(ref vf, 30) = vf30;
         Unsafe.Add(ref vi, 1) = vi1;
         Unsafe.Add(ref vi, 2) = vi2;
@@ -7975,8 +8014,8 @@ internal static class Vu1AotPrograms
         Unsafe.Add(ref vf, 25) = vf25;
         Unsafe.Add(ref vf, 26) = vf26;
         Unsafe.Add(ref vf, 27) = vf27;
-        Unsafe.Add(ref vf, 28) = vf28;
-        Unsafe.Add(ref vf, 29) = vf29;
+        { ref Vector128<float> fl_28 = ref Unsafe.Add(ref vf, 28); fl_28 = Ps2Vu0.BlendMask(fl_28, vf28, 0xCu); }
+        { ref Vector128<float> fl_29 = ref Unsafe.Add(ref vf, 29); fl_29 = Ps2Vu0.BlendMask(fl_29, vf29, 0xCu); }
         Unsafe.Add(ref vf, 30) = vf30;
         Unsafe.Add(ref vi, 1) = vi1;
         Unsafe.Add(ref vi, 2) = vi2;
@@ -8018,8 +8057,8 @@ internal static class Vu1AotPrograms
         Unsafe.Add(ref vf, 25) = vf25;
         Unsafe.Add(ref vf, 26) = vf26;
         Unsafe.Add(ref vf, 27) = vf27;
-        Unsafe.Add(ref vf, 28) = vf28;
-        Unsafe.Add(ref vf, 29) = vf29;
+        { ref Vector128<float> fl_28 = ref Unsafe.Add(ref vf, 28); fl_28 = Ps2Vu0.BlendMask(fl_28, vf28, 0xCu); }
+        { ref Vector128<float> fl_29 = ref Unsafe.Add(ref vf, 29); fl_29 = Ps2Vu0.BlendMask(fl_29, vf29, 0xCu); }
         Unsafe.Add(ref vf, 30) = vf30;
         Unsafe.Add(ref vi, 1) = vi1;
         Unsafe.Add(ref vi, 2) = vi2;
@@ -8067,8 +8106,8 @@ internal static class Vu1AotPrograms
         ushort vi13 = Unsafe.Add(ref vi, 13);
         ushort vi15 = Unsafe.Add(ref vi, 15);
         float regI = vu.I;
-        vf2 = Ps2Vu0.BlendMask(vf2, Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, (0x25) << 4)), 0xCu);
-        vf1 = Ps2Vu0.BlendMask(vf1, Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, (0x22) << 4)), 0x8u);
+        vf2 = Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, (0x25) << 4));
+        vf1 = Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, (0x22) << 4));
         vf1 = Ps2Vu0.BlendMask(vf1, Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, (0x23) << 4)), 0x4u);
         vi1 = vu.Top;
         vi4 = unchecked((ushort)(vi1 + 0u));
@@ -8077,11 +8116,11 @@ internal static class Vu1AotPrograms
         vf29 = Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, ((((short)vi4 + (1)) & 0x3FF)) << 4));
         vi15 = 878;
         steps += 9;
-        Unsafe.Add(ref vf, 1) = vf1;
-        Unsafe.Add(ref vf, 2) = vf2;
+        { ref Vector128<float> fl_1 = ref Unsafe.Add(ref vf, 1); fl_1 = Ps2Vu0.BlendMask(fl_1, vf1, 0xCu); }
+        { ref Vector128<float> fl_2 = ref Unsafe.Add(ref vf, 2); fl_2 = Ps2Vu0.BlendMask(fl_2, vf2, 0xCu); }
         Unsafe.Add(ref vf, 3) = vf3;
         Unsafe.Add(ref vf, 6) = vf6;
-        Unsafe.Add(ref vf, 7) = vf7;
+        { ref Vector128<float> fl_7 = ref Unsafe.Add(ref vf, 7); fl_7 = Ps2Vu0.BlendMask(fl_7, vf7, 0x3u); }
         Unsafe.Add(ref vf, 8) = vf8;
         Unsafe.Add(ref vf, 28) = vf28;
         Unsafe.Add(ref vf, 29) = vf29;
@@ -8113,7 +8152,7 @@ internal static class Vu1AotPrograms
         vi15 = Unsafe.Add(ref vi, 15);
         regI = vu.I;
         vf30 = Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, ((vi4 & 0x3FF)) << 4));
-        vf7 = Ps2Vu0.BlendMask(vf7, Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, ((((short)vi4 + (2)) & 0x3FF)) << 4)), 0x3u);
+        vf7 = Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, ((((short)vi4 + (2)) & 0x3FF)) << 4));
         vf3 = (vf30 * vf1);
         vf3 = Vu1State.ExecFtoi0(vf3);
         vf3 = Vector128.ConvertToSingle(vf3.AsInt32());
@@ -8160,11 +8199,11 @@ internal static class Vu1AotPrograms
         vu.ExecXgKickAddr(vi5);
         vi15 = 912;
         steps += 34;
-        Unsafe.Add(ref vf, 1) = vf1;
-        Unsafe.Add(ref vf, 2) = vf2;
+        { ref Vector128<float> fl_1 = ref Unsafe.Add(ref vf, 1); fl_1 = Ps2Vu0.BlendMask(fl_1, vf1, 0xCu); }
+        { ref Vector128<float> fl_2 = ref Unsafe.Add(ref vf, 2); fl_2 = Ps2Vu0.BlendMask(fl_2, vf2, 0xCu); }
         Unsafe.Add(ref vf, 3) = vf3;
         Unsafe.Add(ref vf, 6) = vf6;
-        Unsafe.Add(ref vf, 7) = vf7;
+        { ref Vector128<float> fl_7 = ref Unsafe.Add(ref vf, 7); fl_7 = Ps2Vu0.BlendMask(fl_7, vf7, 0x3u); }
         Unsafe.Add(ref vf, 8) = vf8;
         Unsafe.Add(ref vf, 28) = vf28;
         Unsafe.Add(ref vf, 29) = vf29;
@@ -8196,11 +8235,11 @@ internal static class Vu1AotPrograms
         vi15 = Unsafe.Add(ref vi, 15);
         regI = vu.I;
         steps += 2;
-        Unsafe.Add(ref vf, 1) = vf1;
-        Unsafe.Add(ref vf, 2) = vf2;
+        { ref Vector128<float> fl_1 = ref Unsafe.Add(ref vf, 1); fl_1 = Ps2Vu0.BlendMask(fl_1, vf1, 0xCu); }
+        { ref Vector128<float> fl_2 = ref Unsafe.Add(ref vf, 2); fl_2 = Ps2Vu0.BlendMask(fl_2, vf2, 0xCu); }
         Unsafe.Add(ref vf, 3) = vf3;
         Unsafe.Add(ref vf, 6) = vf6;
-        Unsafe.Add(ref vf, 7) = vf7;
+        { ref Vector128<float> fl_7 = ref Unsafe.Add(ref vf, 7); fl_7 = Ps2Vu0.BlendMask(fl_7, vf7, 0x3u); }
         Unsafe.Add(ref vf, 8) = vf8;
         Unsafe.Add(ref vf, 28) = vf28;
         Unsafe.Add(ref vf, 29) = vf29;
@@ -8266,6 +8305,8 @@ internal static class Vu1AotPrograms
         ushort vi14 = Unsafe.Add(ref vi, 14);
         ushort vi15 = Unsafe.Add(ref vi, 15);
         float regI = vu.I;
+        float regP = vu.P;
+        float regPendingP = vu.PendingP; _ = regPendingP;
         vi1 = vu.Top;
         vi13 = Unsafe.ReadUnaligned<ushort>(ref Unsafe.Add(ref dm, ((vi1 & 0x3FF)) << 4));
         vi4 = unchecked((ushort)(vi1 + 1u));
@@ -8287,18 +8328,18 @@ internal static class Vu1AotPrograms
         Unsafe.Add(ref vf, 10) = vf10;
         Unsafe.Add(ref vf, 11) = vf11;
         Unsafe.Add(ref vf, 12) = vf12;
-        Unsafe.Add(ref vf, 13) = vf13;
-        Unsafe.Add(ref vf, 14) = vf14;
-        Unsafe.Add(ref vf, 15) = vf15;
-        Unsafe.Add(ref vf, 16) = vf16;
+        { ref Vector128<float> fl_13 = ref Unsafe.Add(ref vf, 13); fl_13 = Ps2Vu0.BlendMask(fl_13, vf13, 0xEu); }
+        { ref Vector128<float> fl_14 = ref Unsafe.Add(ref vf, 14); fl_14 = Ps2Vu0.BlendMask(fl_14, vf14, 0xEu); }
+        { ref Vector128<float> fl_15 = ref Unsafe.Add(ref vf, 15); fl_15 = Ps2Vu0.BlendMask(fl_15, vf15, 0xCu); }
+        { ref Vector128<float> fl_16 = ref Unsafe.Add(ref vf, 16); fl_16 = Ps2Vu0.BlendMask(fl_16, vf16, 0xCu); }
         Unsafe.Add(ref vf, 18) = vf18;
-        Unsafe.Add(ref vf, 19) = vf19;
+        { ref Vector128<float> fl_19 = ref Unsafe.Add(ref vf, 19); fl_19 = Ps2Vu0.BlendMask(fl_19, vf19, 0xEu); }
         Unsafe.Add(ref vf, 20) = vf20;
         Unsafe.Add(ref vf, 21) = vf21;
         Unsafe.Add(ref vf, 22) = vf22;
         Unsafe.Add(ref vf, 23) = vf23;
         Unsafe.Add(ref vf, 30) = vf30;
-        Unsafe.Add(ref vf, 31) = vf31;
+        { ref Vector128<float> fl_31 = ref Unsafe.Add(ref vf, 31); fl_31 = Ps2Vu0.BlendMask(fl_31, vf31, 0xCu); }
         Unsafe.Add(ref vi, 1) = vi1;
         Unsafe.Add(ref vi, 2) = vi2;
         Unsafe.Add(ref vi, 3) = vi3;
@@ -8310,6 +8351,8 @@ internal static class Vu1AotPrograms
         Unsafe.Add(ref vi, 14) = vi14;
         Unsafe.Add(ref vi, 15) = vi15;
         vu.I = regI;
+        vu.P = regP;
+        vu.PendingP = regP;
         Sub_Ovl3_17A8(vu, ref steps, ref acc, true);
         if (steps >= 65536) { vu.ACC = acc; vu.TotalInstructionsExecuted += steps; return; }
         vf1 = Unsafe.Add(ref vf, 1);
@@ -8347,12 +8390,14 @@ internal static class Vu1AotPrograms
         vi14 = Unsafe.Add(ref vi, 14);
         vi15 = Unsafe.Add(ref vi, 15);
         regI = vu.I;
+        regP = vu.P;
+        regPendingP = vu.PendingP;
         vf10 = Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, (0x6) << 4));
         vf11 = Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, (0x7) << 4));
         vf12 = Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, (0x8) << 4));
         vf1 = Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, (0x43) << 4));
-        vf13 = Ps2Vu0.BlendMask(vf13, vf10, 0x8u);
-        vf14 = Ps2Vu0.BlendMask(vf14, vf11, 0x4u);
+        vf13 = vf10;
+        vf14 = vf11;
         vf2 = Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, (0x44) << 4));
         vf3 = Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, (0x45) << 4));
         vf4 = Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, (0x46) << 4));
@@ -8402,9 +8447,8 @@ internal static class Vu1AotPrograms
         steps += 2;
         goto slot_1146;
     slot_1122:
-        vu.P = vu.PendingP = MathF.Sin(vf5.GetElement(3));
+        regP = MathF.Sin(vf5.GetElement(3));
         vi15 = 1124;
-        vu.P = vu.PendingP;
         steps += 2;
         Unsafe.Add(ref vf, 1) = vf1;
         Unsafe.Add(ref vf, 2) = vf2;
@@ -8417,18 +8461,18 @@ internal static class Vu1AotPrograms
         Unsafe.Add(ref vf, 10) = vf10;
         Unsafe.Add(ref vf, 11) = vf11;
         Unsafe.Add(ref vf, 12) = vf12;
-        Unsafe.Add(ref vf, 13) = vf13;
-        Unsafe.Add(ref vf, 14) = vf14;
-        Unsafe.Add(ref vf, 15) = vf15;
-        Unsafe.Add(ref vf, 16) = vf16;
+        { ref Vector128<float> fl_13 = ref Unsafe.Add(ref vf, 13); fl_13 = Ps2Vu0.BlendMask(fl_13, vf13, 0xEu); }
+        { ref Vector128<float> fl_14 = ref Unsafe.Add(ref vf, 14); fl_14 = Ps2Vu0.BlendMask(fl_14, vf14, 0xEu); }
+        { ref Vector128<float> fl_15 = ref Unsafe.Add(ref vf, 15); fl_15 = Ps2Vu0.BlendMask(fl_15, vf15, 0xCu); }
+        { ref Vector128<float> fl_16 = ref Unsafe.Add(ref vf, 16); fl_16 = Ps2Vu0.BlendMask(fl_16, vf16, 0xCu); }
         Unsafe.Add(ref vf, 18) = vf18;
-        Unsafe.Add(ref vf, 19) = vf19;
+        { ref Vector128<float> fl_19 = ref Unsafe.Add(ref vf, 19); fl_19 = Ps2Vu0.BlendMask(fl_19, vf19, 0xEu); }
         Unsafe.Add(ref vf, 20) = vf20;
         Unsafe.Add(ref vf, 21) = vf21;
         Unsafe.Add(ref vf, 22) = vf22;
         Unsafe.Add(ref vf, 23) = vf23;
         Unsafe.Add(ref vf, 30) = vf30;
-        Unsafe.Add(ref vf, 31) = vf31;
+        { ref Vector128<float> fl_31 = ref Unsafe.Add(ref vf, 31); fl_31 = Ps2Vu0.BlendMask(fl_31, vf31, 0xCu); }
         Unsafe.Add(ref vi, 1) = vi1;
         Unsafe.Add(ref vi, 2) = vi2;
         Unsafe.Add(ref vi, 3) = vi3;
@@ -8440,6 +8484,8 @@ internal static class Vu1AotPrograms
         Unsafe.Add(ref vi, 14) = vi14;
         Unsafe.Add(ref vi, 15) = vi15;
         vu.I = regI;
+        vu.P = regP;
+        vu.PendingP = regP;
         Sub_Ovl3_1C90(vu, ref steps, ref acc, true);
         if (steps >= 65536) { vu.ACC = acc; vu.TotalInstructionsExecuted += steps; return; }
         vf1 = Unsafe.Add(ref vf, 1);
@@ -8477,27 +8523,28 @@ internal static class Vu1AotPrograms
         vi14 = Unsafe.Add(ref vi, 14);
         vi15 = Unsafe.Add(ref vi, 15);
         regI = vu.I;
+        regP = vu.P;
+        regPendingP = vu.PendingP;
         vf30 = Ps2Vu0.BlendMask(vf30, Vf0Mr32, 0x1u);
-        vf15 = Ps2Vu0.BlendMask(vf15, Vector128.Create(vu.P), 0x8u);
-        vf31 = Ps2Vu0.BlendMask(vf31, (Vf0 + Vector128<float>.One), 0x8u);
+        vf15 = Vector128.Create(regP);
+        vf31 = (Vf0 + Vector128<float>.One);
         vf30 = Ps2Vu0.BlendMask(vf30, (vf15 * vf15), 0x8u);
         vf30 = Ps2Vu0.BlendMask(vf30, (vf31 - vf30), 0x8u);
-        vu.P = vu.PendingP = Ps2Float.Sqrt(vf30.GetElement(0));
-        vu.P = vu.PendingP;
-        vf15 = Ps2Vu0.BlendMask(vf15, Vector128.Create(vu.P), 0x4u);
+        regP = Ps2Float.Sqrt(vf30.GetElement(0));
+        vf15 = Ps2Vu0.BlendMask(vf15, Vector128.Create(regP), 0x4u);
         btTmp = (vi14 == ((ushort)0));
         steps += 10;
         if (btTmp) goto slot_1135;
-        vf15 = Ps2Vu0.BlendMask(vf15, (Vf0 - vf15), 0xCu);
+        vf15 = (Vf0 - vf15);
         steps += 1;
     slot_1135:
         vf30 = Ps2Vu0.BlendMask(vf30, (vf16 * Ps2Vu0.BroadcastBc(vf15, 1u)), 0x8u);
         vf30 = Ps2Vu0.BlendMask(vf30, (vf16 * Ps2Vu0.BroadcastBc(vf15, 0u)), 0x4u);
         acc = Ps2Vu0.BlendMask(acc, (vf13 * Ps2Vu0.BroadcastBc(vf30, 0u)), 0xEu);
         vf18 = Ps2Vu0.BlendMask(vf18, FmaAdd(vf14, Ps2Vu0.BroadcastBc(vf30, 1u), acc), 0xEu);
-        vf31 = Ps2Vu0.BlendMask(vf31, (vf16 * vf15), 0xCu);
+        vf31 = (vf16 * vf15);
         acc = Ps2Vu0.BlendMask(acc, (vf13 * Ps2Vu0.BroadcastBc(vf31, 0u)), 0xEu);
-        vf19 = Ps2Vu0.BlendMask(vf19, FmaSub(vf14, Ps2Vu0.BroadcastBc(vf31, 1u), acc), 0xEu);
+        vf19 = FmaSub(vf14, Ps2Vu0.BroadcastBc(vf31, 1u), acc);
         vi15 = 1144;
         steps += 9;
         Unsafe.Add(ref vf, 1) = vf1;
@@ -8511,18 +8558,18 @@ internal static class Vu1AotPrograms
         Unsafe.Add(ref vf, 10) = vf10;
         Unsafe.Add(ref vf, 11) = vf11;
         Unsafe.Add(ref vf, 12) = vf12;
-        Unsafe.Add(ref vf, 13) = vf13;
-        Unsafe.Add(ref vf, 14) = vf14;
-        Unsafe.Add(ref vf, 15) = vf15;
-        Unsafe.Add(ref vf, 16) = vf16;
+        { ref Vector128<float> fl_13 = ref Unsafe.Add(ref vf, 13); fl_13 = Ps2Vu0.BlendMask(fl_13, vf13, 0xEu); }
+        { ref Vector128<float> fl_14 = ref Unsafe.Add(ref vf, 14); fl_14 = Ps2Vu0.BlendMask(fl_14, vf14, 0xEu); }
+        { ref Vector128<float> fl_15 = ref Unsafe.Add(ref vf, 15); fl_15 = Ps2Vu0.BlendMask(fl_15, vf15, 0xCu); }
+        { ref Vector128<float> fl_16 = ref Unsafe.Add(ref vf, 16); fl_16 = Ps2Vu0.BlendMask(fl_16, vf16, 0xCu); }
         Unsafe.Add(ref vf, 18) = vf18;
-        Unsafe.Add(ref vf, 19) = vf19;
+        { ref Vector128<float> fl_19 = ref Unsafe.Add(ref vf, 19); fl_19 = Ps2Vu0.BlendMask(fl_19, vf19, 0xEu); }
         Unsafe.Add(ref vf, 20) = vf20;
         Unsafe.Add(ref vf, 21) = vf21;
         Unsafe.Add(ref vf, 22) = vf22;
         Unsafe.Add(ref vf, 23) = vf23;
         Unsafe.Add(ref vf, 30) = vf30;
-        Unsafe.Add(ref vf, 31) = vf31;
+        { ref Vector128<float> fl_31 = ref Unsafe.Add(ref vf, 31); fl_31 = Ps2Vu0.BlendMask(fl_31, vf31, 0xCu); }
         Unsafe.Add(ref vi, 1) = vi1;
         Unsafe.Add(ref vi, 2) = vi2;
         Unsafe.Add(ref vi, 3) = vi3;
@@ -8534,6 +8581,8 @@ internal static class Vu1AotPrograms
         Unsafe.Add(ref vi, 14) = vi14;
         Unsafe.Add(ref vi, 15) = vi15;
         vu.I = regI;
+        vu.P = regP;
+        vu.PendingP = regP;
         Sub_Ovl3_1F48(vu, ref steps, ref acc, true);
         if (steps >= 65536) { vu.ACC = acc; vu.TotalInstructionsExecuted += steps; return; }
         vf1 = Unsafe.Add(ref vf, 1);
@@ -8571,6 +8620,8 @@ internal static class Vu1AotPrograms
         vi14 = Unsafe.Add(ref vi, 14);
         vi15 = Unsafe.Add(ref vi, 15);
         regI = vu.I;
+        regP = vu.P;
+        regPendingP = vu.PendingP;
         btTmp = ((short)vi13 > 0);
         vi2 = unchecked((ushort)(vi2 + 12u));
         steps += 2;
@@ -8590,18 +8641,18 @@ internal static class Vu1AotPrograms
         Unsafe.Add(ref vf, 10) = vf10;
         Unsafe.Add(ref vf, 11) = vf11;
         Unsafe.Add(ref vf, 12) = vf12;
-        Unsafe.Add(ref vf, 13) = vf13;
-        Unsafe.Add(ref vf, 14) = vf14;
-        Unsafe.Add(ref vf, 15) = vf15;
-        Unsafe.Add(ref vf, 16) = vf16;
+        { ref Vector128<float> fl_13 = ref Unsafe.Add(ref vf, 13); fl_13 = Ps2Vu0.BlendMask(fl_13, vf13, 0xEu); }
+        { ref Vector128<float> fl_14 = ref Unsafe.Add(ref vf, 14); fl_14 = Ps2Vu0.BlendMask(fl_14, vf14, 0xEu); }
+        { ref Vector128<float> fl_15 = ref Unsafe.Add(ref vf, 15); fl_15 = Ps2Vu0.BlendMask(fl_15, vf15, 0xCu); }
+        { ref Vector128<float> fl_16 = ref Unsafe.Add(ref vf, 16); fl_16 = Ps2Vu0.BlendMask(fl_16, vf16, 0xCu); }
         Unsafe.Add(ref vf, 18) = vf18;
-        Unsafe.Add(ref vf, 19) = vf19;
+        { ref Vector128<float> fl_19 = ref Unsafe.Add(ref vf, 19); fl_19 = Ps2Vu0.BlendMask(fl_19, vf19, 0xEu); }
         Unsafe.Add(ref vf, 20) = vf20;
         Unsafe.Add(ref vf, 21) = vf21;
         Unsafe.Add(ref vf, 22) = vf22;
         Unsafe.Add(ref vf, 23) = vf23;
         Unsafe.Add(ref vf, 30) = vf30;
-        Unsafe.Add(ref vf, 31) = vf31;
+        { ref Vector128<float> fl_31 = ref Unsafe.Add(ref vf, 31); fl_31 = Ps2Vu0.BlendMask(fl_31, vf31, 0xCu); }
         Unsafe.Add(ref vi, 1) = vi1;
         Unsafe.Add(ref vi, 2) = vi2;
         Unsafe.Add(ref vi, 3) = vi3;
@@ -8613,6 +8664,8 @@ internal static class Vu1AotPrograms
         Unsafe.Add(ref vi, 14) = vi14;
         Unsafe.Add(ref vi, 15) = vi15;
         vu.I = regI;
+        vu.P = regP;
+        vu.PendingP = regP;
         Sub_Base0_0380(vu, ref steps, ref acc, true);
         if (steps >= 65536) { vu.ACC = acc; vu.TotalInstructionsExecuted += steps; return; }
         vf1 = Unsafe.Add(ref vf, 1);
@@ -8650,6 +8703,8 @@ internal static class Vu1AotPrograms
         vi14 = Unsafe.Add(ref vi, 14);
         vi15 = Unsafe.Add(ref vi, 15);
         regI = vu.I;
+        regP = vu.P;
+        regPendingP = vu.PendingP;
         steps += 2;
         Unsafe.Add(ref vf, 1) = vf1;
         Unsafe.Add(ref vf, 2) = vf2;
@@ -8662,18 +8717,18 @@ internal static class Vu1AotPrograms
         Unsafe.Add(ref vf, 10) = vf10;
         Unsafe.Add(ref vf, 11) = vf11;
         Unsafe.Add(ref vf, 12) = vf12;
-        Unsafe.Add(ref vf, 13) = vf13;
-        Unsafe.Add(ref vf, 14) = vf14;
-        Unsafe.Add(ref vf, 15) = vf15;
-        Unsafe.Add(ref vf, 16) = vf16;
+        { ref Vector128<float> fl_13 = ref Unsafe.Add(ref vf, 13); fl_13 = Ps2Vu0.BlendMask(fl_13, vf13, 0xEu); }
+        { ref Vector128<float> fl_14 = ref Unsafe.Add(ref vf, 14); fl_14 = Ps2Vu0.BlendMask(fl_14, vf14, 0xEu); }
+        { ref Vector128<float> fl_15 = ref Unsafe.Add(ref vf, 15); fl_15 = Ps2Vu0.BlendMask(fl_15, vf15, 0xCu); }
+        { ref Vector128<float> fl_16 = ref Unsafe.Add(ref vf, 16); fl_16 = Ps2Vu0.BlendMask(fl_16, vf16, 0xCu); }
         Unsafe.Add(ref vf, 18) = vf18;
-        Unsafe.Add(ref vf, 19) = vf19;
+        { ref Vector128<float> fl_19 = ref Unsafe.Add(ref vf, 19); fl_19 = Ps2Vu0.BlendMask(fl_19, vf19, 0xEu); }
         Unsafe.Add(ref vf, 20) = vf20;
         Unsafe.Add(ref vf, 21) = vf21;
         Unsafe.Add(ref vf, 22) = vf22;
         Unsafe.Add(ref vf, 23) = vf23;
         Unsafe.Add(ref vf, 30) = vf30;
-        Unsafe.Add(ref vf, 31) = vf31;
+        { ref Vector128<float> fl_31 = ref Unsafe.Add(ref vf, 31); fl_31 = Ps2Vu0.BlendMask(fl_31, vf31, 0xCu); }
         Unsafe.Add(ref vi, 1) = vi1;
         Unsafe.Add(ref vi, 2) = vi2;
         Unsafe.Add(ref vi, 3) = vi3;
@@ -8685,6 +8740,8 @@ internal static class Vu1AotPrograms
         Unsafe.Add(ref vi, 14) = vi14;
         Unsafe.Add(ref vi, 15) = vi15;
         vu.I = regI;
+        vu.P = regP;
+        vu.PendingP = regP;
         vu.ACC = acc;
         vu.Tpc = 0x2400;
         vu.TotalInstructionsExecuted += steps;
@@ -8701,18 +8758,18 @@ internal static class Vu1AotPrograms
         Unsafe.Add(ref vf, 10) = vf10;
         Unsafe.Add(ref vf, 11) = vf11;
         Unsafe.Add(ref vf, 12) = vf12;
-        Unsafe.Add(ref vf, 13) = vf13;
-        Unsafe.Add(ref vf, 14) = vf14;
-        Unsafe.Add(ref vf, 15) = vf15;
-        Unsafe.Add(ref vf, 16) = vf16;
+        { ref Vector128<float> fl_13 = ref Unsafe.Add(ref vf, 13); fl_13 = Ps2Vu0.BlendMask(fl_13, vf13, 0xEu); }
+        { ref Vector128<float> fl_14 = ref Unsafe.Add(ref vf, 14); fl_14 = Ps2Vu0.BlendMask(fl_14, vf14, 0xEu); }
+        { ref Vector128<float> fl_15 = ref Unsafe.Add(ref vf, 15); fl_15 = Ps2Vu0.BlendMask(fl_15, vf15, 0xCu); }
+        { ref Vector128<float> fl_16 = ref Unsafe.Add(ref vf, 16); fl_16 = Ps2Vu0.BlendMask(fl_16, vf16, 0xCu); }
         Unsafe.Add(ref vf, 18) = vf18;
-        Unsafe.Add(ref vf, 19) = vf19;
+        { ref Vector128<float> fl_19 = ref Unsafe.Add(ref vf, 19); fl_19 = Ps2Vu0.BlendMask(fl_19, vf19, 0xEu); }
         Unsafe.Add(ref vf, 20) = vf20;
         Unsafe.Add(ref vf, 21) = vf21;
         Unsafe.Add(ref vf, 22) = vf22;
         Unsafe.Add(ref vf, 23) = vf23;
         Unsafe.Add(ref vf, 30) = vf30;
-        Unsafe.Add(ref vf, 31) = vf31;
+        { ref Vector128<float> fl_31 = ref Unsafe.Add(ref vf, 31); fl_31 = Ps2Vu0.BlendMask(fl_31, vf31, 0xCu); }
         Unsafe.Add(ref vi, 1) = vi1;
         Unsafe.Add(ref vi, 2) = vi2;
         Unsafe.Add(ref vi, 3) = vi3;
@@ -8724,6 +8781,8 @@ internal static class Vu1AotPrograms
         Unsafe.Add(ref vi, 14) = vi14;
         Unsafe.Add(ref vi, 15) = vi15;
         vu.I = regI;
+        vu.P = regP;
+        vu.PendingP = regP;
         vu.ACC = acc;
         vu.TotalInstructionsExecuted += steps;
         return;
@@ -8768,6 +8827,8 @@ internal static class Vu1AotPrograms
         ushort vi14 = Unsafe.Add(ref vi, 14);
         ushort vi15 = Unsafe.Add(ref vi, 15);
         float regI = vu.I;
+        float regP = vu.P;
+        float regPendingP = vu.PendingP; _ = regPendingP;
         goto slot_1122;
     slot_1083:
         vf8 = (vf8 - vf8);
@@ -8805,20 +8866,19 @@ internal static class Vu1AotPrograms
         steps += 2;
         goto slot_1146;
     slot_1122:
-        vu.P = vu.PendingP = MathF.Sin(vf5.GetElement(3));
+        regP = MathF.Sin(vf5.GetElement(3));
         vi15 = 1124;
-        vu.P = vu.PendingP;
         steps += 2;
         Unsafe.Add(ref vf, 5) = vf5;
         Unsafe.Add(ref vf, 7) = vf7;
         Unsafe.Add(ref vf, 8) = vf8;
         Unsafe.Add(ref vf, 9) = vf9;
-        Unsafe.Add(ref vf, 15) = vf15;
-        Unsafe.Add(ref vf, 16) = vf16;
+        { ref Vector128<float> fl_15 = ref Unsafe.Add(ref vf, 15); fl_15 = Ps2Vu0.BlendMask(fl_15, vf15, 0xCu); }
+        { ref Vector128<float> fl_16 = ref Unsafe.Add(ref vf, 16); fl_16 = Ps2Vu0.BlendMask(fl_16, vf16, 0xCu); }
         Unsafe.Add(ref vf, 18) = vf18;
-        Unsafe.Add(ref vf, 19) = vf19;
+        { ref Vector128<float> fl_19 = ref Unsafe.Add(ref vf, 19); fl_19 = Ps2Vu0.BlendMask(fl_19, vf19, 0xEu); }
         Unsafe.Add(ref vf, 30) = vf30;
-        Unsafe.Add(ref vf, 31) = vf31;
+        { ref Vector128<float> fl_31 = ref Unsafe.Add(ref vf, 31); fl_31 = Ps2Vu0.BlendMask(fl_31, vf31, 0xCu); }
         Unsafe.Add(ref vi, 2) = vi2;
         Unsafe.Add(ref vi, 4) = vi4;
         Unsafe.Add(ref vi, 10) = vi10;
@@ -8827,6 +8887,8 @@ internal static class Vu1AotPrograms
         Unsafe.Add(ref vi, 14) = vi14;
         Unsafe.Add(ref vi, 15) = vi15;
         vu.I = regI;
+        vu.P = regP;
+        vu.PendingP = regP;
         Sub_Ovl3_1C90(vu, ref steps, ref acc, true);
         if (steps >= 65536) { vu.ACC = acc; vu.TotalInstructionsExecuted += steps; return; }
         vf5 = Unsafe.Add(ref vf, 5);
@@ -8855,39 +8917,40 @@ internal static class Vu1AotPrograms
         vi14 = Unsafe.Add(ref vi, 14);
         vi15 = Unsafe.Add(ref vi, 15);
         regI = vu.I;
+        regP = vu.P;
+        regPendingP = vu.PendingP;
         vf30 = Ps2Vu0.BlendMask(vf30, Vf0Mr32, 0x1u);
-        vf15 = Ps2Vu0.BlendMask(vf15, Vector128.Create(vu.P), 0x8u);
-        vf31 = Ps2Vu0.BlendMask(vf31, (Vf0 + Vector128<float>.One), 0x8u);
+        vf15 = Vector128.Create(regP);
+        vf31 = (Vf0 + Vector128<float>.One);
         vf30 = Ps2Vu0.BlendMask(vf30, (vf15 * vf15), 0x8u);
         vf30 = Ps2Vu0.BlendMask(vf30, (vf31 - vf30), 0x8u);
-        vu.P = vu.PendingP = Ps2Float.Sqrt(vf30.GetElement(0));
-        vu.P = vu.PendingP;
-        vf15 = Ps2Vu0.BlendMask(vf15, Vector128.Create(vu.P), 0x4u);
+        regP = Ps2Float.Sqrt(vf30.GetElement(0));
+        vf15 = Ps2Vu0.BlendMask(vf15, Vector128.Create(regP), 0x4u);
         btTmp = (vi14 == ((ushort)0));
         steps += 10;
         if (btTmp) goto slot_1135;
-        vf15 = Ps2Vu0.BlendMask(vf15, (Vf0 - vf15), 0xCu);
+        vf15 = (Vf0 - vf15);
         steps += 1;
     slot_1135:
         vf30 = Ps2Vu0.BlendMask(vf30, (vf16 * Ps2Vu0.BroadcastBc(vf15, 1u)), 0x8u);
         vf30 = Ps2Vu0.BlendMask(vf30, (vf16 * Ps2Vu0.BroadcastBc(vf15, 0u)), 0x4u);
         acc = Ps2Vu0.BlendMask(acc, (vf13 * Ps2Vu0.BroadcastBc(vf30, 0u)), 0xEu);
         vf18 = Ps2Vu0.BlendMask(vf18, FmaAdd(vf14, Ps2Vu0.BroadcastBc(vf30, 1u), acc), 0xEu);
-        vf31 = Ps2Vu0.BlendMask(vf31, (vf16 * vf15), 0xCu);
+        vf31 = (vf16 * vf15);
         acc = Ps2Vu0.BlendMask(acc, (vf13 * Ps2Vu0.BroadcastBc(vf31, 0u)), 0xEu);
-        vf19 = Ps2Vu0.BlendMask(vf19, FmaSub(vf14, Ps2Vu0.BroadcastBc(vf31, 1u), acc), 0xEu);
+        vf19 = FmaSub(vf14, Ps2Vu0.BroadcastBc(vf31, 1u), acc);
         vi15 = 1144;
         steps += 9;
         Unsafe.Add(ref vf, 5) = vf5;
         Unsafe.Add(ref vf, 7) = vf7;
         Unsafe.Add(ref vf, 8) = vf8;
         Unsafe.Add(ref vf, 9) = vf9;
-        Unsafe.Add(ref vf, 15) = vf15;
-        Unsafe.Add(ref vf, 16) = vf16;
+        { ref Vector128<float> fl_15 = ref Unsafe.Add(ref vf, 15); fl_15 = Ps2Vu0.BlendMask(fl_15, vf15, 0xCu); }
+        { ref Vector128<float> fl_16 = ref Unsafe.Add(ref vf, 16); fl_16 = Ps2Vu0.BlendMask(fl_16, vf16, 0xCu); }
         Unsafe.Add(ref vf, 18) = vf18;
-        Unsafe.Add(ref vf, 19) = vf19;
+        { ref Vector128<float> fl_19 = ref Unsafe.Add(ref vf, 19); fl_19 = Ps2Vu0.BlendMask(fl_19, vf19, 0xEu); }
         Unsafe.Add(ref vf, 30) = vf30;
-        Unsafe.Add(ref vf, 31) = vf31;
+        { ref Vector128<float> fl_31 = ref Unsafe.Add(ref vf, 31); fl_31 = Ps2Vu0.BlendMask(fl_31, vf31, 0xCu); }
         Unsafe.Add(ref vi, 2) = vi2;
         Unsafe.Add(ref vi, 4) = vi4;
         Unsafe.Add(ref vi, 10) = vi10;
@@ -8896,6 +8959,8 @@ internal static class Vu1AotPrograms
         Unsafe.Add(ref vi, 14) = vi14;
         Unsafe.Add(ref vi, 15) = vi15;
         vu.I = regI;
+        vu.P = regP;
+        vu.PendingP = regP;
         Sub_Ovl3_1F48(vu, ref steps, ref acc, true);
         if (steps >= 65536) { vu.ACC = acc; vu.TotalInstructionsExecuted += steps; return; }
         vf5 = Unsafe.Add(ref vf, 5);
@@ -8924,6 +8989,8 @@ internal static class Vu1AotPrograms
         vi14 = Unsafe.Add(ref vi, 14);
         vi15 = Unsafe.Add(ref vi, 15);
         regI = vu.I;
+        regP = vu.P;
+        regPendingP = vu.PendingP;
         btTmp = ((short)vi13 > 0);
         vi2 = unchecked((ushort)(vi2 + 12u));
         steps += 2;
@@ -8936,12 +9003,12 @@ internal static class Vu1AotPrograms
         Unsafe.Add(ref vf, 7) = vf7;
         Unsafe.Add(ref vf, 8) = vf8;
         Unsafe.Add(ref vf, 9) = vf9;
-        Unsafe.Add(ref vf, 15) = vf15;
-        Unsafe.Add(ref vf, 16) = vf16;
+        { ref Vector128<float> fl_15 = ref Unsafe.Add(ref vf, 15); fl_15 = Ps2Vu0.BlendMask(fl_15, vf15, 0xCu); }
+        { ref Vector128<float> fl_16 = ref Unsafe.Add(ref vf, 16); fl_16 = Ps2Vu0.BlendMask(fl_16, vf16, 0xCu); }
         Unsafe.Add(ref vf, 18) = vf18;
-        Unsafe.Add(ref vf, 19) = vf19;
+        { ref Vector128<float> fl_19 = ref Unsafe.Add(ref vf, 19); fl_19 = Ps2Vu0.BlendMask(fl_19, vf19, 0xEu); }
         Unsafe.Add(ref vf, 30) = vf30;
-        Unsafe.Add(ref vf, 31) = vf31;
+        { ref Vector128<float> fl_31 = ref Unsafe.Add(ref vf, 31); fl_31 = Ps2Vu0.BlendMask(fl_31, vf31, 0xCu); }
         Unsafe.Add(ref vi, 2) = vi2;
         Unsafe.Add(ref vi, 4) = vi4;
         Unsafe.Add(ref vi, 10) = vi10;
@@ -8950,6 +9017,8 @@ internal static class Vu1AotPrograms
         Unsafe.Add(ref vi, 14) = vi14;
         Unsafe.Add(ref vi, 15) = vi15;
         vu.I = regI;
+        vu.P = regP;
+        vu.PendingP = regP;
         Sub_Base0_0380(vu, ref steps, ref acc, true);
         if (steps >= 65536) { vu.ACC = acc; vu.TotalInstructionsExecuted += steps; return; }
         vf5 = Unsafe.Add(ref vf, 5);
@@ -8978,17 +9047,19 @@ internal static class Vu1AotPrograms
         vi14 = Unsafe.Add(ref vi, 14);
         vi15 = Unsafe.Add(ref vi, 15);
         regI = vu.I;
+        regP = vu.P;
+        regPendingP = vu.PendingP;
         steps += 2;
         Unsafe.Add(ref vf, 5) = vf5;
         Unsafe.Add(ref vf, 7) = vf7;
         Unsafe.Add(ref vf, 8) = vf8;
         Unsafe.Add(ref vf, 9) = vf9;
-        Unsafe.Add(ref vf, 15) = vf15;
-        Unsafe.Add(ref vf, 16) = vf16;
+        { ref Vector128<float> fl_15 = ref Unsafe.Add(ref vf, 15); fl_15 = Ps2Vu0.BlendMask(fl_15, vf15, 0xCu); }
+        { ref Vector128<float> fl_16 = ref Unsafe.Add(ref vf, 16); fl_16 = Ps2Vu0.BlendMask(fl_16, vf16, 0xCu); }
         Unsafe.Add(ref vf, 18) = vf18;
-        Unsafe.Add(ref vf, 19) = vf19;
+        { ref Vector128<float> fl_19 = ref Unsafe.Add(ref vf, 19); fl_19 = Ps2Vu0.BlendMask(fl_19, vf19, 0xEu); }
         Unsafe.Add(ref vf, 30) = vf30;
-        Unsafe.Add(ref vf, 31) = vf31;
+        { ref Vector128<float> fl_31 = ref Unsafe.Add(ref vf, 31); fl_31 = Ps2Vu0.BlendMask(fl_31, vf31, 0xCu); }
         Unsafe.Add(ref vi, 2) = vi2;
         Unsafe.Add(ref vi, 4) = vi4;
         Unsafe.Add(ref vi, 10) = vi10;
@@ -8997,6 +9068,8 @@ internal static class Vu1AotPrograms
         Unsafe.Add(ref vi, 14) = vi14;
         Unsafe.Add(ref vi, 15) = vi15;
         vu.I = regI;
+        vu.P = regP;
+        vu.PendingP = regP;
         vu.ACC = acc;
         vu.Tpc = 0x2400;
         vu.TotalInstructionsExecuted += steps;
@@ -9006,12 +9079,12 @@ internal static class Vu1AotPrograms
         Unsafe.Add(ref vf, 7) = vf7;
         Unsafe.Add(ref vf, 8) = vf8;
         Unsafe.Add(ref vf, 9) = vf9;
-        Unsafe.Add(ref vf, 15) = vf15;
-        Unsafe.Add(ref vf, 16) = vf16;
+        { ref Vector128<float> fl_15 = ref Unsafe.Add(ref vf, 15); fl_15 = Ps2Vu0.BlendMask(fl_15, vf15, 0xCu); }
+        { ref Vector128<float> fl_16 = ref Unsafe.Add(ref vf, 16); fl_16 = Ps2Vu0.BlendMask(fl_16, vf16, 0xCu); }
         Unsafe.Add(ref vf, 18) = vf18;
-        Unsafe.Add(ref vf, 19) = vf19;
+        { ref Vector128<float> fl_19 = ref Unsafe.Add(ref vf, 19); fl_19 = Ps2Vu0.BlendMask(fl_19, vf19, 0xEu); }
         Unsafe.Add(ref vf, 30) = vf30;
-        Unsafe.Add(ref vf, 31) = vf31;
+        { ref Vector128<float> fl_31 = ref Unsafe.Add(ref vf, 31); fl_31 = Ps2Vu0.BlendMask(fl_31, vf31, 0xCu); }
         Unsafe.Add(ref vi, 2) = vi2;
         Unsafe.Add(ref vi, 4) = vi4;
         Unsafe.Add(ref vi, 10) = vi10;
@@ -9020,6 +9093,8 @@ internal static class Vu1AotPrograms
         Unsafe.Add(ref vi, 14) = vi14;
         Unsafe.Add(ref vi, 15) = vi15;
         vu.I = regI;
+        vu.P = regP;
+        vu.PendingP = regP;
         vu.ACC = acc;
         vu.TotalInstructionsExecuted += steps;
         return;
@@ -9073,6 +9148,8 @@ internal static class Vu1AotPrograms
         ushort vi14 = Unsafe.Add(ref vi, 14);
         ushort vi15 = Unsafe.Add(ref vi, 15);
         float regI = vu.I;
+        float regP = vu.P;
+        float regPendingP = vu.PendingP; _ = regPendingP;
         vi1 = vu.Top;
         vi13 = Unsafe.ReadUnaligned<ushort>(ref Unsafe.Add(ref dm, ((vi1 & 0x3FF)) << 4));
         vi4 = unchecked((ushort)(vi1 + 1u));
@@ -9094,18 +9171,18 @@ internal static class Vu1AotPrograms
         Unsafe.Add(ref vf, 10) = vf10;
         Unsafe.Add(ref vf, 11) = vf11;
         Unsafe.Add(ref vf, 12) = vf12;
-        Unsafe.Add(ref vf, 13) = vf13;
-        Unsafe.Add(ref vf, 14) = vf14;
-        Unsafe.Add(ref vf, 15) = vf15;
-        Unsafe.Add(ref vf, 16) = vf16;
+        { ref Vector128<float> fl_13 = ref Unsafe.Add(ref vf, 13); fl_13 = Ps2Vu0.BlendMask(fl_13, vf13, 0xEu); }
+        { ref Vector128<float> fl_14 = ref Unsafe.Add(ref vf, 14); fl_14 = Ps2Vu0.BlendMask(fl_14, vf14, 0xEu); }
+        { ref Vector128<float> fl_15 = ref Unsafe.Add(ref vf, 15); fl_15 = Ps2Vu0.BlendMask(fl_15, vf15, 0xCu); }
+        { ref Vector128<float> fl_16 = ref Unsafe.Add(ref vf, 16); fl_16 = Ps2Vu0.BlendMask(fl_16, vf16, 0xCu); }
         Unsafe.Add(ref vf, 18) = vf18;
-        Unsafe.Add(ref vf, 19) = vf19;
+        { ref Vector128<float> fl_19 = ref Unsafe.Add(ref vf, 19); fl_19 = Ps2Vu0.BlendMask(fl_19, vf19, 0xEu); }
         Unsafe.Add(ref vf, 20) = vf20;
         Unsafe.Add(ref vf, 21) = vf21;
         Unsafe.Add(ref vf, 22) = vf22;
         Unsafe.Add(ref vf, 23) = vf23;
         Unsafe.Add(ref vf, 30) = vf30;
-        Unsafe.Add(ref vf, 31) = vf31;
+        { ref Vector128<float> fl_31 = ref Unsafe.Add(ref vf, 31); fl_31 = Ps2Vu0.BlendMask(fl_31, vf31, 0xCu); }
         Unsafe.Add(ref vi, 1) = vi1;
         Unsafe.Add(ref vi, 2) = vi2;
         Unsafe.Add(ref vi, 3) = vi3;
@@ -9117,6 +9194,8 @@ internal static class Vu1AotPrograms
         Unsafe.Add(ref vi, 14) = vi14;
         Unsafe.Add(ref vi, 15) = vi15;
         vu.I = regI;
+        vu.P = regP;
+        vu.PendingP = regP;
         Sub_Ovl3_17A8(vu, ref steps, ref acc, true);
         if (steps >= 65536) { vu.ACC = acc; vu.TotalInstructionsExecuted += steps; return; }
         vf1 = Unsafe.Add(ref vf, 1);
@@ -9154,12 +9233,14 @@ internal static class Vu1AotPrograms
         vi14 = Unsafe.Add(ref vi, 14);
         vi15 = Unsafe.Add(ref vi, 15);
         regI = vu.I;
+        regP = vu.P;
+        regPendingP = vu.PendingP;
         vf10 = Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, (0x6) << 4));
         vf11 = Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, (0x7) << 4));
         vf12 = Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, (0x8) << 4));
         vf1 = Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, (0x43) << 4));
-        vf13 = Ps2Vu0.BlendMask(vf13, vf10, 0x8u);
-        vf14 = Ps2Vu0.BlendMask(vf14, vf11, 0x4u);
+        vf13 = vf10;
+        vf14 = vf11;
         vf2 = Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, (0x44) << 4));
         vf3 = Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, (0x45) << 4));
         vf4 = Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, (0x46) << 4));
@@ -9211,9 +9292,8 @@ internal static class Vu1AotPrograms
         steps += 2;
         goto slot_1241;
     slot_1217:
-        vu.P = vu.PendingP = MathF.Sin(vf5.GetElement(3));
+        regP = MathF.Sin(vf5.GetElement(3));
         vi15 = 1219;
-        vu.P = vu.PendingP;
         steps += 2;
         Unsafe.Add(ref vf, 1) = vf1;
         Unsafe.Add(ref vf, 2) = vf2;
@@ -9226,18 +9306,18 @@ internal static class Vu1AotPrograms
         Unsafe.Add(ref vf, 10) = vf10;
         Unsafe.Add(ref vf, 11) = vf11;
         Unsafe.Add(ref vf, 12) = vf12;
-        Unsafe.Add(ref vf, 13) = vf13;
-        Unsafe.Add(ref vf, 14) = vf14;
-        Unsafe.Add(ref vf, 15) = vf15;
-        Unsafe.Add(ref vf, 16) = vf16;
+        { ref Vector128<float> fl_13 = ref Unsafe.Add(ref vf, 13); fl_13 = Ps2Vu0.BlendMask(fl_13, vf13, 0xEu); }
+        { ref Vector128<float> fl_14 = ref Unsafe.Add(ref vf, 14); fl_14 = Ps2Vu0.BlendMask(fl_14, vf14, 0xEu); }
+        { ref Vector128<float> fl_15 = ref Unsafe.Add(ref vf, 15); fl_15 = Ps2Vu0.BlendMask(fl_15, vf15, 0xCu); }
+        { ref Vector128<float> fl_16 = ref Unsafe.Add(ref vf, 16); fl_16 = Ps2Vu0.BlendMask(fl_16, vf16, 0xCu); }
         Unsafe.Add(ref vf, 18) = vf18;
-        Unsafe.Add(ref vf, 19) = vf19;
+        { ref Vector128<float> fl_19 = ref Unsafe.Add(ref vf, 19); fl_19 = Ps2Vu0.BlendMask(fl_19, vf19, 0xEu); }
         Unsafe.Add(ref vf, 20) = vf20;
         Unsafe.Add(ref vf, 21) = vf21;
         Unsafe.Add(ref vf, 22) = vf22;
         Unsafe.Add(ref vf, 23) = vf23;
         Unsafe.Add(ref vf, 30) = vf30;
-        Unsafe.Add(ref vf, 31) = vf31;
+        { ref Vector128<float> fl_31 = ref Unsafe.Add(ref vf, 31); fl_31 = Ps2Vu0.BlendMask(fl_31, vf31, 0xCu); }
         Unsafe.Add(ref vi, 1) = vi1;
         Unsafe.Add(ref vi, 2) = vi2;
         Unsafe.Add(ref vi, 3) = vi3;
@@ -9249,6 +9329,8 @@ internal static class Vu1AotPrograms
         Unsafe.Add(ref vi, 14) = vi14;
         Unsafe.Add(ref vi, 15) = vi15;
         vu.I = regI;
+        vu.P = regP;
+        vu.PendingP = regP;
         Sub_Ovl3_1C90(vu, ref steps, ref acc, true);
         if (steps >= 65536) { vu.ACC = acc; vu.TotalInstructionsExecuted += steps; return; }
         vf1 = Unsafe.Add(ref vf, 1);
@@ -9286,27 +9368,28 @@ internal static class Vu1AotPrograms
         vi14 = Unsafe.Add(ref vi, 14);
         vi15 = Unsafe.Add(ref vi, 15);
         regI = vu.I;
+        regP = vu.P;
+        regPendingP = vu.PendingP;
         vf30 = Ps2Vu0.BlendMask(vf30, Vf0Mr32, 0x1u);
-        vf15 = Ps2Vu0.BlendMask(vf15, Vector128.Create(vu.P), 0x8u);
-        vf31 = Ps2Vu0.BlendMask(vf31, (Vf0 + Vector128<float>.One), 0x8u);
+        vf15 = Vector128.Create(regP);
+        vf31 = (Vf0 + Vector128<float>.One);
         vf30 = Ps2Vu0.BlendMask(vf30, (vf15 * vf15), 0x8u);
         vf30 = Ps2Vu0.BlendMask(vf30, (vf31 - vf30), 0x8u);
-        vu.P = vu.PendingP = Ps2Float.Sqrt(vf30.GetElement(0));
-        vu.P = vu.PendingP;
-        vf15 = Ps2Vu0.BlendMask(vf15, Vector128.Create(vu.P), 0x4u);
+        regP = Ps2Float.Sqrt(vf30.GetElement(0));
+        vf15 = Ps2Vu0.BlendMask(vf15, Vector128.Create(regP), 0x4u);
         btTmp = (vi14 == ((ushort)0));
         steps += 10;
         if (btTmp) goto slot_1230;
-        vf15 = Ps2Vu0.BlendMask(vf15, (Vf0 - vf15), 0xCu);
+        vf15 = (Vf0 - vf15);
         steps += 1;
     slot_1230:
         vf30 = Ps2Vu0.BlendMask(vf30, (vf16 * Ps2Vu0.BroadcastBc(vf15, 1u)), 0x8u);
         vf30 = Ps2Vu0.BlendMask(vf30, (vf16 * Ps2Vu0.BroadcastBc(vf15, 0u)), 0x4u);
         acc = Ps2Vu0.BlendMask(acc, (vf13 * Ps2Vu0.BroadcastBc(vf30, 0u)), 0xEu);
         vf18 = Ps2Vu0.BlendMask(vf18, FmaAdd(vf14, Ps2Vu0.BroadcastBc(vf30, 1u), acc), 0xEu);
-        vf31 = Ps2Vu0.BlendMask(vf31, (vf16 * vf15), 0xCu);
+        vf31 = (vf16 * vf15);
         acc = Ps2Vu0.BlendMask(acc, (vf13 * Ps2Vu0.BroadcastBc(vf31, 0u)), 0xEu);
-        vf19 = Ps2Vu0.BlendMask(vf19, FmaSub(vf14, Ps2Vu0.BroadcastBc(vf31, 1u), acc), 0xEu);
+        vf19 = FmaSub(vf14, Ps2Vu0.BroadcastBc(vf31, 1u), acc);
         vi15 = 1239;
         steps += 9;
         Unsafe.Add(ref vf, 1) = vf1;
@@ -9320,18 +9403,18 @@ internal static class Vu1AotPrograms
         Unsafe.Add(ref vf, 10) = vf10;
         Unsafe.Add(ref vf, 11) = vf11;
         Unsafe.Add(ref vf, 12) = vf12;
-        Unsafe.Add(ref vf, 13) = vf13;
-        Unsafe.Add(ref vf, 14) = vf14;
-        Unsafe.Add(ref vf, 15) = vf15;
-        Unsafe.Add(ref vf, 16) = vf16;
+        { ref Vector128<float> fl_13 = ref Unsafe.Add(ref vf, 13); fl_13 = Ps2Vu0.BlendMask(fl_13, vf13, 0xEu); }
+        { ref Vector128<float> fl_14 = ref Unsafe.Add(ref vf, 14); fl_14 = Ps2Vu0.BlendMask(fl_14, vf14, 0xEu); }
+        { ref Vector128<float> fl_15 = ref Unsafe.Add(ref vf, 15); fl_15 = Ps2Vu0.BlendMask(fl_15, vf15, 0xCu); }
+        { ref Vector128<float> fl_16 = ref Unsafe.Add(ref vf, 16); fl_16 = Ps2Vu0.BlendMask(fl_16, vf16, 0xCu); }
         Unsafe.Add(ref vf, 18) = vf18;
-        Unsafe.Add(ref vf, 19) = vf19;
+        { ref Vector128<float> fl_19 = ref Unsafe.Add(ref vf, 19); fl_19 = Ps2Vu0.BlendMask(fl_19, vf19, 0xEu); }
         Unsafe.Add(ref vf, 20) = vf20;
         Unsafe.Add(ref vf, 21) = vf21;
         Unsafe.Add(ref vf, 22) = vf22;
         Unsafe.Add(ref vf, 23) = vf23;
         Unsafe.Add(ref vf, 30) = vf30;
-        Unsafe.Add(ref vf, 31) = vf31;
+        { ref Vector128<float> fl_31 = ref Unsafe.Add(ref vf, 31); fl_31 = Ps2Vu0.BlendMask(fl_31, vf31, 0xCu); }
         Unsafe.Add(ref vi, 1) = vi1;
         Unsafe.Add(ref vi, 2) = vi2;
         Unsafe.Add(ref vi, 3) = vi3;
@@ -9343,6 +9426,8 @@ internal static class Vu1AotPrograms
         Unsafe.Add(ref vi, 14) = vi14;
         Unsafe.Add(ref vi, 15) = vi15;
         vu.I = regI;
+        vu.P = regP;
+        vu.PendingP = regP;
         Sub_Ovl3_1F48(vu, ref steps, ref acc, true);
         if (steps >= 65536) { vu.ACC = acc; vu.TotalInstructionsExecuted += steps; return; }
         vf1 = Unsafe.Add(ref vf, 1);
@@ -9380,6 +9465,8 @@ internal static class Vu1AotPrograms
         vi14 = Unsafe.Add(ref vi, 14);
         vi15 = Unsafe.Add(ref vi, 15);
         regI = vu.I;
+        regP = vu.P;
+        regPendingP = vu.PendingP;
         btTmp = ((short)vi13 > 0);
         vi2 = unchecked((ushort)(vi2 + 12u));
         steps += 2;
@@ -9399,18 +9486,18 @@ internal static class Vu1AotPrograms
         Unsafe.Add(ref vf, 10) = vf10;
         Unsafe.Add(ref vf, 11) = vf11;
         Unsafe.Add(ref vf, 12) = vf12;
-        Unsafe.Add(ref vf, 13) = vf13;
-        Unsafe.Add(ref vf, 14) = vf14;
-        Unsafe.Add(ref vf, 15) = vf15;
-        Unsafe.Add(ref vf, 16) = vf16;
+        { ref Vector128<float> fl_13 = ref Unsafe.Add(ref vf, 13); fl_13 = Ps2Vu0.BlendMask(fl_13, vf13, 0xEu); }
+        { ref Vector128<float> fl_14 = ref Unsafe.Add(ref vf, 14); fl_14 = Ps2Vu0.BlendMask(fl_14, vf14, 0xEu); }
+        { ref Vector128<float> fl_15 = ref Unsafe.Add(ref vf, 15); fl_15 = Ps2Vu0.BlendMask(fl_15, vf15, 0xCu); }
+        { ref Vector128<float> fl_16 = ref Unsafe.Add(ref vf, 16); fl_16 = Ps2Vu0.BlendMask(fl_16, vf16, 0xCu); }
         Unsafe.Add(ref vf, 18) = vf18;
-        Unsafe.Add(ref vf, 19) = vf19;
+        { ref Vector128<float> fl_19 = ref Unsafe.Add(ref vf, 19); fl_19 = Ps2Vu0.BlendMask(fl_19, vf19, 0xEu); }
         Unsafe.Add(ref vf, 20) = vf20;
         Unsafe.Add(ref vf, 21) = vf21;
         Unsafe.Add(ref vf, 22) = vf22;
         Unsafe.Add(ref vf, 23) = vf23;
         Unsafe.Add(ref vf, 30) = vf30;
-        Unsafe.Add(ref vf, 31) = vf31;
+        { ref Vector128<float> fl_31 = ref Unsafe.Add(ref vf, 31); fl_31 = Ps2Vu0.BlendMask(fl_31, vf31, 0xCu); }
         Unsafe.Add(ref vi, 1) = vi1;
         Unsafe.Add(ref vi, 2) = vi2;
         Unsafe.Add(ref vi, 3) = vi3;
@@ -9422,6 +9509,8 @@ internal static class Vu1AotPrograms
         Unsafe.Add(ref vi, 14) = vi14;
         Unsafe.Add(ref vi, 15) = vi15;
         vu.I = regI;
+        vu.P = regP;
+        vu.PendingP = regP;
         Sub_Base0_0380(vu, ref steps, ref acc, true);
         if (steps >= 65536) { vu.ACC = acc; vu.TotalInstructionsExecuted += steps; return; }
         vf1 = Unsafe.Add(ref vf, 1);
@@ -9459,6 +9548,8 @@ internal static class Vu1AotPrograms
         vi14 = Unsafe.Add(ref vi, 14);
         vi15 = Unsafe.Add(ref vi, 15);
         regI = vu.I;
+        regP = vu.P;
+        regPendingP = vu.PendingP;
         steps += 2;
         Unsafe.Add(ref vf, 1) = vf1;
         Unsafe.Add(ref vf, 2) = vf2;
@@ -9471,18 +9562,18 @@ internal static class Vu1AotPrograms
         Unsafe.Add(ref vf, 10) = vf10;
         Unsafe.Add(ref vf, 11) = vf11;
         Unsafe.Add(ref vf, 12) = vf12;
-        Unsafe.Add(ref vf, 13) = vf13;
-        Unsafe.Add(ref vf, 14) = vf14;
-        Unsafe.Add(ref vf, 15) = vf15;
-        Unsafe.Add(ref vf, 16) = vf16;
+        { ref Vector128<float> fl_13 = ref Unsafe.Add(ref vf, 13); fl_13 = Ps2Vu0.BlendMask(fl_13, vf13, 0xEu); }
+        { ref Vector128<float> fl_14 = ref Unsafe.Add(ref vf, 14); fl_14 = Ps2Vu0.BlendMask(fl_14, vf14, 0xEu); }
+        { ref Vector128<float> fl_15 = ref Unsafe.Add(ref vf, 15); fl_15 = Ps2Vu0.BlendMask(fl_15, vf15, 0xCu); }
+        { ref Vector128<float> fl_16 = ref Unsafe.Add(ref vf, 16); fl_16 = Ps2Vu0.BlendMask(fl_16, vf16, 0xCu); }
         Unsafe.Add(ref vf, 18) = vf18;
-        Unsafe.Add(ref vf, 19) = vf19;
+        { ref Vector128<float> fl_19 = ref Unsafe.Add(ref vf, 19); fl_19 = Ps2Vu0.BlendMask(fl_19, vf19, 0xEu); }
         Unsafe.Add(ref vf, 20) = vf20;
         Unsafe.Add(ref vf, 21) = vf21;
         Unsafe.Add(ref vf, 22) = vf22;
         Unsafe.Add(ref vf, 23) = vf23;
         Unsafe.Add(ref vf, 30) = vf30;
-        Unsafe.Add(ref vf, 31) = vf31;
+        { ref Vector128<float> fl_31 = ref Unsafe.Add(ref vf, 31); fl_31 = Ps2Vu0.BlendMask(fl_31, vf31, 0xCu); }
         Unsafe.Add(ref vi, 1) = vi1;
         Unsafe.Add(ref vi, 2) = vi2;
         Unsafe.Add(ref vi, 3) = vi3;
@@ -9494,6 +9585,8 @@ internal static class Vu1AotPrograms
         Unsafe.Add(ref vi, 14) = vi14;
         Unsafe.Add(ref vi, 15) = vi15;
         vu.I = regI;
+        vu.P = regP;
+        vu.PendingP = regP;
         vu.ACC = acc;
         vu.Tpc = 0x26F8;
         vu.TotalInstructionsExecuted += steps;
@@ -9510,18 +9603,18 @@ internal static class Vu1AotPrograms
         Unsafe.Add(ref vf, 10) = vf10;
         Unsafe.Add(ref vf, 11) = vf11;
         Unsafe.Add(ref vf, 12) = vf12;
-        Unsafe.Add(ref vf, 13) = vf13;
-        Unsafe.Add(ref vf, 14) = vf14;
-        Unsafe.Add(ref vf, 15) = vf15;
-        Unsafe.Add(ref vf, 16) = vf16;
+        { ref Vector128<float> fl_13 = ref Unsafe.Add(ref vf, 13); fl_13 = Ps2Vu0.BlendMask(fl_13, vf13, 0xEu); }
+        { ref Vector128<float> fl_14 = ref Unsafe.Add(ref vf, 14); fl_14 = Ps2Vu0.BlendMask(fl_14, vf14, 0xEu); }
+        { ref Vector128<float> fl_15 = ref Unsafe.Add(ref vf, 15); fl_15 = Ps2Vu0.BlendMask(fl_15, vf15, 0xCu); }
+        { ref Vector128<float> fl_16 = ref Unsafe.Add(ref vf, 16); fl_16 = Ps2Vu0.BlendMask(fl_16, vf16, 0xCu); }
         Unsafe.Add(ref vf, 18) = vf18;
-        Unsafe.Add(ref vf, 19) = vf19;
+        { ref Vector128<float> fl_19 = ref Unsafe.Add(ref vf, 19); fl_19 = Ps2Vu0.BlendMask(fl_19, vf19, 0xEu); }
         Unsafe.Add(ref vf, 20) = vf20;
         Unsafe.Add(ref vf, 21) = vf21;
         Unsafe.Add(ref vf, 22) = vf22;
         Unsafe.Add(ref vf, 23) = vf23;
         Unsafe.Add(ref vf, 30) = vf30;
-        Unsafe.Add(ref vf, 31) = vf31;
+        { ref Vector128<float> fl_31 = ref Unsafe.Add(ref vf, 31); fl_31 = Ps2Vu0.BlendMask(fl_31, vf31, 0xCu); }
         Unsafe.Add(ref vi, 1) = vi1;
         Unsafe.Add(ref vi, 2) = vi2;
         Unsafe.Add(ref vi, 3) = vi3;
@@ -9533,6 +9626,8 @@ internal static class Vu1AotPrograms
         Unsafe.Add(ref vi, 14) = vi14;
         Unsafe.Add(ref vi, 15) = vi15;
         vu.I = regI;
+        vu.P = regP;
+        vu.PendingP = regP;
         vu.ACC = acc;
         vu.TotalInstructionsExecuted += steps;
         return;
@@ -9586,6 +9681,8 @@ internal static class Vu1AotPrograms
         ushort vi14 = Unsafe.Add(ref vi, 14);
         ushort vi15 = Unsafe.Add(ref vi, 15);
         float regI = vu.I;
+        float regP = vu.P;
+        float regPendingP = vu.PendingP; _ = regPendingP;
         vi4 = unchecked((ushort)(vi1 + 1u));
         vi3 = unchecked((ushort)(((ushort)0) + 32767u));
         vi3 = unchecked((ushort)(vi3 + (1)));
@@ -9605,18 +9702,18 @@ internal static class Vu1AotPrograms
         Unsafe.Add(ref vf, 10) = vf10;
         Unsafe.Add(ref vf, 11) = vf11;
         Unsafe.Add(ref vf, 12) = vf12;
-        Unsafe.Add(ref vf, 13) = vf13;
-        Unsafe.Add(ref vf, 14) = vf14;
-        Unsafe.Add(ref vf, 15) = vf15;
-        Unsafe.Add(ref vf, 16) = vf16;
+        { ref Vector128<float> fl_13 = ref Unsafe.Add(ref vf, 13); fl_13 = Ps2Vu0.BlendMask(fl_13, vf13, 0xEu); }
+        { ref Vector128<float> fl_14 = ref Unsafe.Add(ref vf, 14); fl_14 = Ps2Vu0.BlendMask(fl_14, vf14, 0xEu); }
+        { ref Vector128<float> fl_15 = ref Unsafe.Add(ref vf, 15); fl_15 = Ps2Vu0.BlendMask(fl_15, vf15, 0xCu); }
+        { ref Vector128<float> fl_16 = ref Unsafe.Add(ref vf, 16); fl_16 = Ps2Vu0.BlendMask(fl_16, vf16, 0xCu); }
         Unsafe.Add(ref vf, 18) = vf18;
-        Unsafe.Add(ref vf, 19) = vf19;
+        { ref Vector128<float> fl_19 = ref Unsafe.Add(ref vf, 19); fl_19 = Ps2Vu0.BlendMask(fl_19, vf19, 0xEu); }
         Unsafe.Add(ref vf, 20) = vf20;
         Unsafe.Add(ref vf, 21) = vf21;
         Unsafe.Add(ref vf, 22) = vf22;
         Unsafe.Add(ref vf, 23) = vf23;
         Unsafe.Add(ref vf, 30) = vf30;
-        Unsafe.Add(ref vf, 31) = vf31;
+        { ref Vector128<float> fl_31 = ref Unsafe.Add(ref vf, 31); fl_31 = Ps2Vu0.BlendMask(fl_31, vf31, 0xCu); }
         Unsafe.Add(ref vi, 2) = vi2;
         Unsafe.Add(ref vi, 3) = vi3;
         Unsafe.Add(ref vi, 4) = vi4;
@@ -9627,6 +9724,8 @@ internal static class Vu1AotPrograms
         Unsafe.Add(ref vi, 14) = vi14;
         Unsafe.Add(ref vi, 15) = vi15;
         vu.I = regI;
+        vu.P = regP;
+        vu.PendingP = regP;
         Sub_Ovl3_17A8(vu, ref steps, ref acc, true);
         if (steps >= 65536) { vu.ACC = acc; vu.TotalInstructionsExecuted += steps; return; }
         vf1 = Unsafe.Add(ref vf, 1);
@@ -9664,12 +9763,14 @@ internal static class Vu1AotPrograms
         vi14 = Unsafe.Add(ref vi, 14);
         vi15 = Unsafe.Add(ref vi, 15);
         regI = vu.I;
+        regP = vu.P;
+        regPendingP = vu.PendingP;
         vf10 = Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, (0x6) << 4));
         vf11 = Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, (0x7) << 4));
         vf12 = Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, (0x8) << 4));
         vf1 = Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, (0x43) << 4));
-        vf13 = Ps2Vu0.BlendMask(vf13, vf10, 0x8u);
-        vf14 = Ps2Vu0.BlendMask(vf14, vf11, 0x4u);
+        vf13 = vf10;
+        vf14 = vf11;
         vf2 = Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, (0x44) << 4));
         vf3 = Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, (0x45) << 4));
         vf4 = Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, (0x46) << 4));
@@ -9721,9 +9822,8 @@ internal static class Vu1AotPrograms
         steps += 2;
         goto slot_1241;
     slot_1217:
-        vu.P = vu.PendingP = MathF.Sin(vf5.GetElement(3));
+        regP = MathF.Sin(vf5.GetElement(3));
         vi15 = 1219;
-        vu.P = vu.PendingP;
         steps += 2;
         Unsafe.Add(ref vf, 1) = vf1;
         Unsafe.Add(ref vf, 2) = vf2;
@@ -9736,18 +9836,18 @@ internal static class Vu1AotPrograms
         Unsafe.Add(ref vf, 10) = vf10;
         Unsafe.Add(ref vf, 11) = vf11;
         Unsafe.Add(ref vf, 12) = vf12;
-        Unsafe.Add(ref vf, 13) = vf13;
-        Unsafe.Add(ref vf, 14) = vf14;
-        Unsafe.Add(ref vf, 15) = vf15;
-        Unsafe.Add(ref vf, 16) = vf16;
+        { ref Vector128<float> fl_13 = ref Unsafe.Add(ref vf, 13); fl_13 = Ps2Vu0.BlendMask(fl_13, vf13, 0xEu); }
+        { ref Vector128<float> fl_14 = ref Unsafe.Add(ref vf, 14); fl_14 = Ps2Vu0.BlendMask(fl_14, vf14, 0xEu); }
+        { ref Vector128<float> fl_15 = ref Unsafe.Add(ref vf, 15); fl_15 = Ps2Vu0.BlendMask(fl_15, vf15, 0xCu); }
+        { ref Vector128<float> fl_16 = ref Unsafe.Add(ref vf, 16); fl_16 = Ps2Vu0.BlendMask(fl_16, vf16, 0xCu); }
         Unsafe.Add(ref vf, 18) = vf18;
-        Unsafe.Add(ref vf, 19) = vf19;
+        { ref Vector128<float> fl_19 = ref Unsafe.Add(ref vf, 19); fl_19 = Ps2Vu0.BlendMask(fl_19, vf19, 0xEu); }
         Unsafe.Add(ref vf, 20) = vf20;
         Unsafe.Add(ref vf, 21) = vf21;
         Unsafe.Add(ref vf, 22) = vf22;
         Unsafe.Add(ref vf, 23) = vf23;
         Unsafe.Add(ref vf, 30) = vf30;
-        Unsafe.Add(ref vf, 31) = vf31;
+        { ref Vector128<float> fl_31 = ref Unsafe.Add(ref vf, 31); fl_31 = Ps2Vu0.BlendMask(fl_31, vf31, 0xCu); }
         Unsafe.Add(ref vi, 2) = vi2;
         Unsafe.Add(ref vi, 3) = vi3;
         Unsafe.Add(ref vi, 4) = vi4;
@@ -9758,6 +9858,8 @@ internal static class Vu1AotPrograms
         Unsafe.Add(ref vi, 14) = vi14;
         Unsafe.Add(ref vi, 15) = vi15;
         vu.I = regI;
+        vu.P = regP;
+        vu.PendingP = regP;
         Sub_Ovl3_1C90(vu, ref steps, ref acc, true);
         if (steps >= 65536) { vu.ACC = acc; vu.TotalInstructionsExecuted += steps; return; }
         vf1 = Unsafe.Add(ref vf, 1);
@@ -9795,27 +9897,28 @@ internal static class Vu1AotPrograms
         vi14 = Unsafe.Add(ref vi, 14);
         vi15 = Unsafe.Add(ref vi, 15);
         regI = vu.I;
+        regP = vu.P;
+        regPendingP = vu.PendingP;
         vf30 = Ps2Vu0.BlendMask(vf30, Vf0Mr32, 0x1u);
-        vf15 = Ps2Vu0.BlendMask(vf15, Vector128.Create(vu.P), 0x8u);
-        vf31 = Ps2Vu0.BlendMask(vf31, (Vf0 + Vector128<float>.One), 0x8u);
+        vf15 = Vector128.Create(regP);
+        vf31 = (Vf0 + Vector128<float>.One);
         vf30 = Ps2Vu0.BlendMask(vf30, (vf15 * vf15), 0x8u);
         vf30 = Ps2Vu0.BlendMask(vf30, (vf31 - vf30), 0x8u);
-        vu.P = vu.PendingP = Ps2Float.Sqrt(vf30.GetElement(0));
-        vu.P = vu.PendingP;
-        vf15 = Ps2Vu0.BlendMask(vf15, Vector128.Create(vu.P), 0x4u);
+        regP = Ps2Float.Sqrt(vf30.GetElement(0));
+        vf15 = Ps2Vu0.BlendMask(vf15, Vector128.Create(regP), 0x4u);
         btTmp = (vi14 == ((ushort)0));
         steps += 10;
         if (btTmp) goto slot_1230;
-        vf15 = Ps2Vu0.BlendMask(vf15, (Vf0 - vf15), 0xCu);
+        vf15 = (Vf0 - vf15);
         steps += 1;
     slot_1230:
         vf30 = Ps2Vu0.BlendMask(vf30, (vf16 * Ps2Vu0.BroadcastBc(vf15, 1u)), 0x8u);
         vf30 = Ps2Vu0.BlendMask(vf30, (vf16 * Ps2Vu0.BroadcastBc(vf15, 0u)), 0x4u);
         acc = Ps2Vu0.BlendMask(acc, (vf13 * Ps2Vu0.BroadcastBc(vf30, 0u)), 0xEu);
         vf18 = Ps2Vu0.BlendMask(vf18, FmaAdd(vf14, Ps2Vu0.BroadcastBc(vf30, 1u), acc), 0xEu);
-        vf31 = Ps2Vu0.BlendMask(vf31, (vf16 * vf15), 0xCu);
+        vf31 = (vf16 * vf15);
         acc = Ps2Vu0.BlendMask(acc, (vf13 * Ps2Vu0.BroadcastBc(vf31, 0u)), 0xEu);
-        vf19 = Ps2Vu0.BlendMask(vf19, FmaSub(vf14, Ps2Vu0.BroadcastBc(vf31, 1u), acc), 0xEu);
+        vf19 = FmaSub(vf14, Ps2Vu0.BroadcastBc(vf31, 1u), acc);
         vi15 = 1239;
         steps += 9;
         Unsafe.Add(ref vf, 1) = vf1;
@@ -9829,18 +9932,18 @@ internal static class Vu1AotPrograms
         Unsafe.Add(ref vf, 10) = vf10;
         Unsafe.Add(ref vf, 11) = vf11;
         Unsafe.Add(ref vf, 12) = vf12;
-        Unsafe.Add(ref vf, 13) = vf13;
-        Unsafe.Add(ref vf, 14) = vf14;
-        Unsafe.Add(ref vf, 15) = vf15;
-        Unsafe.Add(ref vf, 16) = vf16;
+        { ref Vector128<float> fl_13 = ref Unsafe.Add(ref vf, 13); fl_13 = Ps2Vu0.BlendMask(fl_13, vf13, 0xEu); }
+        { ref Vector128<float> fl_14 = ref Unsafe.Add(ref vf, 14); fl_14 = Ps2Vu0.BlendMask(fl_14, vf14, 0xEu); }
+        { ref Vector128<float> fl_15 = ref Unsafe.Add(ref vf, 15); fl_15 = Ps2Vu0.BlendMask(fl_15, vf15, 0xCu); }
+        { ref Vector128<float> fl_16 = ref Unsafe.Add(ref vf, 16); fl_16 = Ps2Vu0.BlendMask(fl_16, vf16, 0xCu); }
         Unsafe.Add(ref vf, 18) = vf18;
-        Unsafe.Add(ref vf, 19) = vf19;
+        { ref Vector128<float> fl_19 = ref Unsafe.Add(ref vf, 19); fl_19 = Ps2Vu0.BlendMask(fl_19, vf19, 0xEu); }
         Unsafe.Add(ref vf, 20) = vf20;
         Unsafe.Add(ref vf, 21) = vf21;
         Unsafe.Add(ref vf, 22) = vf22;
         Unsafe.Add(ref vf, 23) = vf23;
         Unsafe.Add(ref vf, 30) = vf30;
-        Unsafe.Add(ref vf, 31) = vf31;
+        { ref Vector128<float> fl_31 = ref Unsafe.Add(ref vf, 31); fl_31 = Ps2Vu0.BlendMask(fl_31, vf31, 0xCu); }
         Unsafe.Add(ref vi, 2) = vi2;
         Unsafe.Add(ref vi, 3) = vi3;
         Unsafe.Add(ref vi, 4) = vi4;
@@ -9851,6 +9954,8 @@ internal static class Vu1AotPrograms
         Unsafe.Add(ref vi, 14) = vi14;
         Unsafe.Add(ref vi, 15) = vi15;
         vu.I = regI;
+        vu.P = regP;
+        vu.PendingP = regP;
         Sub_Ovl3_1F48(vu, ref steps, ref acc, true);
         if (steps >= 65536) { vu.ACC = acc; vu.TotalInstructionsExecuted += steps; return; }
         vf1 = Unsafe.Add(ref vf, 1);
@@ -9888,6 +9993,8 @@ internal static class Vu1AotPrograms
         vi14 = Unsafe.Add(ref vi, 14);
         vi15 = Unsafe.Add(ref vi, 15);
         regI = vu.I;
+        regP = vu.P;
+        regPendingP = vu.PendingP;
         btTmp = ((short)vi13 > 0);
         vi2 = unchecked((ushort)(vi2 + 12u));
         steps += 2;
@@ -9907,18 +10014,18 @@ internal static class Vu1AotPrograms
         Unsafe.Add(ref vf, 10) = vf10;
         Unsafe.Add(ref vf, 11) = vf11;
         Unsafe.Add(ref vf, 12) = vf12;
-        Unsafe.Add(ref vf, 13) = vf13;
-        Unsafe.Add(ref vf, 14) = vf14;
-        Unsafe.Add(ref vf, 15) = vf15;
-        Unsafe.Add(ref vf, 16) = vf16;
+        { ref Vector128<float> fl_13 = ref Unsafe.Add(ref vf, 13); fl_13 = Ps2Vu0.BlendMask(fl_13, vf13, 0xEu); }
+        { ref Vector128<float> fl_14 = ref Unsafe.Add(ref vf, 14); fl_14 = Ps2Vu0.BlendMask(fl_14, vf14, 0xEu); }
+        { ref Vector128<float> fl_15 = ref Unsafe.Add(ref vf, 15); fl_15 = Ps2Vu0.BlendMask(fl_15, vf15, 0xCu); }
+        { ref Vector128<float> fl_16 = ref Unsafe.Add(ref vf, 16); fl_16 = Ps2Vu0.BlendMask(fl_16, vf16, 0xCu); }
         Unsafe.Add(ref vf, 18) = vf18;
-        Unsafe.Add(ref vf, 19) = vf19;
+        { ref Vector128<float> fl_19 = ref Unsafe.Add(ref vf, 19); fl_19 = Ps2Vu0.BlendMask(fl_19, vf19, 0xEu); }
         Unsafe.Add(ref vf, 20) = vf20;
         Unsafe.Add(ref vf, 21) = vf21;
         Unsafe.Add(ref vf, 22) = vf22;
         Unsafe.Add(ref vf, 23) = vf23;
         Unsafe.Add(ref vf, 30) = vf30;
-        Unsafe.Add(ref vf, 31) = vf31;
+        { ref Vector128<float> fl_31 = ref Unsafe.Add(ref vf, 31); fl_31 = Ps2Vu0.BlendMask(fl_31, vf31, 0xCu); }
         Unsafe.Add(ref vi, 2) = vi2;
         Unsafe.Add(ref vi, 3) = vi3;
         Unsafe.Add(ref vi, 4) = vi4;
@@ -9929,6 +10036,8 @@ internal static class Vu1AotPrograms
         Unsafe.Add(ref vi, 14) = vi14;
         Unsafe.Add(ref vi, 15) = vi15;
         vu.I = regI;
+        vu.P = regP;
+        vu.PendingP = regP;
         Sub_Base0_0380(vu, ref steps, ref acc, true);
         if (steps >= 65536) { vu.ACC = acc; vu.TotalInstructionsExecuted += steps; return; }
         vf1 = Unsafe.Add(ref vf, 1);
@@ -9966,6 +10075,8 @@ internal static class Vu1AotPrograms
         vi14 = Unsafe.Add(ref vi, 14);
         vi15 = Unsafe.Add(ref vi, 15);
         regI = vu.I;
+        regP = vu.P;
+        regPendingP = vu.PendingP;
         steps += 2;
         Unsafe.Add(ref vf, 1) = vf1;
         Unsafe.Add(ref vf, 2) = vf2;
@@ -9978,18 +10089,18 @@ internal static class Vu1AotPrograms
         Unsafe.Add(ref vf, 10) = vf10;
         Unsafe.Add(ref vf, 11) = vf11;
         Unsafe.Add(ref vf, 12) = vf12;
-        Unsafe.Add(ref vf, 13) = vf13;
-        Unsafe.Add(ref vf, 14) = vf14;
-        Unsafe.Add(ref vf, 15) = vf15;
-        Unsafe.Add(ref vf, 16) = vf16;
+        { ref Vector128<float> fl_13 = ref Unsafe.Add(ref vf, 13); fl_13 = Ps2Vu0.BlendMask(fl_13, vf13, 0xEu); }
+        { ref Vector128<float> fl_14 = ref Unsafe.Add(ref vf, 14); fl_14 = Ps2Vu0.BlendMask(fl_14, vf14, 0xEu); }
+        { ref Vector128<float> fl_15 = ref Unsafe.Add(ref vf, 15); fl_15 = Ps2Vu0.BlendMask(fl_15, vf15, 0xCu); }
+        { ref Vector128<float> fl_16 = ref Unsafe.Add(ref vf, 16); fl_16 = Ps2Vu0.BlendMask(fl_16, vf16, 0xCu); }
         Unsafe.Add(ref vf, 18) = vf18;
-        Unsafe.Add(ref vf, 19) = vf19;
+        { ref Vector128<float> fl_19 = ref Unsafe.Add(ref vf, 19); fl_19 = Ps2Vu0.BlendMask(fl_19, vf19, 0xEu); }
         Unsafe.Add(ref vf, 20) = vf20;
         Unsafe.Add(ref vf, 21) = vf21;
         Unsafe.Add(ref vf, 22) = vf22;
         Unsafe.Add(ref vf, 23) = vf23;
         Unsafe.Add(ref vf, 30) = vf30;
-        Unsafe.Add(ref vf, 31) = vf31;
+        { ref Vector128<float> fl_31 = ref Unsafe.Add(ref vf, 31); fl_31 = Ps2Vu0.BlendMask(fl_31, vf31, 0xCu); }
         Unsafe.Add(ref vi, 2) = vi2;
         Unsafe.Add(ref vi, 3) = vi3;
         Unsafe.Add(ref vi, 4) = vi4;
@@ -10000,6 +10111,8 @@ internal static class Vu1AotPrograms
         Unsafe.Add(ref vi, 14) = vi14;
         Unsafe.Add(ref vi, 15) = vi15;
         vu.I = regI;
+        vu.P = regP;
+        vu.PendingP = regP;
         vu.ACC = acc;
         vu.Tpc = 0x26F8;
         vu.TotalInstructionsExecuted += steps;
@@ -10016,18 +10129,18 @@ internal static class Vu1AotPrograms
         Unsafe.Add(ref vf, 10) = vf10;
         Unsafe.Add(ref vf, 11) = vf11;
         Unsafe.Add(ref vf, 12) = vf12;
-        Unsafe.Add(ref vf, 13) = vf13;
-        Unsafe.Add(ref vf, 14) = vf14;
-        Unsafe.Add(ref vf, 15) = vf15;
-        Unsafe.Add(ref vf, 16) = vf16;
+        { ref Vector128<float> fl_13 = ref Unsafe.Add(ref vf, 13); fl_13 = Ps2Vu0.BlendMask(fl_13, vf13, 0xEu); }
+        { ref Vector128<float> fl_14 = ref Unsafe.Add(ref vf, 14); fl_14 = Ps2Vu0.BlendMask(fl_14, vf14, 0xEu); }
+        { ref Vector128<float> fl_15 = ref Unsafe.Add(ref vf, 15); fl_15 = Ps2Vu0.BlendMask(fl_15, vf15, 0xCu); }
+        { ref Vector128<float> fl_16 = ref Unsafe.Add(ref vf, 16); fl_16 = Ps2Vu0.BlendMask(fl_16, vf16, 0xCu); }
         Unsafe.Add(ref vf, 18) = vf18;
-        Unsafe.Add(ref vf, 19) = vf19;
+        { ref Vector128<float> fl_19 = ref Unsafe.Add(ref vf, 19); fl_19 = Ps2Vu0.BlendMask(fl_19, vf19, 0xEu); }
         Unsafe.Add(ref vf, 20) = vf20;
         Unsafe.Add(ref vf, 21) = vf21;
         Unsafe.Add(ref vf, 22) = vf22;
         Unsafe.Add(ref vf, 23) = vf23;
         Unsafe.Add(ref vf, 30) = vf30;
-        Unsafe.Add(ref vf, 31) = vf31;
+        { ref Vector128<float> fl_31 = ref Unsafe.Add(ref vf, 31); fl_31 = Ps2Vu0.BlendMask(fl_31, vf31, 0xCu); }
         Unsafe.Add(ref vi, 2) = vi2;
         Unsafe.Add(ref vi, 3) = vi3;
         Unsafe.Add(ref vi, 4) = vi4;
@@ -10038,6 +10151,8 @@ internal static class Vu1AotPrograms
         Unsafe.Add(ref vi, 14) = vi14;
         Unsafe.Add(ref vi, 15) = vi15;
         vu.I = regI;
+        vu.P = regP;
+        vu.PendingP = regP;
         vu.ACC = acc;
         vu.TotalInstructionsExecuted += steps;
         return;
@@ -10082,6 +10197,8 @@ internal static class Vu1AotPrograms
         ushort vi14 = Unsafe.Add(ref vi, 14);
         ushort vi15 = Unsafe.Add(ref vi, 15);
         float regI = vu.I;
+        float regP = vu.P;
+        float regPendingP = vu.PendingP; _ = regPendingP;
         goto slot_1217;
     slot_1176:
         vi13 = unchecked((ushort)(vi13 + (-1)));
@@ -10121,20 +10238,19 @@ internal static class Vu1AotPrograms
         steps += 2;
         goto slot_1241;
     slot_1217:
-        vu.P = vu.PendingP = MathF.Sin(vf5.GetElement(3));
+        regP = MathF.Sin(vf5.GetElement(3));
         vi15 = 1219;
-        vu.P = vu.PendingP;
         steps += 2;
         Unsafe.Add(ref vf, 5) = vf5;
         Unsafe.Add(ref vf, 7) = vf7;
         Unsafe.Add(ref vf, 8) = vf8;
         Unsafe.Add(ref vf, 9) = vf9;
-        Unsafe.Add(ref vf, 15) = vf15;
-        Unsafe.Add(ref vf, 16) = vf16;
+        { ref Vector128<float> fl_15 = ref Unsafe.Add(ref vf, 15); fl_15 = Ps2Vu0.BlendMask(fl_15, vf15, 0xCu); }
+        { ref Vector128<float> fl_16 = ref Unsafe.Add(ref vf, 16); fl_16 = Ps2Vu0.BlendMask(fl_16, vf16, 0xCu); }
         Unsafe.Add(ref vf, 18) = vf18;
-        Unsafe.Add(ref vf, 19) = vf19;
+        { ref Vector128<float> fl_19 = ref Unsafe.Add(ref vf, 19); fl_19 = Ps2Vu0.BlendMask(fl_19, vf19, 0xEu); }
         Unsafe.Add(ref vf, 30) = vf30;
-        Unsafe.Add(ref vf, 31) = vf31;
+        { ref Vector128<float> fl_31 = ref Unsafe.Add(ref vf, 31); fl_31 = Ps2Vu0.BlendMask(fl_31, vf31, 0xCu); }
         Unsafe.Add(ref vi, 2) = vi2;
         Unsafe.Add(ref vi, 4) = vi4;
         Unsafe.Add(ref vi, 10) = vi10;
@@ -10143,6 +10259,8 @@ internal static class Vu1AotPrograms
         Unsafe.Add(ref vi, 14) = vi14;
         Unsafe.Add(ref vi, 15) = vi15;
         vu.I = regI;
+        vu.P = regP;
+        vu.PendingP = regP;
         Sub_Ovl3_1C90(vu, ref steps, ref acc, true);
         if (steps >= 65536) { vu.ACC = acc; vu.TotalInstructionsExecuted += steps; return; }
         vf5 = Unsafe.Add(ref vf, 5);
@@ -10171,39 +10289,40 @@ internal static class Vu1AotPrograms
         vi14 = Unsafe.Add(ref vi, 14);
         vi15 = Unsafe.Add(ref vi, 15);
         regI = vu.I;
+        regP = vu.P;
+        regPendingP = vu.PendingP;
         vf30 = Ps2Vu0.BlendMask(vf30, Vf0Mr32, 0x1u);
-        vf15 = Ps2Vu0.BlendMask(vf15, Vector128.Create(vu.P), 0x8u);
-        vf31 = Ps2Vu0.BlendMask(vf31, (Vf0 + Vector128<float>.One), 0x8u);
+        vf15 = Vector128.Create(regP);
+        vf31 = (Vf0 + Vector128<float>.One);
         vf30 = Ps2Vu0.BlendMask(vf30, (vf15 * vf15), 0x8u);
         vf30 = Ps2Vu0.BlendMask(vf30, (vf31 - vf30), 0x8u);
-        vu.P = vu.PendingP = Ps2Float.Sqrt(vf30.GetElement(0));
-        vu.P = vu.PendingP;
-        vf15 = Ps2Vu0.BlendMask(vf15, Vector128.Create(vu.P), 0x4u);
+        regP = Ps2Float.Sqrt(vf30.GetElement(0));
+        vf15 = Ps2Vu0.BlendMask(vf15, Vector128.Create(regP), 0x4u);
         btTmp = (vi14 == ((ushort)0));
         steps += 10;
         if (btTmp) goto slot_1230;
-        vf15 = Ps2Vu0.BlendMask(vf15, (Vf0 - vf15), 0xCu);
+        vf15 = (Vf0 - vf15);
         steps += 1;
     slot_1230:
         vf30 = Ps2Vu0.BlendMask(vf30, (vf16 * Ps2Vu0.BroadcastBc(vf15, 1u)), 0x8u);
         vf30 = Ps2Vu0.BlendMask(vf30, (vf16 * Ps2Vu0.BroadcastBc(vf15, 0u)), 0x4u);
         acc = Ps2Vu0.BlendMask(acc, (vf13 * Ps2Vu0.BroadcastBc(vf30, 0u)), 0xEu);
         vf18 = Ps2Vu0.BlendMask(vf18, FmaAdd(vf14, Ps2Vu0.BroadcastBc(vf30, 1u), acc), 0xEu);
-        vf31 = Ps2Vu0.BlendMask(vf31, (vf16 * vf15), 0xCu);
+        vf31 = (vf16 * vf15);
         acc = Ps2Vu0.BlendMask(acc, (vf13 * Ps2Vu0.BroadcastBc(vf31, 0u)), 0xEu);
-        vf19 = Ps2Vu0.BlendMask(vf19, FmaSub(vf14, Ps2Vu0.BroadcastBc(vf31, 1u), acc), 0xEu);
+        vf19 = FmaSub(vf14, Ps2Vu0.BroadcastBc(vf31, 1u), acc);
         vi15 = 1239;
         steps += 9;
         Unsafe.Add(ref vf, 5) = vf5;
         Unsafe.Add(ref vf, 7) = vf7;
         Unsafe.Add(ref vf, 8) = vf8;
         Unsafe.Add(ref vf, 9) = vf9;
-        Unsafe.Add(ref vf, 15) = vf15;
-        Unsafe.Add(ref vf, 16) = vf16;
+        { ref Vector128<float> fl_15 = ref Unsafe.Add(ref vf, 15); fl_15 = Ps2Vu0.BlendMask(fl_15, vf15, 0xCu); }
+        { ref Vector128<float> fl_16 = ref Unsafe.Add(ref vf, 16); fl_16 = Ps2Vu0.BlendMask(fl_16, vf16, 0xCu); }
         Unsafe.Add(ref vf, 18) = vf18;
-        Unsafe.Add(ref vf, 19) = vf19;
+        { ref Vector128<float> fl_19 = ref Unsafe.Add(ref vf, 19); fl_19 = Ps2Vu0.BlendMask(fl_19, vf19, 0xEu); }
         Unsafe.Add(ref vf, 30) = vf30;
-        Unsafe.Add(ref vf, 31) = vf31;
+        { ref Vector128<float> fl_31 = ref Unsafe.Add(ref vf, 31); fl_31 = Ps2Vu0.BlendMask(fl_31, vf31, 0xCu); }
         Unsafe.Add(ref vi, 2) = vi2;
         Unsafe.Add(ref vi, 4) = vi4;
         Unsafe.Add(ref vi, 10) = vi10;
@@ -10212,6 +10331,8 @@ internal static class Vu1AotPrograms
         Unsafe.Add(ref vi, 14) = vi14;
         Unsafe.Add(ref vi, 15) = vi15;
         vu.I = regI;
+        vu.P = regP;
+        vu.PendingP = regP;
         Sub_Ovl3_1F48(vu, ref steps, ref acc, true);
         if (steps >= 65536) { vu.ACC = acc; vu.TotalInstructionsExecuted += steps; return; }
         vf5 = Unsafe.Add(ref vf, 5);
@@ -10240,6 +10361,8 @@ internal static class Vu1AotPrograms
         vi14 = Unsafe.Add(ref vi, 14);
         vi15 = Unsafe.Add(ref vi, 15);
         regI = vu.I;
+        regP = vu.P;
+        regPendingP = vu.PendingP;
         btTmp = ((short)vi13 > 0);
         vi2 = unchecked((ushort)(vi2 + 12u));
         steps += 2;
@@ -10252,12 +10375,12 @@ internal static class Vu1AotPrograms
         Unsafe.Add(ref vf, 7) = vf7;
         Unsafe.Add(ref vf, 8) = vf8;
         Unsafe.Add(ref vf, 9) = vf9;
-        Unsafe.Add(ref vf, 15) = vf15;
-        Unsafe.Add(ref vf, 16) = vf16;
+        { ref Vector128<float> fl_15 = ref Unsafe.Add(ref vf, 15); fl_15 = Ps2Vu0.BlendMask(fl_15, vf15, 0xCu); }
+        { ref Vector128<float> fl_16 = ref Unsafe.Add(ref vf, 16); fl_16 = Ps2Vu0.BlendMask(fl_16, vf16, 0xCu); }
         Unsafe.Add(ref vf, 18) = vf18;
-        Unsafe.Add(ref vf, 19) = vf19;
+        { ref Vector128<float> fl_19 = ref Unsafe.Add(ref vf, 19); fl_19 = Ps2Vu0.BlendMask(fl_19, vf19, 0xEu); }
         Unsafe.Add(ref vf, 30) = vf30;
-        Unsafe.Add(ref vf, 31) = vf31;
+        { ref Vector128<float> fl_31 = ref Unsafe.Add(ref vf, 31); fl_31 = Ps2Vu0.BlendMask(fl_31, vf31, 0xCu); }
         Unsafe.Add(ref vi, 2) = vi2;
         Unsafe.Add(ref vi, 4) = vi4;
         Unsafe.Add(ref vi, 10) = vi10;
@@ -10266,6 +10389,8 @@ internal static class Vu1AotPrograms
         Unsafe.Add(ref vi, 14) = vi14;
         Unsafe.Add(ref vi, 15) = vi15;
         vu.I = regI;
+        vu.P = regP;
+        vu.PendingP = regP;
         Sub_Base0_0380(vu, ref steps, ref acc, true);
         if (steps >= 65536) { vu.ACC = acc; vu.TotalInstructionsExecuted += steps; return; }
         vf5 = Unsafe.Add(ref vf, 5);
@@ -10294,17 +10419,19 @@ internal static class Vu1AotPrograms
         vi14 = Unsafe.Add(ref vi, 14);
         vi15 = Unsafe.Add(ref vi, 15);
         regI = vu.I;
+        regP = vu.P;
+        regPendingP = vu.PendingP;
         steps += 2;
         Unsafe.Add(ref vf, 5) = vf5;
         Unsafe.Add(ref vf, 7) = vf7;
         Unsafe.Add(ref vf, 8) = vf8;
         Unsafe.Add(ref vf, 9) = vf9;
-        Unsafe.Add(ref vf, 15) = vf15;
-        Unsafe.Add(ref vf, 16) = vf16;
+        { ref Vector128<float> fl_15 = ref Unsafe.Add(ref vf, 15); fl_15 = Ps2Vu0.BlendMask(fl_15, vf15, 0xCu); }
+        { ref Vector128<float> fl_16 = ref Unsafe.Add(ref vf, 16); fl_16 = Ps2Vu0.BlendMask(fl_16, vf16, 0xCu); }
         Unsafe.Add(ref vf, 18) = vf18;
-        Unsafe.Add(ref vf, 19) = vf19;
+        { ref Vector128<float> fl_19 = ref Unsafe.Add(ref vf, 19); fl_19 = Ps2Vu0.BlendMask(fl_19, vf19, 0xEu); }
         Unsafe.Add(ref vf, 30) = vf30;
-        Unsafe.Add(ref vf, 31) = vf31;
+        { ref Vector128<float> fl_31 = ref Unsafe.Add(ref vf, 31); fl_31 = Ps2Vu0.BlendMask(fl_31, vf31, 0xCu); }
         Unsafe.Add(ref vi, 2) = vi2;
         Unsafe.Add(ref vi, 4) = vi4;
         Unsafe.Add(ref vi, 10) = vi10;
@@ -10313,6 +10440,8 @@ internal static class Vu1AotPrograms
         Unsafe.Add(ref vi, 14) = vi14;
         Unsafe.Add(ref vi, 15) = vi15;
         vu.I = regI;
+        vu.P = regP;
+        vu.PendingP = regP;
         vu.ACC = acc;
         vu.Tpc = 0x26F8;
         vu.TotalInstructionsExecuted += steps;
@@ -10322,12 +10451,12 @@ internal static class Vu1AotPrograms
         Unsafe.Add(ref vf, 7) = vf7;
         Unsafe.Add(ref vf, 8) = vf8;
         Unsafe.Add(ref vf, 9) = vf9;
-        Unsafe.Add(ref vf, 15) = vf15;
-        Unsafe.Add(ref vf, 16) = vf16;
+        { ref Vector128<float> fl_15 = ref Unsafe.Add(ref vf, 15); fl_15 = Ps2Vu0.BlendMask(fl_15, vf15, 0xCu); }
+        { ref Vector128<float> fl_16 = ref Unsafe.Add(ref vf, 16); fl_16 = Ps2Vu0.BlendMask(fl_16, vf16, 0xCu); }
         Unsafe.Add(ref vf, 18) = vf18;
-        Unsafe.Add(ref vf, 19) = vf19;
+        { ref Vector128<float> fl_19 = ref Unsafe.Add(ref vf, 19); fl_19 = Ps2Vu0.BlendMask(fl_19, vf19, 0xEu); }
         Unsafe.Add(ref vf, 30) = vf30;
-        Unsafe.Add(ref vf, 31) = vf31;
+        { ref Vector128<float> fl_31 = ref Unsafe.Add(ref vf, 31); fl_31 = Ps2Vu0.BlendMask(fl_31, vf31, 0xCu); }
         Unsafe.Add(ref vi, 2) = vi2;
         Unsafe.Add(ref vi, 4) = vi4;
         Unsafe.Add(ref vi, 10) = vi10;
@@ -10336,6 +10465,8 @@ internal static class Vu1AotPrograms
         Unsafe.Add(ref vi, 14) = vi14;
         Unsafe.Add(ref vi, 15) = vi15;
         vu.I = regI;
+        vu.P = regP;
+        vu.PendingP = regP;
         vu.ACC = acc;
         vu.TotalInstructionsExecuted += steps;
         return;
@@ -10380,6 +10511,8 @@ internal static class Vu1AotPrograms
         ushort vi14 = Unsafe.Add(ref vi, 14);
         ushort vi15 = Unsafe.Add(ref vi, 15);
         float regI = vu.I;
+        float regP = vu.P;
+        float regPendingP = vu.PendingP; _ = regPendingP;
         goto slot_1226;
     slot_1176:
         vi13 = unchecked((ushort)(vi13 + (-1)));
@@ -10419,20 +10552,19 @@ internal static class Vu1AotPrograms
         steps += 2;
         goto slot_1241;
     slot_1217:
-        vu.P = vu.PendingP = MathF.Sin(vf5.GetElement(3));
+        regP = MathF.Sin(vf5.GetElement(3));
         vi15 = 1219;
-        vu.P = vu.PendingP;
         steps += 2;
         Unsafe.Add(ref vf, 5) = vf5;
         Unsafe.Add(ref vf, 7) = vf7;
         Unsafe.Add(ref vf, 8) = vf8;
         Unsafe.Add(ref vf, 9) = vf9;
-        Unsafe.Add(ref vf, 15) = vf15;
-        Unsafe.Add(ref vf, 16) = vf16;
+        { ref Vector128<float> fl_15 = ref Unsafe.Add(ref vf, 15); fl_15 = Ps2Vu0.BlendMask(fl_15, vf15, 0xCu); }
+        { ref Vector128<float> fl_16 = ref Unsafe.Add(ref vf, 16); fl_16 = Ps2Vu0.BlendMask(fl_16, vf16, 0xCu); }
         Unsafe.Add(ref vf, 18) = vf18;
-        Unsafe.Add(ref vf, 19) = vf19;
+        { ref Vector128<float> fl_19 = ref Unsafe.Add(ref vf, 19); fl_19 = Ps2Vu0.BlendMask(fl_19, vf19, 0xEu); }
         Unsafe.Add(ref vf, 30) = vf30;
-        Unsafe.Add(ref vf, 31) = vf31;
+        { ref Vector128<float> fl_31 = ref Unsafe.Add(ref vf, 31); fl_31 = Ps2Vu0.BlendMask(fl_31, vf31, 0xCu); }
         Unsafe.Add(ref vi, 2) = vi2;
         Unsafe.Add(ref vi, 4) = vi4;
         Unsafe.Add(ref vi, 10) = vi10;
@@ -10441,6 +10573,8 @@ internal static class Vu1AotPrograms
         Unsafe.Add(ref vi, 14) = vi14;
         Unsafe.Add(ref vi, 15) = vi15;
         vu.I = regI;
+        vu.P = regP;
+        vu.PendingP = regP;
         Sub_Ovl3_1C90(vu, ref steps, ref acc, true);
         if (steps >= 65536) { vu.ACC = acc; vu.TotalInstructionsExecuted += steps; return; }
         vf5 = Unsafe.Add(ref vf, 5);
@@ -10469,41 +10603,42 @@ internal static class Vu1AotPrograms
         vi14 = Unsafe.Add(ref vi, 14);
         vi15 = Unsafe.Add(ref vi, 15);
         regI = vu.I;
+        regP = vu.P;
+        regPendingP = vu.PendingP;
         vf30 = Ps2Vu0.BlendMask(vf30, Vf0Mr32, 0x1u);
-        vf15 = Ps2Vu0.BlendMask(vf15, Vector128.Create(vu.P), 0x8u);
-        vf31 = Ps2Vu0.BlendMask(vf31, (Vf0 + Vector128<float>.One), 0x8u);
+        vf15 = Vector128.Create(regP);
+        vf31 = (Vf0 + Vector128<float>.One);
         vf30 = Ps2Vu0.BlendMask(vf30, (vf15 * vf15), 0x8u);
         vf30 = Ps2Vu0.BlendMask(vf30, (vf31 - vf30), 0x8u);
-        vu.P = vu.PendingP = Ps2Float.Sqrt(vf30.GetElement(0));
-        vu.P = vu.PendingP;
+        regP = Ps2Float.Sqrt(vf30.GetElement(0));
         steps += 7;
     slot_1226:
-        vf15 = Ps2Vu0.BlendMask(vf15, Vector128.Create(vu.P), 0x4u);
+        vf15 = Ps2Vu0.BlendMask(vf15, Vector128.Create(regP), 0x4u);
         btTmp = (vi14 == ((ushort)0));
         steps += 3;
         if (btTmp) goto slot_1230;
-        vf15 = Ps2Vu0.BlendMask(vf15, (Vf0 - vf15), 0xCu);
+        vf15 = (Vf0 - vf15);
         steps += 1;
     slot_1230:
         vf30 = Ps2Vu0.BlendMask(vf30, (vf16 * Ps2Vu0.BroadcastBc(vf15, 1u)), 0x8u);
         vf30 = Ps2Vu0.BlendMask(vf30, (vf16 * Ps2Vu0.BroadcastBc(vf15, 0u)), 0x4u);
         acc = Ps2Vu0.BlendMask(acc, (vf13 * Ps2Vu0.BroadcastBc(vf30, 0u)), 0xEu);
         vf18 = Ps2Vu0.BlendMask(vf18, FmaAdd(vf14, Ps2Vu0.BroadcastBc(vf30, 1u), acc), 0xEu);
-        vf31 = Ps2Vu0.BlendMask(vf31, (vf16 * vf15), 0xCu);
+        vf31 = (vf16 * vf15);
         acc = Ps2Vu0.BlendMask(acc, (vf13 * Ps2Vu0.BroadcastBc(vf31, 0u)), 0xEu);
-        vf19 = Ps2Vu0.BlendMask(vf19, FmaSub(vf14, Ps2Vu0.BroadcastBc(vf31, 1u), acc), 0xEu);
+        vf19 = FmaSub(vf14, Ps2Vu0.BroadcastBc(vf31, 1u), acc);
         vi15 = 1239;
         steps += 9;
         Unsafe.Add(ref vf, 5) = vf5;
         Unsafe.Add(ref vf, 7) = vf7;
         Unsafe.Add(ref vf, 8) = vf8;
         Unsafe.Add(ref vf, 9) = vf9;
-        Unsafe.Add(ref vf, 15) = vf15;
-        Unsafe.Add(ref vf, 16) = vf16;
+        { ref Vector128<float> fl_15 = ref Unsafe.Add(ref vf, 15); fl_15 = Ps2Vu0.BlendMask(fl_15, vf15, 0xCu); }
+        { ref Vector128<float> fl_16 = ref Unsafe.Add(ref vf, 16); fl_16 = Ps2Vu0.BlendMask(fl_16, vf16, 0xCu); }
         Unsafe.Add(ref vf, 18) = vf18;
-        Unsafe.Add(ref vf, 19) = vf19;
+        { ref Vector128<float> fl_19 = ref Unsafe.Add(ref vf, 19); fl_19 = Ps2Vu0.BlendMask(fl_19, vf19, 0xEu); }
         Unsafe.Add(ref vf, 30) = vf30;
-        Unsafe.Add(ref vf, 31) = vf31;
+        { ref Vector128<float> fl_31 = ref Unsafe.Add(ref vf, 31); fl_31 = Ps2Vu0.BlendMask(fl_31, vf31, 0xCu); }
         Unsafe.Add(ref vi, 2) = vi2;
         Unsafe.Add(ref vi, 4) = vi4;
         Unsafe.Add(ref vi, 10) = vi10;
@@ -10512,6 +10647,8 @@ internal static class Vu1AotPrograms
         Unsafe.Add(ref vi, 14) = vi14;
         Unsafe.Add(ref vi, 15) = vi15;
         vu.I = regI;
+        vu.P = regP;
+        vu.PendingP = regP;
         Sub_Ovl3_1F48(vu, ref steps, ref acc, true);
         if (steps >= 65536) { vu.ACC = acc; vu.TotalInstructionsExecuted += steps; return; }
         vf5 = Unsafe.Add(ref vf, 5);
@@ -10540,6 +10677,8 @@ internal static class Vu1AotPrograms
         vi14 = Unsafe.Add(ref vi, 14);
         vi15 = Unsafe.Add(ref vi, 15);
         regI = vu.I;
+        regP = vu.P;
+        regPendingP = vu.PendingP;
         btTmp = ((short)vi13 > 0);
         vi2 = unchecked((ushort)(vi2 + 12u));
         steps += 2;
@@ -10552,12 +10691,12 @@ internal static class Vu1AotPrograms
         Unsafe.Add(ref vf, 7) = vf7;
         Unsafe.Add(ref vf, 8) = vf8;
         Unsafe.Add(ref vf, 9) = vf9;
-        Unsafe.Add(ref vf, 15) = vf15;
-        Unsafe.Add(ref vf, 16) = vf16;
+        { ref Vector128<float> fl_15 = ref Unsafe.Add(ref vf, 15); fl_15 = Ps2Vu0.BlendMask(fl_15, vf15, 0xCu); }
+        { ref Vector128<float> fl_16 = ref Unsafe.Add(ref vf, 16); fl_16 = Ps2Vu0.BlendMask(fl_16, vf16, 0xCu); }
         Unsafe.Add(ref vf, 18) = vf18;
-        Unsafe.Add(ref vf, 19) = vf19;
+        { ref Vector128<float> fl_19 = ref Unsafe.Add(ref vf, 19); fl_19 = Ps2Vu0.BlendMask(fl_19, vf19, 0xEu); }
         Unsafe.Add(ref vf, 30) = vf30;
-        Unsafe.Add(ref vf, 31) = vf31;
+        { ref Vector128<float> fl_31 = ref Unsafe.Add(ref vf, 31); fl_31 = Ps2Vu0.BlendMask(fl_31, vf31, 0xCu); }
         Unsafe.Add(ref vi, 2) = vi2;
         Unsafe.Add(ref vi, 4) = vi4;
         Unsafe.Add(ref vi, 10) = vi10;
@@ -10566,6 +10705,8 @@ internal static class Vu1AotPrograms
         Unsafe.Add(ref vi, 14) = vi14;
         Unsafe.Add(ref vi, 15) = vi15;
         vu.I = regI;
+        vu.P = regP;
+        vu.PendingP = regP;
         Sub_Base0_0380(vu, ref steps, ref acc, true);
         if (steps >= 65536) { vu.ACC = acc; vu.TotalInstructionsExecuted += steps; return; }
         vf5 = Unsafe.Add(ref vf, 5);
@@ -10594,17 +10735,19 @@ internal static class Vu1AotPrograms
         vi14 = Unsafe.Add(ref vi, 14);
         vi15 = Unsafe.Add(ref vi, 15);
         regI = vu.I;
+        regP = vu.P;
+        regPendingP = vu.PendingP;
         steps += 2;
         Unsafe.Add(ref vf, 5) = vf5;
         Unsafe.Add(ref vf, 7) = vf7;
         Unsafe.Add(ref vf, 8) = vf8;
         Unsafe.Add(ref vf, 9) = vf9;
-        Unsafe.Add(ref vf, 15) = vf15;
-        Unsafe.Add(ref vf, 16) = vf16;
+        { ref Vector128<float> fl_15 = ref Unsafe.Add(ref vf, 15); fl_15 = Ps2Vu0.BlendMask(fl_15, vf15, 0xCu); }
+        { ref Vector128<float> fl_16 = ref Unsafe.Add(ref vf, 16); fl_16 = Ps2Vu0.BlendMask(fl_16, vf16, 0xCu); }
         Unsafe.Add(ref vf, 18) = vf18;
-        Unsafe.Add(ref vf, 19) = vf19;
+        { ref Vector128<float> fl_19 = ref Unsafe.Add(ref vf, 19); fl_19 = Ps2Vu0.BlendMask(fl_19, vf19, 0xEu); }
         Unsafe.Add(ref vf, 30) = vf30;
-        Unsafe.Add(ref vf, 31) = vf31;
+        { ref Vector128<float> fl_31 = ref Unsafe.Add(ref vf, 31); fl_31 = Ps2Vu0.BlendMask(fl_31, vf31, 0xCu); }
         Unsafe.Add(ref vi, 2) = vi2;
         Unsafe.Add(ref vi, 4) = vi4;
         Unsafe.Add(ref vi, 10) = vi10;
@@ -10613,6 +10756,8 @@ internal static class Vu1AotPrograms
         Unsafe.Add(ref vi, 14) = vi14;
         Unsafe.Add(ref vi, 15) = vi15;
         vu.I = regI;
+        vu.P = regP;
+        vu.PendingP = regP;
         vu.ACC = acc;
         vu.Tpc = 0x26F8;
         vu.TotalInstructionsExecuted += steps;
@@ -10622,12 +10767,12 @@ internal static class Vu1AotPrograms
         Unsafe.Add(ref vf, 7) = vf7;
         Unsafe.Add(ref vf, 8) = vf8;
         Unsafe.Add(ref vf, 9) = vf9;
-        Unsafe.Add(ref vf, 15) = vf15;
-        Unsafe.Add(ref vf, 16) = vf16;
+        { ref Vector128<float> fl_15 = ref Unsafe.Add(ref vf, 15); fl_15 = Ps2Vu0.BlendMask(fl_15, vf15, 0xCu); }
+        { ref Vector128<float> fl_16 = ref Unsafe.Add(ref vf, 16); fl_16 = Ps2Vu0.BlendMask(fl_16, vf16, 0xCu); }
         Unsafe.Add(ref vf, 18) = vf18;
-        Unsafe.Add(ref vf, 19) = vf19;
+        { ref Vector128<float> fl_19 = ref Unsafe.Add(ref vf, 19); fl_19 = Ps2Vu0.BlendMask(fl_19, vf19, 0xEu); }
         Unsafe.Add(ref vf, 30) = vf30;
-        Unsafe.Add(ref vf, 31) = vf31;
+        { ref Vector128<float> fl_31 = ref Unsafe.Add(ref vf, 31); fl_31 = Ps2Vu0.BlendMask(fl_31, vf31, 0xCu); }
         Unsafe.Add(ref vi, 2) = vi2;
         Unsafe.Add(ref vi, 4) = vi4;
         Unsafe.Add(ref vi, 10) = vi10;
@@ -10636,6 +10781,8 @@ internal static class Vu1AotPrograms
         Unsafe.Add(ref vi, 14) = vi14;
         Unsafe.Add(ref vi, 15) = vi15;
         vu.I = regI;
+        vu.P = regP;
+        vu.PendingP = regP;
         vu.ACC = acc;
         vu.TotalInstructionsExecuted += steps;
         return;
@@ -10710,16 +10857,16 @@ internal static class Vu1AotPrograms
         Unsafe.Add(ref vf, 10) = vf10;
         Unsafe.Add(ref vf, 11) = vf11;
         Unsafe.Add(ref vf, 12) = vf12;
-        Unsafe.Add(ref vf, 13) = vf13;
-        Unsafe.Add(ref vf, 14) = vf14;
-        Unsafe.Add(ref vf, 16) = vf16;
+        { ref Vector128<float> fl_13 = ref Unsafe.Add(ref vf, 13); fl_13 = Ps2Vu0.BlendMask(fl_13, vf13, 0xEu); }
+        { ref Vector128<float> fl_14 = ref Unsafe.Add(ref vf, 14); fl_14 = Ps2Vu0.BlendMask(fl_14, vf14, 0xEu); }
+        { ref Vector128<float> fl_16 = ref Unsafe.Add(ref vf, 16); fl_16 = Ps2Vu0.BlendMask(fl_16, vf16, 0xCu); }
         Unsafe.Add(ref vf, 18) = vf18;
-        Unsafe.Add(ref vf, 19) = vf19;
+        { ref Vector128<float> fl_19 = ref Unsafe.Add(ref vf, 19); fl_19 = Ps2Vu0.BlendMask(fl_19, vf19, 0xEu); }
         Unsafe.Add(ref vf, 20) = vf20;
         Unsafe.Add(ref vf, 21) = vf21;
         Unsafe.Add(ref vf, 22) = vf22;
         Unsafe.Add(ref vf, 23) = vf23;
-        Unsafe.Add(ref vf, 26) = vf26;
+        { ref Vector128<float> fl_26 = ref Unsafe.Add(ref vf, 26); fl_26 = Ps2Vu0.BlendMask(fl_26, vf26, 0xEu); }
         Unsafe.Add(ref vf, 30) = vf30;
         Unsafe.Add(ref vi, 1) = vi1;
         Unsafe.Add(ref vi, 2) = vi2;
@@ -10774,8 +10921,8 @@ internal static class Vu1AotPrograms
         vf11 = Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, (0x7) << 4));
         vf12 = Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, (0x8) << 4));
         vf1 = Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, (0x43) << 4));
-        vf13 = Ps2Vu0.BlendMask(vf13, vf10, 0x8u);
-        vf14 = Ps2Vu0.BlendMask(vf14, vf11, 0x4u);
+        vf13 = vf10;
+        vf14 = vf11;
         vf2 = Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, (0x44) << 4));
         vf3 = Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, (0x45) << 4));
         vf4 = Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, (0x46) << 4));
@@ -10801,7 +10948,7 @@ internal static class Vu1AotPrograms
         vf9 = (vf9 - vf9);
         vf9 = Ps2Vu0.BlendMask(vf9, (vf9 + Vector128<float>.One), 0x3u);
         vf30 = Ps2Vu0.BlendMask(vf30, (vf30 * Ps2Vu0.BroadcastBc(vf18, 3u)), 0x1u);
-        vf26 = Ps2Vu0.BlendMask(vf26, (vf18 * Ps2Vu0.BroadcastBc(vf18, 3u)), 0xEu);
+        vf26 = (vf18 * Ps2Vu0.BroadcastBc(vf18, 3u));
         vf8 = Ps2Vu0.BlendMask(vf8, (vf8 * Ps2Vu0.BroadcastBc(vf18, 3u)), 0xEu);
         acc = (vf5 + vf26);
         vf8 = Ps2Vu0.BlendMask(vf8, (vf8 * Ps2Vu0.BroadcastBc(vf30, 3u)), 0xEu);
@@ -10847,16 +10994,16 @@ internal static class Vu1AotPrograms
         Unsafe.Add(ref vf, 10) = vf10;
         Unsafe.Add(ref vf, 11) = vf11;
         Unsafe.Add(ref vf, 12) = vf12;
-        Unsafe.Add(ref vf, 13) = vf13;
-        Unsafe.Add(ref vf, 14) = vf14;
-        Unsafe.Add(ref vf, 16) = vf16;
+        { ref Vector128<float> fl_13 = ref Unsafe.Add(ref vf, 13); fl_13 = Ps2Vu0.BlendMask(fl_13, vf13, 0xEu); }
+        { ref Vector128<float> fl_14 = ref Unsafe.Add(ref vf, 14); fl_14 = Ps2Vu0.BlendMask(fl_14, vf14, 0xEu); }
+        { ref Vector128<float> fl_16 = ref Unsafe.Add(ref vf, 16); fl_16 = Ps2Vu0.BlendMask(fl_16, vf16, 0xCu); }
         Unsafe.Add(ref vf, 18) = vf18;
-        Unsafe.Add(ref vf, 19) = vf19;
+        { ref Vector128<float> fl_19 = ref Unsafe.Add(ref vf, 19); fl_19 = Ps2Vu0.BlendMask(fl_19, vf19, 0xEu); }
         Unsafe.Add(ref vf, 20) = vf20;
         Unsafe.Add(ref vf, 21) = vf21;
         Unsafe.Add(ref vf, 22) = vf22;
         Unsafe.Add(ref vf, 23) = vf23;
-        Unsafe.Add(ref vf, 26) = vf26;
+        { ref Vector128<float> fl_26 = ref Unsafe.Add(ref vf, 26); fl_26 = Ps2Vu0.BlendMask(fl_26, vf26, 0xEu); }
         Unsafe.Add(ref vf, 30) = vf30;
         Unsafe.Add(ref vi, 1) = vi1;
         Unsafe.Add(ref vi, 2) = vi2;
@@ -10909,7 +11056,7 @@ internal static class Vu1AotPrograms
         regI = vu.I;
         vf18 = Ps2Vu0.BlendMask(vf18, (vf13 * Ps2Vu0.BroadcastBc(vf16, 0u)), 0xEu);
         vf30 = Ps2Vu0.BlendMask(vf30, Vf0Mr32, 0x1u);
-        vf19 = Ps2Vu0.BlendMask(vf19, (vf14 * Ps2Vu0.BroadcastBc(vf16, 1u)), 0xEu);
+        vf19 = (vf14 * Ps2Vu0.BroadcastBc(vf16, 1u));
         vi15 = 1329;
         steps += 4;
         Unsafe.Add(ref vf, 1) = vf1;
@@ -10923,16 +11070,16 @@ internal static class Vu1AotPrograms
         Unsafe.Add(ref vf, 10) = vf10;
         Unsafe.Add(ref vf, 11) = vf11;
         Unsafe.Add(ref vf, 12) = vf12;
-        Unsafe.Add(ref vf, 13) = vf13;
-        Unsafe.Add(ref vf, 14) = vf14;
-        Unsafe.Add(ref vf, 16) = vf16;
+        { ref Vector128<float> fl_13 = ref Unsafe.Add(ref vf, 13); fl_13 = Ps2Vu0.BlendMask(fl_13, vf13, 0xEu); }
+        { ref Vector128<float> fl_14 = ref Unsafe.Add(ref vf, 14); fl_14 = Ps2Vu0.BlendMask(fl_14, vf14, 0xEu); }
+        { ref Vector128<float> fl_16 = ref Unsafe.Add(ref vf, 16); fl_16 = Ps2Vu0.BlendMask(fl_16, vf16, 0xCu); }
         Unsafe.Add(ref vf, 18) = vf18;
-        Unsafe.Add(ref vf, 19) = vf19;
+        { ref Vector128<float> fl_19 = ref Unsafe.Add(ref vf, 19); fl_19 = Ps2Vu0.BlendMask(fl_19, vf19, 0xEu); }
         Unsafe.Add(ref vf, 20) = vf20;
         Unsafe.Add(ref vf, 21) = vf21;
         Unsafe.Add(ref vf, 22) = vf22;
         Unsafe.Add(ref vf, 23) = vf23;
-        Unsafe.Add(ref vf, 26) = vf26;
+        { ref Vector128<float> fl_26 = ref Unsafe.Add(ref vf, 26); fl_26 = Ps2Vu0.BlendMask(fl_26, vf26, 0xEu); }
         Unsafe.Add(ref vf, 30) = vf30;
         Unsafe.Add(ref vi, 1) = vi1;
         Unsafe.Add(ref vi, 2) = vi2;
@@ -11002,16 +11149,16 @@ internal static class Vu1AotPrograms
         Unsafe.Add(ref vf, 10) = vf10;
         Unsafe.Add(ref vf, 11) = vf11;
         Unsafe.Add(ref vf, 12) = vf12;
-        Unsafe.Add(ref vf, 13) = vf13;
-        Unsafe.Add(ref vf, 14) = vf14;
-        Unsafe.Add(ref vf, 16) = vf16;
+        { ref Vector128<float> fl_13 = ref Unsafe.Add(ref vf, 13); fl_13 = Ps2Vu0.BlendMask(fl_13, vf13, 0xEu); }
+        { ref Vector128<float> fl_14 = ref Unsafe.Add(ref vf, 14); fl_14 = Ps2Vu0.BlendMask(fl_14, vf14, 0xEu); }
+        { ref Vector128<float> fl_16 = ref Unsafe.Add(ref vf, 16); fl_16 = Ps2Vu0.BlendMask(fl_16, vf16, 0xCu); }
         Unsafe.Add(ref vf, 18) = vf18;
-        Unsafe.Add(ref vf, 19) = vf19;
+        { ref Vector128<float> fl_19 = ref Unsafe.Add(ref vf, 19); fl_19 = Ps2Vu0.BlendMask(fl_19, vf19, 0xEu); }
         Unsafe.Add(ref vf, 20) = vf20;
         Unsafe.Add(ref vf, 21) = vf21;
         Unsafe.Add(ref vf, 22) = vf22;
         Unsafe.Add(ref vf, 23) = vf23;
-        Unsafe.Add(ref vf, 26) = vf26;
+        { ref Vector128<float> fl_26 = ref Unsafe.Add(ref vf, 26); fl_26 = Ps2Vu0.BlendMask(fl_26, vf26, 0xEu); }
         Unsafe.Add(ref vf, 30) = vf30;
         Unsafe.Add(ref vi, 1) = vi1;
         Unsafe.Add(ref vi, 2) = vi2;
@@ -11074,16 +11221,16 @@ internal static class Vu1AotPrograms
         Unsafe.Add(ref vf, 10) = vf10;
         Unsafe.Add(ref vf, 11) = vf11;
         Unsafe.Add(ref vf, 12) = vf12;
-        Unsafe.Add(ref vf, 13) = vf13;
-        Unsafe.Add(ref vf, 14) = vf14;
-        Unsafe.Add(ref vf, 16) = vf16;
+        { ref Vector128<float> fl_13 = ref Unsafe.Add(ref vf, 13); fl_13 = Ps2Vu0.BlendMask(fl_13, vf13, 0xEu); }
+        { ref Vector128<float> fl_14 = ref Unsafe.Add(ref vf, 14); fl_14 = Ps2Vu0.BlendMask(fl_14, vf14, 0xEu); }
+        { ref Vector128<float> fl_16 = ref Unsafe.Add(ref vf, 16); fl_16 = Ps2Vu0.BlendMask(fl_16, vf16, 0xCu); }
         Unsafe.Add(ref vf, 18) = vf18;
-        Unsafe.Add(ref vf, 19) = vf19;
+        { ref Vector128<float> fl_19 = ref Unsafe.Add(ref vf, 19); fl_19 = Ps2Vu0.BlendMask(fl_19, vf19, 0xEu); }
         Unsafe.Add(ref vf, 20) = vf20;
         Unsafe.Add(ref vf, 21) = vf21;
         Unsafe.Add(ref vf, 22) = vf22;
         Unsafe.Add(ref vf, 23) = vf23;
-        Unsafe.Add(ref vf, 26) = vf26;
+        { ref Vector128<float> fl_26 = ref Unsafe.Add(ref vf, 26); fl_26 = Ps2Vu0.BlendMask(fl_26, vf26, 0xEu); }
         Unsafe.Add(ref vf, 30) = vf30;
         Unsafe.Add(ref vi, 1) = vi1;
         Unsafe.Add(ref vi, 2) = vi2;
@@ -11113,16 +11260,16 @@ internal static class Vu1AotPrograms
         Unsafe.Add(ref vf, 10) = vf10;
         Unsafe.Add(ref vf, 11) = vf11;
         Unsafe.Add(ref vf, 12) = vf12;
-        Unsafe.Add(ref vf, 13) = vf13;
-        Unsafe.Add(ref vf, 14) = vf14;
-        Unsafe.Add(ref vf, 16) = vf16;
+        { ref Vector128<float> fl_13 = ref Unsafe.Add(ref vf, 13); fl_13 = Ps2Vu0.BlendMask(fl_13, vf13, 0xEu); }
+        { ref Vector128<float> fl_14 = ref Unsafe.Add(ref vf, 14); fl_14 = Ps2Vu0.BlendMask(fl_14, vf14, 0xEu); }
+        { ref Vector128<float> fl_16 = ref Unsafe.Add(ref vf, 16); fl_16 = Ps2Vu0.BlendMask(fl_16, vf16, 0xCu); }
         Unsafe.Add(ref vf, 18) = vf18;
-        Unsafe.Add(ref vf, 19) = vf19;
+        { ref Vector128<float> fl_19 = ref Unsafe.Add(ref vf, 19); fl_19 = Ps2Vu0.BlendMask(fl_19, vf19, 0xEu); }
         Unsafe.Add(ref vf, 20) = vf20;
         Unsafe.Add(ref vf, 21) = vf21;
         Unsafe.Add(ref vf, 22) = vf22;
         Unsafe.Add(ref vf, 23) = vf23;
-        Unsafe.Add(ref vf, 26) = vf26;
+        { ref Vector128<float> fl_26 = ref Unsafe.Add(ref vf, 26); fl_26 = Ps2Vu0.BlendMask(fl_26, vf26, 0xEu); }
         Unsafe.Add(ref vf, 30) = vf30;
         Unsafe.Add(ref vi, 1) = vi1;
         Unsafe.Add(ref vi, 2) = vi2;
@@ -11193,7 +11340,7 @@ internal static class Vu1AotPrograms
         vf9 = (vf9 - vf9);
         vf9 = Ps2Vu0.BlendMask(vf9, (vf9 + Vector128<float>.One), 0x3u);
         vf30 = Ps2Vu0.BlendMask(vf30, (vf30 * Ps2Vu0.BroadcastBc(vf18, 3u)), 0x1u);
-        vf26 = Ps2Vu0.BlendMask(vf26, (vf18 * Ps2Vu0.BroadcastBc(vf18, 3u)), 0xEu);
+        vf26 = (vf18 * Ps2Vu0.BroadcastBc(vf18, 3u));
         vf8 = Ps2Vu0.BlendMask(vf8, (vf8 * Ps2Vu0.BroadcastBc(vf18, 3u)), 0xEu);
         acc = (vf5 + vf26);
         vf8 = Ps2Vu0.BlendMask(vf8, (vf8 * Ps2Vu0.BroadcastBc(vf30, 3u)), 0xEu);
@@ -11232,10 +11379,10 @@ internal static class Vu1AotPrograms
         Unsafe.Add(ref vf, 7) = vf7;
         Unsafe.Add(ref vf, 8) = vf8;
         Unsafe.Add(ref vf, 9) = vf9;
-        Unsafe.Add(ref vf, 16) = vf16;
+        { ref Vector128<float> fl_16 = ref Unsafe.Add(ref vf, 16); fl_16 = Ps2Vu0.BlendMask(fl_16, vf16, 0xCu); }
         Unsafe.Add(ref vf, 18) = vf18;
-        Unsafe.Add(ref vf, 19) = vf19;
-        Unsafe.Add(ref vf, 26) = vf26;
+        { ref Vector128<float> fl_19 = ref Unsafe.Add(ref vf, 19); fl_19 = Ps2Vu0.BlendMask(fl_19, vf19, 0xEu); }
+        { ref Vector128<float> fl_26 = ref Unsafe.Add(ref vf, 26); fl_26 = Ps2Vu0.BlendMask(fl_26, vf26, 0xEu); }
         Unsafe.Add(ref vf, 30) = vf30;
         Unsafe.Add(ref vi, 2) = vi2;
         Unsafe.Add(ref vi, 4) = vi4;
@@ -11276,17 +11423,17 @@ internal static class Vu1AotPrograms
         regI = vu.I;
         vf18 = Ps2Vu0.BlendMask(vf18, (vf13 * Ps2Vu0.BroadcastBc(vf16, 0u)), 0xEu);
         vf30 = Ps2Vu0.BlendMask(vf30, Vf0Mr32, 0x1u);
-        vf19 = Ps2Vu0.BlendMask(vf19, (vf14 * Ps2Vu0.BroadcastBc(vf16, 1u)), 0xEu);
+        vf19 = (vf14 * Ps2Vu0.BroadcastBc(vf16, 1u));
         vi15 = 1329;
         steps += 4;
         Unsafe.Add(ref vf, 5) = vf5;
         Unsafe.Add(ref vf, 7) = vf7;
         Unsafe.Add(ref vf, 8) = vf8;
         Unsafe.Add(ref vf, 9) = vf9;
-        Unsafe.Add(ref vf, 16) = vf16;
+        { ref Vector128<float> fl_16 = ref Unsafe.Add(ref vf, 16); fl_16 = Ps2Vu0.BlendMask(fl_16, vf16, 0xCu); }
         Unsafe.Add(ref vf, 18) = vf18;
-        Unsafe.Add(ref vf, 19) = vf19;
-        Unsafe.Add(ref vf, 26) = vf26;
+        { ref Vector128<float> fl_19 = ref Unsafe.Add(ref vf, 19); fl_19 = Ps2Vu0.BlendMask(fl_19, vf19, 0xEu); }
+        { ref Vector128<float> fl_26 = ref Unsafe.Add(ref vf, 26); fl_26 = Ps2Vu0.BlendMask(fl_26, vf26, 0xEu); }
         Unsafe.Add(ref vf, 30) = vf30;
         Unsafe.Add(ref vi, 2) = vi2;
         Unsafe.Add(ref vi, 4) = vi4;
@@ -11337,10 +11484,10 @@ internal static class Vu1AotPrograms
         Unsafe.Add(ref vf, 7) = vf7;
         Unsafe.Add(ref vf, 8) = vf8;
         Unsafe.Add(ref vf, 9) = vf9;
-        Unsafe.Add(ref vf, 16) = vf16;
+        { ref Vector128<float> fl_16 = ref Unsafe.Add(ref vf, 16); fl_16 = Ps2Vu0.BlendMask(fl_16, vf16, 0xCu); }
         Unsafe.Add(ref vf, 18) = vf18;
-        Unsafe.Add(ref vf, 19) = vf19;
-        Unsafe.Add(ref vf, 26) = vf26;
+        { ref Vector128<float> fl_19 = ref Unsafe.Add(ref vf, 19); fl_19 = Ps2Vu0.BlendMask(fl_19, vf19, 0xEu); }
+        { ref Vector128<float> fl_26 = ref Unsafe.Add(ref vf, 26); fl_26 = Ps2Vu0.BlendMask(fl_26, vf26, 0xEu); }
         Unsafe.Add(ref vf, 30) = vf30;
         Unsafe.Add(ref vi, 2) = vi2;
         Unsafe.Add(ref vi, 4) = vi4;
@@ -11384,10 +11531,10 @@ internal static class Vu1AotPrograms
         Unsafe.Add(ref vf, 7) = vf7;
         Unsafe.Add(ref vf, 8) = vf8;
         Unsafe.Add(ref vf, 9) = vf9;
-        Unsafe.Add(ref vf, 16) = vf16;
+        { ref Vector128<float> fl_16 = ref Unsafe.Add(ref vf, 16); fl_16 = Ps2Vu0.BlendMask(fl_16, vf16, 0xCu); }
         Unsafe.Add(ref vf, 18) = vf18;
-        Unsafe.Add(ref vf, 19) = vf19;
-        Unsafe.Add(ref vf, 26) = vf26;
+        { ref Vector128<float> fl_19 = ref Unsafe.Add(ref vf, 19); fl_19 = Ps2Vu0.BlendMask(fl_19, vf19, 0xEu); }
+        { ref Vector128<float> fl_26 = ref Unsafe.Add(ref vf, 26); fl_26 = Ps2Vu0.BlendMask(fl_26, vf26, 0xEu); }
         Unsafe.Add(ref vf, 30) = vf30;
         Unsafe.Add(ref vi, 2) = vi2;
         Unsafe.Add(ref vi, 4) = vi4;
@@ -11407,10 +11554,10 @@ internal static class Vu1AotPrograms
         Unsafe.Add(ref vf, 7) = vf7;
         Unsafe.Add(ref vf, 8) = vf8;
         Unsafe.Add(ref vf, 9) = vf9;
-        Unsafe.Add(ref vf, 16) = vf16;
+        { ref Vector128<float> fl_16 = ref Unsafe.Add(ref vf, 16); fl_16 = Ps2Vu0.BlendMask(fl_16, vf16, 0xCu); }
         Unsafe.Add(ref vf, 18) = vf18;
-        Unsafe.Add(ref vf, 19) = vf19;
-        Unsafe.Add(ref vf, 26) = vf26;
+        { ref Vector128<float> fl_19 = ref Unsafe.Add(ref vf, 19); fl_19 = Ps2Vu0.BlendMask(fl_19, vf19, 0xEu); }
+        { ref Vector128<float> fl_26 = ref Unsafe.Add(ref vf, 26); fl_26 = Ps2Vu0.BlendMask(fl_26, vf26, 0xEu); }
         Unsafe.Add(ref vf, 30) = vf30;
         Unsafe.Add(ref vi, 2) = vi2;
         Unsafe.Add(ref vi, 4) = vi4;
@@ -11630,7 +11777,7 @@ internal static class Vu1AotPrograms
         vf3 = Ps2Vu0.BlendMask(vf3, Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, (0x18) << 4)), 0xEu);
         vf5 = VuMax(Vf0, Vector128<float>.One);
         vf2 = Ps2Vu0.BlendMask(vf2, Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, (0x17) << 4)), 0xEu);
-        vf7 = Ps2Vu0.BlendMask(vf7, (Vf0 * Vector128.Create(regI)), 0x1u);
+        vf7 = (Vf0 * Vector128.Create(regI));
         vf1 = Ps2Vu0.BlendMask(vf1, Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, (0x16) << 4)), 0xEu);
         steps += 6;
     slot_329:
@@ -11654,7 +11801,7 @@ internal static class Vu1AotPrograms
         acc = vf4;
         vi8 = unchecked((ushort)(vi7 + vi14));
         acc = FmaAdd(vf2, Ps2Vu0.BroadcastBc(vf8, 1u), acc);
-        vf13 = Ps2Vu0.BlendMask(vf13, SanitizeFloatMask(Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, ((vi8 & 0x3FF)) << 4)), 0xE), 0xEu);
+        vf13 = SanitizeFloatMask(Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, ((vi8 & 0x3FF)) << 4)), 0xE);
         acc = FmaAdd(vf3, Ps2Vu0.BroadcastBc(vf8, 2u), acc);
         Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, ((((short)vi4 + (10)) & 0x3FF)) << 4)) = vf18;
         vf15 = Ps2Vu0.BlendMask(vf15, FmaAdd(vf1, Ps2Vu0.BroadcastBc(vf8, 0u), acc), 0xEu);
@@ -11671,7 +11818,7 @@ internal static class Vu1AotPrograms
         vf10 = Ps2Vu0.BlendMask(vf10, Vu1State.ExecMr32(vf9), 0x4u);
         vf9 = Ps2Vu0.BlendMask(vf9, tmp, 0x2u);
         vf8 = Ps2Vu0.BlendMask(vf8, (Vf0 + Ps2Vu0.BroadcastBc(vf15, 1u)), 0x2u);
-        vf11 = Ps2Vu0.BlendMask(vf11, SanitizeFloatMask(Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, ((((short)vi1 + (1)) & 0x3FF)) << 4)), 0xE), 0xEu);
+        vf11 = SanitizeFloatMask(Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, ((((short)vi1 + (1)) & 0x3FF)) << 4)), 0xE);
         vf8 = Ps2Vu0.BlendMask(vf8, (Vf0 * Ps2Vu0.BroadcastBc(vf14, 1u)), 0x1u);
         vf10 = Ps2Vu0.BlendMask(vf10, vf15, 0x2u);
         vf10 = Ps2Vu0.BlendMask(vf10, (Vf0 + Ps2Vu0.BroadcastBc(vf7, 2u)), 0x8u);
@@ -11679,7 +11826,7 @@ internal static class Vu1AotPrograms
         vf15 = Ps2Vu0.BlendMask(vf15, SanitizeFloatMask(Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, ((((short)vi6 + (1)) & 0x3FF)) << 4)), 0xE), 0xEu);
         acc = (vf1 * Ps2Vu0.BroadcastBc(vf11, 0u));
         acc = FmaAdd(vf2, Ps2Vu0.BroadcastBc(vf11, 1u), acc);
-        vf12 = Ps2Vu0.BlendMask(vf12, SanitizeFloatMask(Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, ((((short)vi7 + (1)) & 0x3FF)) << 4)), 0xE), 0xEu);
+        vf12 = SanitizeFloatMask(Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, ((((short)vi7 + (1)) & 0x3FF)) << 4)), 0xE);
         tmp = FmaAdd(vf3, Ps2Vu0.BroadcastBc(vf11, 2u), acc);
         vf9 = Ps2Vu0.BlendMask(vf9, Vu1State.ExecMr32(vf14), 0x1u);
         vf14 = Ps2Vu0.BlendMask(vf14, tmp, 0xEu);
@@ -11687,7 +11834,7 @@ internal static class Vu1AotPrograms
         acc = FmaAdd(vf2, Ps2Vu0.BroadcastBc(vf15, 1u), acc);
         vf16 = Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, ((((short)vi3 + (11)) & 0x3FF)) << 4));
         vf15 = Ps2Vu0.BlendMask(vf15, FmaAdd(vf3, Ps2Vu0.BroadcastBc(vf15, 2u), acc), 0xEu);
-        vf13 = Ps2Vu0.BlendMask(vf13, SanitizeFloatMask(Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, ((((short)vi8 + (1)) & 0x3FF)) << 4)), 0xE), 0xEu);
+        vf13 = SanitizeFloatMask(Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, ((((short)vi8 + (1)) & 0x3FF)) << 4)), 0xE);
         acc = (vf1 * Ps2Vu0.BroadcastBc(vf12, 0u));
         acc = FmaAdd(vf2, Ps2Vu0.BroadcastBc(vf12, 1u), acc);
         tmp = FmaAdd(vf3, Ps2Vu0.BroadcastBc(vf12, 2u), acc);
@@ -11698,7 +11845,7 @@ internal static class Vu1AotPrograms
         acc = FmaAdd(vf2, Ps2Vu0.BroadcastBc(vf13, 1u), acc);
         vf9 = Ps2Vu0.BlendMask(vf9, vf7, 0x8u);
         vf7 = Ps2Vu0.BlendMask(vf7, FmaAdd(vf3, Ps2Vu0.BroadcastBc(vf13, 2u), acc), 0xEu);
-        vf12 = Ps2Vu0.BlendMask(vf12, vf14, 0x8u);
+        vf12 = vf14;
         vf12 = Ps2Vu0.BlendMask(vf12, (Vf0 + Ps2Vu0.BroadcastBc(vf15, 0u)), 0x4u);
         vf11 = Vu1State.ExecMr32(vf14);
         vf12 = Ps2Vu0.BlendMask(vf12, (Vf0 + Ps2Vu0.BroadcastBc(vf16, 0u)), 0x2u);
@@ -11755,7 +11902,7 @@ internal static class Vu1AotPrograms
         Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, ((((short)vi4 + (-10)) & 0x3FF)) << 4)) = vf17;
         vf9 = Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, ((((short)vi3 + (-12)) & 0x3FF)) << 4));
         vf9 = Ps2Vu0.BlendMask(vf9, vf13, 0x8u);
-        vf8 = Ps2Vu0.BlendMask(vf8, Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, ((((short)vi3 + (-6)) & 0x3FF)) << 4)), 0x3u);
+        vf8 = Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, ((((short)vi3 + (-6)) & 0x3FF)) << 4));
         vf9 = Ps2Vu0.BlendMask(vf9, (Vf0 + Ps2Vu0.BroadcastBc(vf10, 0u)), 0x4u);
         vf8 = Ps2Vu0.BlendMask(vf8, Vu1State.ExecMr32(vf13), 0x8u);
         tmp = (Vf0 + Ps2Vu0.BroadcastBc(vf13, 2u));
@@ -11870,8 +12017,8 @@ internal static class Vu1AotPrograms
         ushort vi10 = Unsafe.Add(ref vi, 10);
         ushort vi11 = Unsafe.Add(ref vi, 11);
         float regQ = vu.Q;
-        vf10 = Ps2Vu0.BlendMask(vf10, (vf26 * Ps2Vu0.BroadcastBc(vf20, 0u)), 0x1u);
-        vf9 = Ps2Vu0.BlendMask(vf9, (vf23 * Ps2Vu0.BroadcastBc(vf20, 0u)), 0x1u);
+        vf10 = (vf26 * Ps2Vu0.BroadcastBc(vf20, 0u));
+        vf9 = (vf23 * Ps2Vu0.BroadcastBc(vf20, 0u));
         vf30 = (vf26 - Ps2Vu0.BroadcastBc(vf10, 3u));
         vi11 = unchecked((ushort)(vi4 + 0u));
         vf31 = (vf23 - Ps2Vu0.BroadcastBc(vf9, 3u));
@@ -11902,8 +12049,8 @@ internal static class Vu1AotPrograms
         vf28 = (vf31 + vf25);
         vf27 = (vf27 + vf24);
         steps += 13;
-        Unsafe.Add(ref vf, 9) = vf9;
-        Unsafe.Add(ref vf, 10) = vf10;
+        { ref Vector128<float> fl_9 = ref Unsafe.Add(ref vf, 9); fl_9 = Ps2Vu0.BlendMask(fl_9, vf9, 0x1u); }
+        { ref Vector128<float> fl_10 = ref Unsafe.Add(ref vf, 10); fl_10 = Ps2Vu0.BlendMask(fl_10, vf10, 0x1u); }
         Unsafe.Add(ref vf, 27) = vf27;
         Unsafe.Add(ref vf, 28) = vf28;
         Unsafe.Add(ref vf, 29) = vf29;
@@ -11913,8 +12060,8 @@ internal static class Vu1AotPrograms
         vu.Q = regQ;
         return;
     exit_stepcap:
-        Unsafe.Add(ref vf, 9) = vf9;
-        Unsafe.Add(ref vf, 10) = vf10;
+        { ref Vector128<float> fl_9 = ref Unsafe.Add(ref vf, 9); fl_9 = Ps2Vu0.BlendMask(fl_9, vf9, 0x1u); }
+        { ref Vector128<float> fl_10 = ref Unsafe.Add(ref vf, 10); fl_10 = Ps2Vu0.BlendMask(fl_10, vf10, 0x1u); }
         Unsafe.Add(ref vf, 27) = vf27;
         Unsafe.Add(ref vf, 28) = vf28;
         Unsafe.Add(ref vf, 29) = vf29;
@@ -11984,6 +12131,7 @@ internal static class Vu1AotPrograms
         ushort vi15 = Unsafe.Add(ref vi, 15);
         float regQ = vu.Q;
         float regI = vu.I;
+        ushort macFlags = vu.MacFlags;
         goto slot_700;
     slot_420:
         vf5 = SanitizeFloatMask(Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, (0x38) << 4)), 0xE);
@@ -12015,6 +12163,7 @@ internal static class Vu1AotPrograms
         steps += 14;
         if (btTmp) goto slot_452;
     slot_434:
+        if ((short)vi12 >= 3) Vu1AotFastLoops.RunLightingLoop_434(ref dm, vf1, vf2, vf3, vf4, vf5, vf6, vf7, vf8, vf9, ref vi10, ref vi11, ref vi12, vi13, vi14, ref steps);
         vf10 = Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, ((vi10 & 0x3FF)) << 4));
         acc = (vf2 * Ps2Vu0.BroadcastBc(vf10, 0u));
         vi10 = unchecked((ushort)(vi10 + vi14));
@@ -12069,18 +12218,19 @@ internal static class Vu1AotPrograms
         vi1 = Unsafe.ReadUnaligned<ushort>(ref Unsafe.Add(ref dm, ((vi2 & 0x3FF)) << 4));
         vi3 = unchecked((ushort)(vi2 + 1u));
         vi4 = Unsafe.ReadUnaligned<ushort>(ref Unsafe.Add(ref dm, ((0x48) << 4) + 12));
-        vf13 = Ps2Vu0.BlendMask(vf13, Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, (0x2) << 4)), 0xEu);
-        vf14 = Ps2Vu0.BlendMask(vf14, Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, (0x3) << 4)), 0xEu);
+        vf13 = Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, (0x2) << 4));
+        vf14 = Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, (0x3) << 4));
         vi5 = unchecked((ushort)(((ushort)0) + 0u));
         vf12 = Vu1State.ExecFtoi0(vf12);
         vi6 = unchecked((ushort)(((ushort)0) + 0u));
         steps += 21;
     slot_728:
+        if ((short)vi1 >= 3) Vu1AotFastLoops.RunStaticTransformLoop_728(ref dm, vf1, vf2, vf3, vf4, vf5, vf6, vf7, vf8, vf9, vf10, vf11, vf12, vf13, vf14, ref vi1, ref vi3, ref vi4, ref vi5, ref vi6, ref steps);
         vf17 = Ps2Vu0.BlendMask(vf17, Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, ((vi3 & 0x3FF)) << 4)), 0xEu);
-        vf16 = Ps2Vu0.BlendMask(vf16, Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, ((((short)vi3 + (1)) & 0x3FF)) << 4)), 0xEu);
+        vf16 = Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, ((((short)vi3 + (1)) & 0x3FF)) << 4));
         vf17 = Ps2Vu0.BlendMask(vf17, Vector128.ConvertToSingle(vf17.AsInt32()), 0xEu);
         vi7 = Unsafe.ReadUnaligned<ushort>(ref Unsafe.Add(ref dm, (((vi3 & 0x3FF)) << 4) + 12));
-        vf16 = Ps2Vu0.BlendMask(vf16, Vector128.ConvertToSingle(vf16.AsInt32()), 0xEu);
+        vf16 = Vector128.ConvertToSingle(vf16.AsInt32());
         Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, ((((short)vi4 + (4)) & 0x3FF)) << 4)) = vf12;
         acc = (vf5 * Ps2Vu0.BroadcastBc(vf17, 0u));
         vi4 = unchecked((ushort)(vi4 + 3u));
@@ -12089,7 +12239,7 @@ internal static class Vu1AotPrograms
         vf17 = Ps2Vu0.BlendMask(vf17, (acc + vf8), 0xEu);
         acc = (vf9 * Ps2Vu0.BroadcastBc(vf16, 0u));
         acc = FmaAdd(vf10, Ps2Vu0.BroadcastBc(vf16, 1u), acc);
-        vf16 = Ps2Vu0.BlendMask(vf16, FmaAdd(vf11, Ps2Vu0.BroadcastBc(vf16, 2u), acc), 0xEu);
+        vf16 = FmaAdd(vf11, Ps2Vu0.BroadcastBc(vf16, 2u), acc);
         acc = (vf1 * Ps2Vu0.BroadcastBc(vf17, 0u));
         { ref byte sq_739 = ref Unsafe.Add(ref dm, ((vi3 & 0x3FF)) << 4); Unsafe.WriteUnaligned(ref sq_739, vf17.AsUInt64().GetElement(0)); Unsafe.WriteUnaligned(ref Unsafe.Add(ref sq_739, 8), vf17.GetElement(2)); }
         acc = FmaAdd(vf2, Ps2Vu0.BroadcastBc(vf17, 1u), acc);
@@ -12101,7 +12251,7 @@ internal static class Vu1AotPrograms
         vf16 = Ps2Vu0.BlendMask(vf16, Vf0, 0x1u);
         vf15 = Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, ((((short)vi3 + (2)) & 0x3FF)) << 4));
         tmp = (vf16 * Vector128.Create(regQ));
-        vu.UpdateMacFlagsOnly(tmp, 0xFu);
+        macFlags = Vu1State.ComputeMacFlagsW(tmp);
         vf16 = tmp;
         vi3 = unchecked((ushort)(vi3 + 5u));
         vf15 = Vu1State.ExecItof(vf15, 12);
@@ -12109,7 +12259,7 @@ internal static class Vu1AotPrograms
         vi7 = unchecked((ushort)(vi6 + 0u));
         vi6 = unchecked((ushort)(((ushort)0) + 17u));
         vf16 = Ps2Vu0.BlendMask(vf16, VuMax(vf16, vf13), 0xEu);
-        vi6 = (ushort)(vu.MacFlags & vi6);
+        vi6 = (ushort)(macFlags & vi6);
         Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, ((((short)vi3 + (-3)) & 0x3FF)) << 4)) = vf15;
         vf15 = Ps2Vu0.BlendMask(vf15, Vf0Mr32, 0x3u);
         vf16 = Ps2Vu0.BlendMask(vf16, VuMin(vf16, vf14), 0xEu);
@@ -12142,8 +12292,8 @@ internal static class Vu1AotPrograms
         vf11 = Ps2Vu0.BlendMask(vf11, Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, (0x8) << 4)), 0xEu);
         vi2 = vu.Top;
         vf12 = Ps2Vu0.BlendMask(vf12, Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, (0x9) << 4)), 0xEu);
-        vf13 = Ps2Vu0.BlendMask(vf13, Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, (0x3B) << 4)), 0xEu);
-        vf14 = Ps2Vu0.BlendMask(vf14, Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, (0x3C) << 4)), 0xEu);
+        vf13 = Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, (0x3B) << 4));
+        vf14 = Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, (0x3C) << 4));
         vf15 = Ps2Vu0.BlendMask(vf15, Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, (0x3D) << 4)), 0xEu);
         vi3 = Unsafe.ReadUnaligned<ushort>(ref Unsafe.Add(ref dm, ((vi2 & 0x3FF)) << 4));
         vi4 = unchecked((ushort)(vi2 + 1u));
@@ -12155,23 +12305,23 @@ internal static class Vu1AotPrograms
         vu.ClipFlags = 0x0u;
         steps += 23;
     slot_787:
-        vf21 = Ps2Vu0.BlendMask(vf21, Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, ((vi4 & 0x3FF)) << 4)), 0xEu);
+        vf21 = Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, ((vi4 & 0x3FF)) << 4));
         vf20 = vf16;
-        vf19 = Ps2Vu0.BlendMask(vf19, Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, ((((short)vi4 + (1)) & 0x3FF)) << 4)), 0xEu);
+        vf19 = Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, ((((short)vi4 + (1)) & 0x3FF)) << 4));
         vf16 = vf17;
         vi10 = unchecked((ushort)(((ushort)0) + 32767u));
-        vf17 = Ps2Vu0.BlendMask(vf17, Vector128.ConvertToSingle(vf21.AsInt32()), 0xEu);
+        vf17 = Vector128.ConvertToSingle(vf21.AsInt32());
         vi10 = unchecked((ushort)(vi10 + 1u));
         vu.ExecClip(vf20, vf20);
-        vf19 = Ps2Vu0.BlendMask(vf19, Vector128.ConvertToSingle(vf19.AsInt32()), 0xEu);
+        vf19 = Vector128.ConvertToSingle(vf19.AsInt32());
         vu.ExecClip(vf16, vf16);
         acc = (vf9 * Ps2Vu0.BroadcastBc(vf17, 0u));
         acc = FmaAdd(vf10, Ps2Vu0.BroadcastBc(vf17, 1u), acc);
         acc = FmaAdd(vf11, Ps2Vu0.BroadcastBc(vf17, 2u), acc);
-        vf17 = Ps2Vu0.BlendMask(vf17, (acc + vf12), 0xEu);
+        vf17 = (acc + vf12);
         acc = (vf13 * Ps2Vu0.BroadcastBc(vf19, 0u));
         acc = FmaAdd(vf14, Ps2Vu0.BroadcastBc(vf19, 1u), acc);
-        vf19 = Ps2Vu0.BlendMask(vf19, FmaAdd(vf15, Ps2Vu0.BroadcastBc(vf19, 2u), acc), 0xEu);
+        vf19 = FmaAdd(vf15, Ps2Vu0.BroadcastBc(vf19, 2u), acc);
         acc = (vf1 * Ps2Vu0.BroadcastBc(vf17, 0u));
         acc = FmaAdd(vf2, Ps2Vu0.BroadcastBc(vf17, 1u), acc);
         acc = FmaAdd(vf3, Ps2Vu0.BroadcastBc(vf17, 2u), acc);
@@ -12658,8 +12808,8 @@ internal static class Vu1AotPrograms
         Unsafe.Add(ref vf, 10) = vf10;
         Unsafe.Add(ref vf, 11) = vf11;
         Unsafe.Add(ref vf, 12) = vf12;
-        Unsafe.Add(ref vf, 13) = vf13;
-        Unsafe.Add(ref vf, 14) = vf14;
+        { ref Vector128<float> fl_13 = ref Unsafe.Add(ref vf, 13); fl_13 = Ps2Vu0.BlendMask(fl_13, vf13, 0xEu); }
+        { ref Vector128<float> fl_14 = ref Unsafe.Add(ref vf, 14); fl_14 = Ps2Vu0.BlendMask(fl_14, vf14, 0xEu); }
         Unsafe.Add(ref vf, 15) = vf15;
         Unsafe.Add(ref vf, 16) = vf16;
         Unsafe.Add(ref vf, 17) = vf17;
@@ -12689,6 +12839,7 @@ internal static class Vu1AotPrograms
         Unsafe.Add(ref vi, 15) = vi15;
         vu.Q = regQ;
         vu.I = regI;
+        vu.MacFlags = macFlags;
         Sub_Ovl4_2358(vu, ref steps, ref acc, true);
         if (steps >= 65536) { vu.ACC = acc; vu.TotalInstructionsExecuted += steps; return; }
         vf1 = Unsafe.Add(ref vf, 1);
@@ -12737,6 +12888,7 @@ internal static class Vu1AotPrograms
         vi15 = Unsafe.Add(ref vi, 15);
         regQ = vu.Q;
         regI = vu.I;
+        macFlags = vu.MacFlags;
         vi8 = unchecked((ushort)(vi8 + 1u));
         idxTmp = vi6;
         Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, ((idxTmp & 0x3FF)) << 4)) = vf27;
@@ -12778,8 +12930,8 @@ internal static class Vu1AotPrograms
         Unsafe.Add(ref vf, 10) = vf10;
         Unsafe.Add(ref vf, 11) = vf11;
         Unsafe.Add(ref vf, 12) = vf12;
-        Unsafe.Add(ref vf, 13) = vf13;
-        Unsafe.Add(ref vf, 14) = vf14;
+        { ref Vector128<float> fl_13 = ref Unsafe.Add(ref vf, 13); fl_13 = Ps2Vu0.BlendMask(fl_13, vf13, 0xEu); }
+        { ref Vector128<float> fl_14 = ref Unsafe.Add(ref vf, 14); fl_14 = Ps2Vu0.BlendMask(fl_14, vf14, 0xEu); }
         Unsafe.Add(ref vf, 15) = vf15;
         Unsafe.Add(ref vf, 16) = vf16;
         Unsafe.Add(ref vf, 17) = vf17;
@@ -12809,6 +12961,7 @@ internal static class Vu1AotPrograms
         Unsafe.Add(ref vi, 15) = vi15;
         vu.Q = regQ;
         vu.I = regI;
+        vu.MacFlags = macFlags;
         Sub_Ovl4_2358(vu, ref steps, ref acc, true);
         if (steps >= 65536) { vu.ACC = acc; vu.TotalInstructionsExecuted += steps; return; }
         vf1 = Unsafe.Add(ref vf, 1);
@@ -12857,6 +13010,7 @@ internal static class Vu1AotPrograms
         vi15 = Unsafe.Add(ref vi, 15);
         regQ = vu.Q;
         regI = vu.I;
+        macFlags = vu.MacFlags;
         idxTmp = vi6;
         Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, ((idxTmp & 0x3FF)) << 4)) = vf24;
         vi6 = (ushort)((idxTmp + 1) & 0x3FF);
@@ -12979,8 +13133,8 @@ internal static class Vu1AotPrograms
         Unsafe.Add(ref vf, 10) = vf10;
         Unsafe.Add(ref vf, 11) = vf11;
         Unsafe.Add(ref vf, 12) = vf12;
-        Unsafe.Add(ref vf, 13) = vf13;
-        Unsafe.Add(ref vf, 14) = vf14;
+        { ref Vector128<float> fl_13 = ref Unsafe.Add(ref vf, 13); fl_13 = Ps2Vu0.BlendMask(fl_13, vf13, 0xEu); }
+        { ref Vector128<float> fl_14 = ref Unsafe.Add(ref vf, 14); fl_14 = Ps2Vu0.BlendMask(fl_14, vf14, 0xEu); }
         Unsafe.Add(ref vf, 15) = vf15;
         Unsafe.Add(ref vf, 16) = vf16;
         Unsafe.Add(ref vf, 17) = vf17;
@@ -13010,6 +13164,7 @@ internal static class Vu1AotPrograms
         Unsafe.Add(ref vi, 15) = vi15;
         vu.Q = regQ;
         vu.I = regI;
+        vu.MacFlags = macFlags;
         Sub_Base1_0898(vu, ref steps, ref acc, true);
         if (steps >= 65536) { vu.ACC = acc; vu.TotalInstructionsExecuted += steps; return; }
         vf1 = Unsafe.Add(ref vf, 1);
@@ -13058,6 +13213,7 @@ internal static class Vu1AotPrograms
         vi15 = Unsafe.Add(ref vi, 15);
         regQ = vu.Q;
         regI = vu.I;
+        macFlags = vu.MacFlags;
     slot_1573:
         vi1 = Unsafe.ReadUnaligned<ushort>(ref Unsafe.Add(ref dm, ((0x48) << 4) + 12));
         vi3 = Unsafe.ReadUnaligned<ushort>(ref Unsafe.Add(ref dm, ((vi2 & 0x3FF)) << 4));
@@ -13118,8 +13274,8 @@ internal static class Vu1AotPrograms
         Unsafe.Add(ref vf, 10) = vf10;
         Unsafe.Add(ref vf, 11) = vf11;
         Unsafe.Add(ref vf, 12) = vf12;
-        Unsafe.Add(ref vf, 13) = vf13;
-        Unsafe.Add(ref vf, 14) = vf14;
+        { ref Vector128<float> fl_13 = ref Unsafe.Add(ref vf, 13); fl_13 = Ps2Vu0.BlendMask(fl_13, vf13, 0xEu); }
+        { ref Vector128<float> fl_14 = ref Unsafe.Add(ref vf, 14); fl_14 = Ps2Vu0.BlendMask(fl_14, vf14, 0xEu); }
         Unsafe.Add(ref vf, 15) = vf15;
         Unsafe.Add(ref vf, 16) = vf16;
         Unsafe.Add(ref vf, 17) = vf17;
@@ -13149,6 +13305,7 @@ internal static class Vu1AotPrograms
         Unsafe.Add(ref vi, 15) = vi15;
         vu.Q = regQ;
         vu.I = regI;
+        vu.MacFlags = macFlags;
         Sub_Base1_0898(vu, ref steps, ref acc, true);
         if (steps >= 65536) { vu.ACC = acc; vu.TotalInstructionsExecuted += steps; return; }
         vf1 = Unsafe.Add(ref vf, 1);
@@ -13197,6 +13354,7 @@ internal static class Vu1AotPrograms
         vi15 = Unsafe.Add(ref vi, 15);
         regQ = vu.Q;
         regI = vu.I;
+        macFlags = vu.MacFlags;
         steps += 2;
         goto slot_1636;
     slot_1617:
@@ -13275,8 +13433,8 @@ internal static class Vu1AotPrograms
         Unsafe.Add(ref vf, 10) = vf10;
         Unsafe.Add(ref vf, 11) = vf11;
         Unsafe.Add(ref vf, 12) = vf12;
-        Unsafe.Add(ref vf, 13) = vf13;
-        Unsafe.Add(ref vf, 14) = vf14;
+        { ref Vector128<float> fl_13 = ref Unsafe.Add(ref vf, 13); fl_13 = Ps2Vu0.BlendMask(fl_13, vf13, 0xEu); }
+        { ref Vector128<float> fl_14 = ref Unsafe.Add(ref vf, 14); fl_14 = Ps2Vu0.BlendMask(fl_14, vf14, 0xEu); }
         Unsafe.Add(ref vf, 15) = vf15;
         Unsafe.Add(ref vf, 16) = vf16;
         Unsafe.Add(ref vf, 17) = vf17;
@@ -13306,6 +13464,7 @@ internal static class Vu1AotPrograms
         Unsafe.Add(ref vi, 15) = vi15;
         vu.Q = regQ;
         vu.I = regI;
+        vu.MacFlags = macFlags;
         vu.ACC = acc;
         vu.Tpc = 0x33B0;
         vu.TotalInstructionsExecuted += steps;
@@ -13323,8 +13482,8 @@ internal static class Vu1AotPrograms
         Unsafe.Add(ref vf, 10) = vf10;
         Unsafe.Add(ref vf, 11) = vf11;
         Unsafe.Add(ref vf, 12) = vf12;
-        Unsafe.Add(ref vf, 13) = vf13;
-        Unsafe.Add(ref vf, 14) = vf14;
+        { ref Vector128<float> fl_13 = ref Unsafe.Add(ref vf, 13); fl_13 = Ps2Vu0.BlendMask(fl_13, vf13, 0xEu); }
+        { ref Vector128<float> fl_14 = ref Unsafe.Add(ref vf, 14); fl_14 = Ps2Vu0.BlendMask(fl_14, vf14, 0xEu); }
         Unsafe.Add(ref vf, 15) = vf15;
         Unsafe.Add(ref vf, 16) = vf16;
         Unsafe.Add(ref vf, 17) = vf17;
@@ -13354,6 +13513,7 @@ internal static class Vu1AotPrograms
         Unsafe.Add(ref vi, 15) = vi15;
         vu.Q = regQ;
         vu.I = regI;
+        vu.MacFlags = macFlags;
         vu.ACC = acc;
         vu.TotalInstructionsExecuted += steps;
         return;
@@ -13418,6 +13578,7 @@ internal static class Vu1AotPrograms
         ushort vi15 = Unsafe.Add(ref vi, 15);
         float regQ = vu.Q;
         float regI = vu.I;
+        ushort macFlags = vu.MacFlags;
         goto slot_701;
     slot_420:
         vf5 = SanitizeFloatMask(Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, (0x38) << 4)), 0xE);
@@ -13449,6 +13610,7 @@ internal static class Vu1AotPrograms
         steps += 14;
         if (btTmp) goto slot_452;
     slot_434:
+        if ((short)vi12 >= 3) Vu1AotFastLoops.RunLightingLoop_434(ref dm, vf1, vf2, vf3, vf4, vf5, vf6, vf7, vf8, vf9, ref vi10, ref vi11, ref vi12, vi13, vi14, ref steps);
         vf10 = Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, ((vi10 & 0x3FF)) << 4));
         acc = (vf2 * Ps2Vu0.BroadcastBc(vf10, 0u));
         vi10 = unchecked((ushort)(vi10 + vi14));
@@ -13503,18 +13665,19 @@ internal static class Vu1AotPrograms
         vi1 = Unsafe.ReadUnaligned<ushort>(ref Unsafe.Add(ref dm, ((vi2 & 0x3FF)) << 4));
         vi3 = unchecked((ushort)(vi2 + 1u));
         vi4 = Unsafe.ReadUnaligned<ushort>(ref Unsafe.Add(ref dm, ((0x48) << 4) + 12));
-        vf13 = Ps2Vu0.BlendMask(vf13, Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, (0x2) << 4)), 0xEu);
-        vf14 = Ps2Vu0.BlendMask(vf14, Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, (0x3) << 4)), 0xEu);
+        vf13 = Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, (0x2) << 4));
+        vf14 = Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, (0x3) << 4));
         vi5 = unchecked((ushort)(((ushort)0) + 0u));
         vf12 = Vu1State.ExecFtoi0(vf12);
         vi6 = unchecked((ushort)(((ushort)0) + 0u));
         steps += 21;
     slot_728:
+        if ((short)vi1 >= 3) Vu1AotFastLoops.RunStaticTransformLoop_728(ref dm, vf1, vf2, vf3, vf4, vf5, vf6, vf7, vf8, vf9, vf10, vf11, vf12, vf13, vf14, ref vi1, ref vi3, ref vi4, ref vi5, ref vi6, ref steps);
         vf17 = Ps2Vu0.BlendMask(vf17, Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, ((vi3 & 0x3FF)) << 4)), 0xEu);
-        vf16 = Ps2Vu0.BlendMask(vf16, Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, ((((short)vi3 + (1)) & 0x3FF)) << 4)), 0xEu);
+        vf16 = Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, ((((short)vi3 + (1)) & 0x3FF)) << 4));
         vf17 = Ps2Vu0.BlendMask(vf17, Vector128.ConvertToSingle(vf17.AsInt32()), 0xEu);
         vi7 = Unsafe.ReadUnaligned<ushort>(ref Unsafe.Add(ref dm, (((vi3 & 0x3FF)) << 4) + 12));
-        vf16 = Ps2Vu0.BlendMask(vf16, Vector128.ConvertToSingle(vf16.AsInt32()), 0xEu);
+        vf16 = Vector128.ConvertToSingle(vf16.AsInt32());
         Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, ((((short)vi4 + (4)) & 0x3FF)) << 4)) = vf12;
         acc = (vf5 * Ps2Vu0.BroadcastBc(vf17, 0u));
         vi4 = unchecked((ushort)(vi4 + 3u));
@@ -13523,7 +13686,7 @@ internal static class Vu1AotPrograms
         vf17 = Ps2Vu0.BlendMask(vf17, (acc + vf8), 0xEu);
         acc = (vf9 * Ps2Vu0.BroadcastBc(vf16, 0u));
         acc = FmaAdd(vf10, Ps2Vu0.BroadcastBc(vf16, 1u), acc);
-        vf16 = Ps2Vu0.BlendMask(vf16, FmaAdd(vf11, Ps2Vu0.BroadcastBc(vf16, 2u), acc), 0xEu);
+        vf16 = FmaAdd(vf11, Ps2Vu0.BroadcastBc(vf16, 2u), acc);
         acc = (vf1 * Ps2Vu0.BroadcastBc(vf17, 0u));
         { ref byte sq_739 = ref Unsafe.Add(ref dm, ((vi3 & 0x3FF)) << 4); Unsafe.WriteUnaligned(ref sq_739, vf17.AsUInt64().GetElement(0)); Unsafe.WriteUnaligned(ref Unsafe.Add(ref sq_739, 8), vf17.GetElement(2)); }
         acc = FmaAdd(vf2, Ps2Vu0.BroadcastBc(vf17, 1u), acc);
@@ -13535,7 +13698,7 @@ internal static class Vu1AotPrograms
         vf16 = Ps2Vu0.BlendMask(vf16, Vf0, 0x1u);
         vf15 = Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, ((((short)vi3 + (2)) & 0x3FF)) << 4));
         tmp = (vf16 * Vector128.Create(regQ));
-        vu.UpdateMacFlagsOnly(tmp, 0xFu);
+        macFlags = Vu1State.ComputeMacFlagsW(tmp);
         vf16 = tmp;
         vi3 = unchecked((ushort)(vi3 + 5u));
         vf15 = Vu1State.ExecItof(vf15, 12);
@@ -13543,7 +13706,7 @@ internal static class Vu1AotPrograms
         vi7 = unchecked((ushort)(vi6 + 0u));
         vi6 = unchecked((ushort)(((ushort)0) + 17u));
         vf16 = Ps2Vu0.BlendMask(vf16, VuMax(vf16, vf13), 0xEu);
-        vi6 = (ushort)(vu.MacFlags & vi6);
+        vi6 = (ushort)(macFlags & vi6);
         Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, ((((short)vi3 + (-3)) & 0x3FF)) << 4)) = vf15;
         vf15 = Ps2Vu0.BlendMask(vf15, Vf0Mr32, 0x3u);
         vf16 = Ps2Vu0.BlendMask(vf16, VuMin(vf16, vf14), 0xEu);
@@ -13576,8 +13739,8 @@ internal static class Vu1AotPrograms
         vf11 = Ps2Vu0.BlendMask(vf11, Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, (0x8) << 4)), 0xEu);
         vi2 = vu.Top;
         vf12 = Ps2Vu0.BlendMask(vf12, Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, (0x9) << 4)), 0xEu);
-        vf13 = Ps2Vu0.BlendMask(vf13, Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, (0x3B) << 4)), 0xEu);
-        vf14 = Ps2Vu0.BlendMask(vf14, Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, (0x3C) << 4)), 0xEu);
+        vf13 = Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, (0x3B) << 4));
+        vf14 = Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, (0x3C) << 4));
         vf15 = Ps2Vu0.BlendMask(vf15, Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, (0x3D) << 4)), 0xEu);
         vi3 = Unsafe.ReadUnaligned<ushort>(ref Unsafe.Add(ref dm, ((vi2 & 0x3FF)) << 4));
         vi4 = unchecked((ushort)(vi2 + 1u));
@@ -13589,23 +13752,23 @@ internal static class Vu1AotPrograms
         vu.ClipFlags = 0x0u;
         steps += 23;
     slot_787:
-        vf21 = Ps2Vu0.BlendMask(vf21, Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, ((vi4 & 0x3FF)) << 4)), 0xEu);
+        vf21 = Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, ((vi4 & 0x3FF)) << 4));
         vf20 = vf16;
-        vf19 = Ps2Vu0.BlendMask(vf19, Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, ((((short)vi4 + (1)) & 0x3FF)) << 4)), 0xEu);
+        vf19 = Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, ((((short)vi4 + (1)) & 0x3FF)) << 4));
         vf16 = vf17;
         vi10 = unchecked((ushort)(((ushort)0) + 32767u));
-        vf17 = Ps2Vu0.BlendMask(vf17, Vector128.ConvertToSingle(vf21.AsInt32()), 0xEu);
+        vf17 = Vector128.ConvertToSingle(vf21.AsInt32());
         vi10 = unchecked((ushort)(vi10 + 1u));
         vu.ExecClip(vf20, vf20);
-        vf19 = Ps2Vu0.BlendMask(vf19, Vector128.ConvertToSingle(vf19.AsInt32()), 0xEu);
+        vf19 = Vector128.ConvertToSingle(vf19.AsInt32());
         vu.ExecClip(vf16, vf16);
         acc = (vf9 * Ps2Vu0.BroadcastBc(vf17, 0u));
         acc = FmaAdd(vf10, Ps2Vu0.BroadcastBc(vf17, 1u), acc);
         acc = FmaAdd(vf11, Ps2Vu0.BroadcastBc(vf17, 2u), acc);
-        vf17 = Ps2Vu0.BlendMask(vf17, (acc + vf12), 0xEu);
+        vf17 = (acc + vf12);
         acc = (vf13 * Ps2Vu0.BroadcastBc(vf19, 0u));
         acc = FmaAdd(vf14, Ps2Vu0.BroadcastBc(vf19, 1u), acc);
-        vf19 = Ps2Vu0.BlendMask(vf19, FmaAdd(vf15, Ps2Vu0.BroadcastBc(vf19, 2u), acc), 0xEu);
+        vf19 = FmaAdd(vf15, Ps2Vu0.BroadcastBc(vf19, 2u), acc);
         acc = (vf1 * Ps2Vu0.BroadcastBc(vf17, 0u));
         acc = FmaAdd(vf2, Ps2Vu0.BroadcastBc(vf17, 1u), acc);
         acc = FmaAdd(vf3, Ps2Vu0.BroadcastBc(vf17, 2u), acc);
@@ -14092,8 +14255,8 @@ internal static class Vu1AotPrograms
         Unsafe.Add(ref vf, 10) = vf10;
         Unsafe.Add(ref vf, 11) = vf11;
         Unsafe.Add(ref vf, 12) = vf12;
-        Unsafe.Add(ref vf, 13) = vf13;
-        Unsafe.Add(ref vf, 14) = vf14;
+        { ref Vector128<float> fl_13 = ref Unsafe.Add(ref vf, 13); fl_13 = Ps2Vu0.BlendMask(fl_13, vf13, 0xEu); }
+        { ref Vector128<float> fl_14 = ref Unsafe.Add(ref vf, 14); fl_14 = Ps2Vu0.BlendMask(fl_14, vf14, 0xEu); }
         Unsafe.Add(ref vf, 15) = vf15;
         Unsafe.Add(ref vf, 16) = vf16;
         Unsafe.Add(ref vf, 17) = vf17;
@@ -14123,6 +14286,7 @@ internal static class Vu1AotPrograms
         Unsafe.Add(ref vi, 15) = vi15;
         vu.Q = regQ;
         vu.I = regI;
+        vu.MacFlags = macFlags;
         Sub_Ovl4_2358(vu, ref steps, ref acc, true);
         if (steps >= 65536) { vu.ACC = acc; vu.TotalInstructionsExecuted += steps; return; }
         vf1 = Unsafe.Add(ref vf, 1);
@@ -14171,6 +14335,7 @@ internal static class Vu1AotPrograms
         vi15 = Unsafe.Add(ref vi, 15);
         regQ = vu.Q;
         regI = vu.I;
+        macFlags = vu.MacFlags;
         vi8 = unchecked((ushort)(vi8 + 1u));
         idxTmp = vi6;
         Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, ((idxTmp & 0x3FF)) << 4)) = vf27;
@@ -14212,8 +14377,8 @@ internal static class Vu1AotPrograms
         Unsafe.Add(ref vf, 10) = vf10;
         Unsafe.Add(ref vf, 11) = vf11;
         Unsafe.Add(ref vf, 12) = vf12;
-        Unsafe.Add(ref vf, 13) = vf13;
-        Unsafe.Add(ref vf, 14) = vf14;
+        { ref Vector128<float> fl_13 = ref Unsafe.Add(ref vf, 13); fl_13 = Ps2Vu0.BlendMask(fl_13, vf13, 0xEu); }
+        { ref Vector128<float> fl_14 = ref Unsafe.Add(ref vf, 14); fl_14 = Ps2Vu0.BlendMask(fl_14, vf14, 0xEu); }
         Unsafe.Add(ref vf, 15) = vf15;
         Unsafe.Add(ref vf, 16) = vf16;
         Unsafe.Add(ref vf, 17) = vf17;
@@ -14243,6 +14408,7 @@ internal static class Vu1AotPrograms
         Unsafe.Add(ref vi, 15) = vi15;
         vu.Q = regQ;
         vu.I = regI;
+        vu.MacFlags = macFlags;
         Sub_Ovl4_2358(vu, ref steps, ref acc, true);
         if (steps >= 65536) { vu.ACC = acc; vu.TotalInstructionsExecuted += steps; return; }
         vf1 = Unsafe.Add(ref vf, 1);
@@ -14291,6 +14457,7 @@ internal static class Vu1AotPrograms
         vi15 = Unsafe.Add(ref vi, 15);
         regQ = vu.Q;
         regI = vu.I;
+        macFlags = vu.MacFlags;
         idxTmp = vi6;
         Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, ((idxTmp & 0x3FF)) << 4)) = vf24;
         vi6 = (ushort)((idxTmp + 1) & 0x3FF);
@@ -14413,8 +14580,8 @@ internal static class Vu1AotPrograms
         Unsafe.Add(ref vf, 10) = vf10;
         Unsafe.Add(ref vf, 11) = vf11;
         Unsafe.Add(ref vf, 12) = vf12;
-        Unsafe.Add(ref vf, 13) = vf13;
-        Unsafe.Add(ref vf, 14) = vf14;
+        { ref Vector128<float> fl_13 = ref Unsafe.Add(ref vf, 13); fl_13 = Ps2Vu0.BlendMask(fl_13, vf13, 0xEu); }
+        { ref Vector128<float> fl_14 = ref Unsafe.Add(ref vf, 14); fl_14 = Ps2Vu0.BlendMask(fl_14, vf14, 0xEu); }
         Unsafe.Add(ref vf, 15) = vf15;
         Unsafe.Add(ref vf, 16) = vf16;
         Unsafe.Add(ref vf, 17) = vf17;
@@ -14444,6 +14611,7 @@ internal static class Vu1AotPrograms
         Unsafe.Add(ref vi, 15) = vi15;
         vu.Q = regQ;
         vu.I = regI;
+        vu.MacFlags = macFlags;
         Sub_Base1_0898(vu, ref steps, ref acc, true);
         if (steps >= 65536) { vu.ACC = acc; vu.TotalInstructionsExecuted += steps; return; }
         vf1 = Unsafe.Add(ref vf, 1);
@@ -14492,6 +14660,7 @@ internal static class Vu1AotPrograms
         vi15 = Unsafe.Add(ref vi, 15);
         regQ = vu.Q;
         regI = vu.I;
+        macFlags = vu.MacFlags;
     slot_1573:
         vi1 = Unsafe.ReadUnaligned<ushort>(ref Unsafe.Add(ref dm, ((0x48) << 4) + 12));
         vi3 = Unsafe.ReadUnaligned<ushort>(ref Unsafe.Add(ref dm, ((vi2 & 0x3FF)) << 4));
@@ -14552,8 +14721,8 @@ internal static class Vu1AotPrograms
         Unsafe.Add(ref vf, 10) = vf10;
         Unsafe.Add(ref vf, 11) = vf11;
         Unsafe.Add(ref vf, 12) = vf12;
-        Unsafe.Add(ref vf, 13) = vf13;
-        Unsafe.Add(ref vf, 14) = vf14;
+        { ref Vector128<float> fl_13 = ref Unsafe.Add(ref vf, 13); fl_13 = Ps2Vu0.BlendMask(fl_13, vf13, 0xEu); }
+        { ref Vector128<float> fl_14 = ref Unsafe.Add(ref vf, 14); fl_14 = Ps2Vu0.BlendMask(fl_14, vf14, 0xEu); }
         Unsafe.Add(ref vf, 15) = vf15;
         Unsafe.Add(ref vf, 16) = vf16;
         Unsafe.Add(ref vf, 17) = vf17;
@@ -14583,6 +14752,7 @@ internal static class Vu1AotPrograms
         Unsafe.Add(ref vi, 15) = vi15;
         vu.Q = regQ;
         vu.I = regI;
+        vu.MacFlags = macFlags;
         Sub_Base1_0898(vu, ref steps, ref acc, true);
         if (steps >= 65536) { vu.ACC = acc; vu.TotalInstructionsExecuted += steps; return; }
         vf1 = Unsafe.Add(ref vf, 1);
@@ -14631,6 +14801,7 @@ internal static class Vu1AotPrograms
         vi15 = Unsafe.Add(ref vi, 15);
         regQ = vu.Q;
         regI = vu.I;
+        macFlags = vu.MacFlags;
         steps += 2;
         goto slot_1636;
     slot_1617:
@@ -14709,8 +14880,8 @@ internal static class Vu1AotPrograms
         Unsafe.Add(ref vf, 10) = vf10;
         Unsafe.Add(ref vf, 11) = vf11;
         Unsafe.Add(ref vf, 12) = vf12;
-        Unsafe.Add(ref vf, 13) = vf13;
-        Unsafe.Add(ref vf, 14) = vf14;
+        { ref Vector128<float> fl_13 = ref Unsafe.Add(ref vf, 13); fl_13 = Ps2Vu0.BlendMask(fl_13, vf13, 0xEu); }
+        { ref Vector128<float> fl_14 = ref Unsafe.Add(ref vf, 14); fl_14 = Ps2Vu0.BlendMask(fl_14, vf14, 0xEu); }
         Unsafe.Add(ref vf, 15) = vf15;
         Unsafe.Add(ref vf, 16) = vf16;
         Unsafe.Add(ref vf, 17) = vf17;
@@ -14740,6 +14911,7 @@ internal static class Vu1AotPrograms
         Unsafe.Add(ref vi, 15) = vi15;
         vu.Q = regQ;
         vu.I = regI;
+        vu.MacFlags = macFlags;
         vu.ACC = acc;
         vu.Tpc = 0x33B0;
         vu.TotalInstructionsExecuted += steps;
@@ -14757,8 +14929,8 @@ internal static class Vu1AotPrograms
         Unsafe.Add(ref vf, 10) = vf10;
         Unsafe.Add(ref vf, 11) = vf11;
         Unsafe.Add(ref vf, 12) = vf12;
-        Unsafe.Add(ref vf, 13) = vf13;
-        Unsafe.Add(ref vf, 14) = vf14;
+        { ref Vector128<float> fl_13 = ref Unsafe.Add(ref vf, 13); fl_13 = Ps2Vu0.BlendMask(fl_13, vf13, 0xEu); }
+        { ref Vector128<float> fl_14 = ref Unsafe.Add(ref vf, 14); fl_14 = Ps2Vu0.BlendMask(fl_14, vf14, 0xEu); }
         Unsafe.Add(ref vf, 15) = vf15;
         Unsafe.Add(ref vf, 16) = vf16;
         Unsafe.Add(ref vf, 17) = vf17;
@@ -14788,6 +14960,7 @@ internal static class Vu1AotPrograms
         Unsafe.Add(ref vi, 15) = vi15;
         vu.Q = regQ;
         vu.I = regI;
+        vu.MacFlags = macFlags;
         vu.ACC = acc;
         vu.TotalInstructionsExecuted += steps;
         return;
@@ -14839,6 +15012,7 @@ internal static class Vu1AotPrograms
         ushort vi15 = Unsafe.Add(ref vi, 15);
         float regQ = vu.Q;
         float regI = vu.I;
+        ushort macFlags = vu.MacFlags;
         goto slot_735;
     slot_420:
         vf5 = SanitizeFloatMask(Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, (0x38) << 4)), 0xE);
@@ -14870,6 +15044,7 @@ internal static class Vu1AotPrograms
         steps += 14;
         if (btTmp) goto slot_452;
     slot_434:
+        if ((short)vi12 >= 3) Vu1AotFastLoops.RunLightingLoop_434(ref dm, vf1, vf2, vf3, vf4, vf5, vf6, vf7, vf8, vf9, ref vi10, ref vi11, ref vi12, vi13, vi14, ref steps);
         vf10 = Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, ((vi10 & 0x3FF)) << 4));
         acc = (vf2 * Ps2Vu0.BroadcastBc(vf10, 0u));
         vi10 = unchecked((ushort)(vi10 + vi14));
@@ -14901,11 +15076,12 @@ internal static class Vu1AotPrograms
             default: goto exit_stepcap;
         }
     slot_728:
-        vf17 = Ps2Vu0.BlendMask(vf17, Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, ((vi3 & 0x3FF)) << 4)), 0xEu);
-        vf16 = Ps2Vu0.BlendMask(vf16, Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, ((((short)vi3 + (1)) & 0x3FF)) << 4)), 0xEu);
-        vf17 = Ps2Vu0.BlendMask(vf17, Vector128.ConvertToSingle(vf17.AsInt32()), 0xEu);
+        if ((short)vi1 >= 3) Vu1AotFastLoops.RunStaticTransformLoop_728(ref dm, vf1, vf2, vf3, vf4, vf5, vf6, vf7, vf8, vf9, vf10, vf11, vf12, vf13, vf14, ref vi1, ref vi3, ref vi4, ref vi5, ref vi6, ref steps);
+        vf17 = Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, ((vi3 & 0x3FF)) << 4));
+        vf16 = Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, ((((short)vi3 + (1)) & 0x3FF)) << 4));
+        vf17 = Vector128.ConvertToSingle(vf17.AsInt32());
         vi7 = Unsafe.ReadUnaligned<ushort>(ref Unsafe.Add(ref dm, (((vi3 & 0x3FF)) << 4) + 12));
-        vf16 = Ps2Vu0.BlendMask(vf16, Vector128.ConvertToSingle(vf16.AsInt32()), 0xEu);
+        vf16 = Vector128.ConvertToSingle(vf16.AsInt32());
         Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, ((((short)vi4 + (4)) & 0x3FF)) << 4)) = vf12;
         acc = Ps2Vu0.BlendMask(acc, (vf5 * Ps2Vu0.BroadcastBc(vf17, 0u)), 0xEu);
         vi4 = unchecked((ushort)(vi4 + 3u));
@@ -14913,10 +15089,10 @@ internal static class Vu1AotPrograms
         acc = Ps2Vu0.BlendMask(acc, FmaAdd(vf7, Ps2Vu0.BroadcastBc(vf17, 2u), acc), 0xEu);
         steps += 7;
     slot_735:
-        vf17 = Ps2Vu0.BlendMask(vf17, (acc + vf8), 0xEu);
+        vf17 = (acc + vf8);
         acc = (vf9 * Ps2Vu0.BroadcastBc(vf16, 0u));
         acc = FmaAdd(vf10, Ps2Vu0.BroadcastBc(vf16, 1u), acc);
-        vf16 = Ps2Vu0.BlendMask(vf16, FmaAdd(vf11, Ps2Vu0.BroadcastBc(vf16, 2u), acc), 0xEu);
+        vf16 = FmaAdd(vf11, Ps2Vu0.BroadcastBc(vf16, 2u), acc);
         acc = (vf1 * Ps2Vu0.BroadcastBc(vf17, 0u));
         { ref byte sq_739 = ref Unsafe.Add(ref dm, ((vi3 & 0x3FF)) << 4); Unsafe.WriteUnaligned(ref sq_739, vf17.AsUInt64().GetElement(0)); Unsafe.WriteUnaligned(ref Unsafe.Add(ref sq_739, 8), vf17.GetElement(2)); }
         acc = FmaAdd(vf2, Ps2Vu0.BroadcastBc(vf17, 1u), acc);
@@ -14928,7 +15104,7 @@ internal static class Vu1AotPrograms
         vf16 = Ps2Vu0.BlendMask(vf16, Vf0, 0x1u);
         vf15 = Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, ((((short)vi3 + (2)) & 0x3FF)) << 4));
         tmp = (vf16 * Vector128.Create(regQ));
-        vu.UpdateMacFlagsOnly(tmp, 0xFu);
+        macFlags = Vu1State.ComputeMacFlagsW(tmp);
         vf16 = tmp;
         vi3 = unchecked((ushort)(vi3 + 5u));
         vf15 = Vu1State.ExecItof(vf15, 12);
@@ -14936,7 +15112,7 @@ internal static class Vu1AotPrograms
         vi7 = unchecked((ushort)(vi6 + 0u));
         vi6 = unchecked((ushort)(((ushort)0) + 17u));
         vf16 = Ps2Vu0.BlendMask(vf16, VuMax(vf16, vf13), 0xEu);
-        vi6 = (ushort)(vu.MacFlags & vi6);
+        vi6 = (ushort)(macFlags & vi6);
         Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, ((((short)vi3 + (-3)) & 0x3FF)) << 4)) = vf15;
         vf15 = Ps2Vu0.BlendMask(vf15, Vf0Mr32, 0x3u);
         vf16 = Ps2Vu0.BlendMask(vf16, VuMin(vf16, vf14), 0xEu);
@@ -15023,7 +15199,7 @@ internal static class Vu1AotPrograms
         Unsafe.Add(ref vf, 11) = vf11;
         Unsafe.Add(ref vf, 15) = vf15;
         Unsafe.Add(ref vf, 16) = vf16;
-        Unsafe.Add(ref vf, 17) = vf17;
+        { ref Vector128<float> fl_17 = ref Unsafe.Add(ref vf, 17); fl_17 = Ps2Vu0.BlendMask(fl_17, vf17, 0xEu); }
         Unsafe.Add(ref vi, 1) = vi1;
         Unsafe.Add(ref vi, 2) = vi2;
         Unsafe.Add(ref vi, 3) = vi3;
@@ -15039,6 +15215,7 @@ internal static class Vu1AotPrograms
         Unsafe.Add(ref vi, 15) = vi15;
         vu.Q = regQ;
         vu.I = regI;
+        vu.MacFlags = macFlags;
         Sub_Base1_0898(vu, ref steps, ref acc, true);
         if (steps >= 65536) { vu.ACC = acc; vu.TotalInstructionsExecuted += steps; return; }
         vf1 = Unsafe.Add(ref vf, 1);
@@ -15074,6 +15251,7 @@ internal static class Vu1AotPrograms
         vi15 = Unsafe.Add(ref vi, 15);
         regQ = vu.Q;
         regI = vu.I;
+        macFlags = vu.MacFlags;
     slot_1573:
         vi1 = Unsafe.ReadUnaligned<ushort>(ref Unsafe.Add(ref dm, ((0x48) << 4) + 12));
         vi3 = Unsafe.ReadUnaligned<ushort>(ref Unsafe.Add(ref dm, ((vi2 & 0x3FF)) << 4));
@@ -15135,7 +15313,7 @@ internal static class Vu1AotPrograms
         Unsafe.Add(ref vf, 11) = vf11;
         Unsafe.Add(ref vf, 15) = vf15;
         Unsafe.Add(ref vf, 16) = vf16;
-        Unsafe.Add(ref vf, 17) = vf17;
+        { ref Vector128<float> fl_17 = ref Unsafe.Add(ref vf, 17); fl_17 = Ps2Vu0.BlendMask(fl_17, vf17, 0xEu); }
         Unsafe.Add(ref vi, 1) = vi1;
         Unsafe.Add(ref vi, 2) = vi2;
         Unsafe.Add(ref vi, 3) = vi3;
@@ -15151,6 +15329,7 @@ internal static class Vu1AotPrograms
         Unsafe.Add(ref vi, 15) = vi15;
         vu.Q = regQ;
         vu.I = regI;
+        vu.MacFlags = macFlags;
         Sub_Base1_0898(vu, ref steps, ref acc, true);
         if (steps >= 65536) { vu.ACC = acc; vu.TotalInstructionsExecuted += steps; return; }
         vf1 = Unsafe.Add(ref vf, 1);
@@ -15186,6 +15365,7 @@ internal static class Vu1AotPrograms
         vi15 = Unsafe.Add(ref vi, 15);
         regQ = vu.Q;
         regI = vu.I;
+        macFlags = vu.MacFlags;
         steps += 2;
         goto slot_1636;
     slot_1617:
@@ -15265,7 +15445,7 @@ internal static class Vu1AotPrograms
         Unsafe.Add(ref vf, 11) = vf11;
         Unsafe.Add(ref vf, 15) = vf15;
         Unsafe.Add(ref vf, 16) = vf16;
-        Unsafe.Add(ref vf, 17) = vf17;
+        { ref Vector128<float> fl_17 = ref Unsafe.Add(ref vf, 17); fl_17 = Ps2Vu0.BlendMask(fl_17, vf17, 0xEu); }
         Unsafe.Add(ref vi, 1) = vi1;
         Unsafe.Add(ref vi, 2) = vi2;
         Unsafe.Add(ref vi, 3) = vi3;
@@ -15281,6 +15461,7 @@ internal static class Vu1AotPrograms
         Unsafe.Add(ref vi, 15) = vi15;
         vu.Q = regQ;
         vu.I = regI;
+        vu.MacFlags = macFlags;
         vu.ACC = acc;
         vu.Tpc = 0x33B0;
         vu.TotalInstructionsExecuted += steps;
@@ -15299,7 +15480,7 @@ internal static class Vu1AotPrograms
         Unsafe.Add(ref vf, 11) = vf11;
         Unsafe.Add(ref vf, 15) = vf15;
         Unsafe.Add(ref vf, 16) = vf16;
-        Unsafe.Add(ref vf, 17) = vf17;
+        { ref Vector128<float> fl_17 = ref Unsafe.Add(ref vf, 17); fl_17 = Ps2Vu0.BlendMask(fl_17, vf17, 0xEu); }
         Unsafe.Add(ref vi, 1) = vi1;
         Unsafe.Add(ref vi, 2) = vi2;
         Unsafe.Add(ref vi, 3) = vi3;
@@ -15315,6 +15496,7 @@ internal static class Vu1AotPrograms
         Unsafe.Add(ref vi, 15) = vi15;
         vu.Q = regQ;
         vu.I = regI;
+        vu.MacFlags = macFlags;
         vu.ACC = acc;
         vu.TotalInstructionsExecuted += steps;
         return;
@@ -15410,6 +15592,7 @@ internal static class Vu1AotPrograms
         steps += 14;
         if (btTmp) goto slot_452;
     slot_434:
+        if ((short)vi12 >= 3) Vu1AotFastLoops.RunLightingLoop_434(ref dm, vf1, vf2, vf3, vf4, vf5, vf6, vf7, vf8, vf9, ref vi10, ref vi11, ref vi12, vi13, vi14, ref steps);
         vf10 = Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, ((vi10 & 0x3FF)) << 4));
         acc = (vf2 * Ps2Vu0.BroadcastBc(vf10, 0u));
         vi10 = unchecked((ushort)(vi10 + vi14));
@@ -15454,10 +15637,10 @@ internal static class Vu1AotPrograms
         vf10 = Ps2Vu0.BlendMask(vf10, Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, (0x7) << 4)), 0xEu);
         vf11 = Ps2Vu0.BlendMask(vf11, Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, (0x8) << 4)), 0xEu);
         vi2 = vu.Top;
-        vf12 = Ps2Vu0.BlendMask(vf12, Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, (0x9) << 4)), 0xEu);
-        vf13 = Ps2Vu0.BlendMask(vf13, Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, (0x3B) << 4)), 0xEu);
-        vf14 = Ps2Vu0.BlendMask(vf14, Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, (0x3C) << 4)), 0xEu);
-        vf15 = Ps2Vu0.BlendMask(vf15, Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, (0x3D) << 4)), 0xEu);
+        vf12 = Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, (0x9) << 4));
+        vf13 = Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, (0x3B) << 4));
+        vf14 = Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, (0x3C) << 4));
+        vf15 = Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, (0x3D) << 4));
         vi3 = Unsafe.ReadUnaligned<ushort>(ref Unsafe.Add(ref dm, ((vi2 & 0x3FF)) << 4));
         vi4 = unchecked((ushort)(vi2 + 1u));
         vi5 = Unsafe.ReadUnaligned<ushort>(ref Unsafe.Add(ref dm, ((0x48) << 4) + 12));
@@ -15468,23 +15651,23 @@ internal static class Vu1AotPrograms
         vu.ClipFlags = 0x0u;
         steps += 23;
     slot_787:
-        vf21 = Ps2Vu0.BlendMask(vf21, Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, ((vi4 & 0x3FF)) << 4)), 0xEu);
+        vf21 = Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, ((vi4 & 0x3FF)) << 4));
         vf20 = vf16;
-        vf19 = Ps2Vu0.BlendMask(vf19, Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, ((((short)vi4 + (1)) & 0x3FF)) << 4)), 0xEu);
+        vf19 = Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, ((((short)vi4 + (1)) & 0x3FF)) << 4));
         vf16 = vf17;
         vi10 = unchecked((ushort)(((ushort)0) + 32767u));
-        vf17 = Ps2Vu0.BlendMask(vf17, Vector128.ConvertToSingle(vf21.AsInt32()), 0xEu);
+        vf17 = Vector128.ConvertToSingle(vf21.AsInt32());
         vi10 = unchecked((ushort)(vi10 + 1u));
         vu.ExecClip(vf20, vf20);
-        vf19 = Ps2Vu0.BlendMask(vf19, Vector128.ConvertToSingle(vf19.AsInt32()), 0xEu);
+        vf19 = Vector128.ConvertToSingle(vf19.AsInt32());
         vu.ExecClip(vf16, vf16);
         acc = (vf9 * Ps2Vu0.BroadcastBc(vf17, 0u));
         acc = FmaAdd(vf10, Ps2Vu0.BroadcastBc(vf17, 1u), acc);
         acc = FmaAdd(vf11, Ps2Vu0.BroadcastBc(vf17, 2u), acc);
-        vf17 = Ps2Vu0.BlendMask(vf17, (acc + vf12), 0xEu);
+        vf17 = (acc + vf12);
         acc = (vf13 * Ps2Vu0.BroadcastBc(vf19, 0u));
         acc = FmaAdd(vf14, Ps2Vu0.BroadcastBc(vf19, 1u), acc);
-        vf19 = Ps2Vu0.BlendMask(vf19, FmaAdd(vf15, Ps2Vu0.BroadcastBc(vf19, 2u), acc), 0xEu);
+        vf19 = FmaAdd(vf15, Ps2Vu0.BroadcastBc(vf19, 2u), acc);
         acc = (vf1 * Ps2Vu0.BroadcastBc(vf17, 0u));
         acc = FmaAdd(vf2, Ps2Vu0.BroadcastBc(vf17, 1u), acc);
         acc = FmaAdd(vf3, Ps2Vu0.BroadcastBc(vf17, 2u), acc);
@@ -15970,10 +16153,10 @@ internal static class Vu1AotPrograms
         Unsafe.Add(ref vf, 9) = vf9;
         Unsafe.Add(ref vf, 10) = vf10;
         Unsafe.Add(ref vf, 11) = vf11;
-        Unsafe.Add(ref vf, 12) = vf12;
-        Unsafe.Add(ref vf, 13) = vf13;
-        Unsafe.Add(ref vf, 14) = vf14;
-        Unsafe.Add(ref vf, 15) = vf15;
+        { ref Vector128<float> fl_12 = ref Unsafe.Add(ref vf, 12); fl_12 = Ps2Vu0.BlendMask(fl_12, vf12, 0xEu); }
+        { ref Vector128<float> fl_13 = ref Unsafe.Add(ref vf, 13); fl_13 = Ps2Vu0.BlendMask(fl_13, vf13, 0xEu); }
+        { ref Vector128<float> fl_14 = ref Unsafe.Add(ref vf, 14); fl_14 = Ps2Vu0.BlendMask(fl_14, vf14, 0xEu); }
+        { ref Vector128<float> fl_15 = ref Unsafe.Add(ref vf, 15); fl_15 = Ps2Vu0.BlendMask(fl_15, vf15, 0xEu); }
         Unsafe.Add(ref vf, 16) = vf16;
         Unsafe.Add(ref vf, 17) = vf17;
         Unsafe.Add(ref vf, 18) = vf18;
@@ -16090,10 +16273,10 @@ internal static class Vu1AotPrograms
         Unsafe.Add(ref vf, 9) = vf9;
         Unsafe.Add(ref vf, 10) = vf10;
         Unsafe.Add(ref vf, 11) = vf11;
-        Unsafe.Add(ref vf, 12) = vf12;
-        Unsafe.Add(ref vf, 13) = vf13;
-        Unsafe.Add(ref vf, 14) = vf14;
-        Unsafe.Add(ref vf, 15) = vf15;
+        { ref Vector128<float> fl_12 = ref Unsafe.Add(ref vf, 12); fl_12 = Ps2Vu0.BlendMask(fl_12, vf12, 0xEu); }
+        { ref Vector128<float> fl_13 = ref Unsafe.Add(ref vf, 13); fl_13 = Ps2Vu0.BlendMask(fl_13, vf13, 0xEu); }
+        { ref Vector128<float> fl_14 = ref Unsafe.Add(ref vf, 14); fl_14 = Ps2Vu0.BlendMask(fl_14, vf14, 0xEu); }
+        { ref Vector128<float> fl_15 = ref Unsafe.Add(ref vf, 15); fl_15 = Ps2Vu0.BlendMask(fl_15, vf15, 0xEu); }
         Unsafe.Add(ref vf, 16) = vf16;
         Unsafe.Add(ref vf, 17) = vf17;
         Unsafe.Add(ref vf, 18) = vf18;
@@ -16291,10 +16474,10 @@ internal static class Vu1AotPrograms
         Unsafe.Add(ref vf, 9) = vf9;
         Unsafe.Add(ref vf, 10) = vf10;
         Unsafe.Add(ref vf, 11) = vf11;
-        Unsafe.Add(ref vf, 12) = vf12;
-        Unsafe.Add(ref vf, 13) = vf13;
-        Unsafe.Add(ref vf, 14) = vf14;
-        Unsafe.Add(ref vf, 15) = vf15;
+        { ref Vector128<float> fl_12 = ref Unsafe.Add(ref vf, 12); fl_12 = Ps2Vu0.BlendMask(fl_12, vf12, 0xEu); }
+        { ref Vector128<float> fl_13 = ref Unsafe.Add(ref vf, 13); fl_13 = Ps2Vu0.BlendMask(fl_13, vf13, 0xEu); }
+        { ref Vector128<float> fl_14 = ref Unsafe.Add(ref vf, 14); fl_14 = Ps2Vu0.BlendMask(fl_14, vf14, 0xEu); }
+        { ref Vector128<float> fl_15 = ref Unsafe.Add(ref vf, 15); fl_15 = Ps2Vu0.BlendMask(fl_15, vf15, 0xEu); }
         Unsafe.Add(ref vf, 16) = vf16;
         Unsafe.Add(ref vf, 17) = vf17;
         Unsafe.Add(ref vf, 18) = vf18;
@@ -16430,10 +16613,10 @@ internal static class Vu1AotPrograms
         Unsafe.Add(ref vf, 9) = vf9;
         Unsafe.Add(ref vf, 10) = vf10;
         Unsafe.Add(ref vf, 11) = vf11;
-        Unsafe.Add(ref vf, 12) = vf12;
-        Unsafe.Add(ref vf, 13) = vf13;
-        Unsafe.Add(ref vf, 14) = vf14;
-        Unsafe.Add(ref vf, 15) = vf15;
+        { ref Vector128<float> fl_12 = ref Unsafe.Add(ref vf, 12); fl_12 = Ps2Vu0.BlendMask(fl_12, vf12, 0xEu); }
+        { ref Vector128<float> fl_13 = ref Unsafe.Add(ref vf, 13); fl_13 = Ps2Vu0.BlendMask(fl_13, vf13, 0xEu); }
+        { ref Vector128<float> fl_14 = ref Unsafe.Add(ref vf, 14); fl_14 = Ps2Vu0.BlendMask(fl_14, vf14, 0xEu); }
+        { ref Vector128<float> fl_15 = ref Unsafe.Add(ref vf, 15); fl_15 = Ps2Vu0.BlendMask(fl_15, vf15, 0xEu); }
         Unsafe.Add(ref vf, 16) = vf16;
         Unsafe.Add(ref vf, 17) = vf17;
         Unsafe.Add(ref vf, 18) = vf18;
@@ -16587,10 +16770,10 @@ internal static class Vu1AotPrograms
         Unsafe.Add(ref vf, 9) = vf9;
         Unsafe.Add(ref vf, 10) = vf10;
         Unsafe.Add(ref vf, 11) = vf11;
-        Unsafe.Add(ref vf, 12) = vf12;
-        Unsafe.Add(ref vf, 13) = vf13;
-        Unsafe.Add(ref vf, 14) = vf14;
-        Unsafe.Add(ref vf, 15) = vf15;
+        { ref Vector128<float> fl_12 = ref Unsafe.Add(ref vf, 12); fl_12 = Ps2Vu0.BlendMask(fl_12, vf12, 0xEu); }
+        { ref Vector128<float> fl_13 = ref Unsafe.Add(ref vf, 13); fl_13 = Ps2Vu0.BlendMask(fl_13, vf13, 0xEu); }
+        { ref Vector128<float> fl_14 = ref Unsafe.Add(ref vf, 14); fl_14 = Ps2Vu0.BlendMask(fl_14, vf14, 0xEu); }
+        { ref Vector128<float> fl_15 = ref Unsafe.Add(ref vf, 15); fl_15 = Ps2Vu0.BlendMask(fl_15, vf15, 0xEu); }
         Unsafe.Add(ref vf, 16) = vf16;
         Unsafe.Add(ref vf, 17) = vf17;
         Unsafe.Add(ref vf, 18) = vf18;
@@ -16635,10 +16818,10 @@ internal static class Vu1AotPrograms
         Unsafe.Add(ref vf, 9) = vf9;
         Unsafe.Add(ref vf, 10) = vf10;
         Unsafe.Add(ref vf, 11) = vf11;
-        Unsafe.Add(ref vf, 12) = vf12;
-        Unsafe.Add(ref vf, 13) = vf13;
-        Unsafe.Add(ref vf, 14) = vf14;
-        Unsafe.Add(ref vf, 15) = vf15;
+        { ref Vector128<float> fl_12 = ref Unsafe.Add(ref vf, 12); fl_12 = Ps2Vu0.BlendMask(fl_12, vf12, 0xEu); }
+        { ref Vector128<float> fl_13 = ref Unsafe.Add(ref vf, 13); fl_13 = Ps2Vu0.BlendMask(fl_13, vf13, 0xEu); }
+        { ref Vector128<float> fl_14 = ref Unsafe.Add(ref vf, 14); fl_14 = Ps2Vu0.BlendMask(fl_14, vf14, 0xEu); }
+        { ref Vector128<float> fl_15 = ref Unsafe.Add(ref vf, 15); fl_15 = Ps2Vu0.BlendMask(fl_15, vf15, 0xEu); }
         Unsafe.Add(ref vf, 16) = vf16;
         Unsafe.Add(ref vf, 17) = vf17;
         Unsafe.Add(ref vf, 18) = vf18;
@@ -16762,6 +16945,7 @@ internal static class Vu1AotPrograms
         steps += 14;
         if (btTmp) goto slot_452;
     slot_434:
+        if ((short)vi12 >= 3) Vu1AotFastLoops.RunLightingLoop_434(ref dm, vf1, vf2, vf3, vf4, vf5, vf6, vf7, vf8, vf9, ref vi10, ref vi11, ref vi12, vi13, vi14, ref steps);
         vf10 = Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, ((vi10 & 0x3FF)) << 4));
         acc = (vf2 * Ps2Vu0.BroadcastBc(vf10, 0u));
         vi10 = unchecked((ushort)(vi10 + vi14));
@@ -16798,10 +16982,10 @@ internal static class Vu1AotPrograms
         vf10 = Ps2Vu0.BlendMask(vf10, Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, (0x7) << 4)), 0xEu);
         vf11 = Ps2Vu0.BlendMask(vf11, Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, (0x8) << 4)), 0xEu);
         vi2 = vu.Top;
-        vf12 = Ps2Vu0.BlendMask(vf12, Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, (0x9) << 4)), 0xEu);
-        vf13 = Ps2Vu0.BlendMask(vf13, Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, (0x3B) << 4)), 0xEu);
-        vf14 = Ps2Vu0.BlendMask(vf14, Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, (0x3C) << 4)), 0xEu);
-        vf15 = Ps2Vu0.BlendMask(vf15, Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, (0x3D) << 4)), 0xEu);
+        vf12 = Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, (0x9) << 4));
+        vf13 = Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, (0x3B) << 4));
+        vf14 = Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, (0x3C) << 4));
+        vf15 = Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, (0x3D) << 4));
         vi3 = Unsafe.ReadUnaligned<ushort>(ref Unsafe.Add(ref dm, ((vi2 & 0x3FF)) << 4));
         vi4 = unchecked((ushort)(vi2 + 1u));
         vi5 = Unsafe.ReadUnaligned<ushort>(ref Unsafe.Add(ref dm, ((0x48) << 4) + 12));
@@ -16812,23 +16996,23 @@ internal static class Vu1AotPrograms
         vu.ClipFlags = 0x0u;
         steps += 15;
     slot_787:
-        vf21 = Ps2Vu0.BlendMask(vf21, Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, ((vi4 & 0x3FF)) << 4)), 0xEu);
+        vf21 = Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, ((vi4 & 0x3FF)) << 4));
         vf20 = vf16;
-        vf19 = Ps2Vu0.BlendMask(vf19, Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, ((((short)vi4 + (1)) & 0x3FF)) << 4)), 0xEu);
+        vf19 = Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, ((((short)vi4 + (1)) & 0x3FF)) << 4));
         vf16 = vf17;
         vi10 = unchecked((ushort)(((ushort)0) + 32767u));
-        vf17 = Ps2Vu0.BlendMask(vf17, Vector128.ConvertToSingle(vf21.AsInt32()), 0xEu);
+        vf17 = Vector128.ConvertToSingle(vf21.AsInt32());
         vi10 = unchecked((ushort)(vi10 + 1u));
         vu.ExecClip(vf20, vf20);
-        vf19 = Ps2Vu0.BlendMask(vf19, Vector128.ConvertToSingle(vf19.AsInt32()), 0xEu);
+        vf19 = Vector128.ConvertToSingle(vf19.AsInt32());
         vu.ExecClip(vf16, vf16);
         acc = (vf9 * Ps2Vu0.BroadcastBc(vf17, 0u));
         acc = FmaAdd(vf10, Ps2Vu0.BroadcastBc(vf17, 1u), acc);
         acc = FmaAdd(vf11, Ps2Vu0.BroadcastBc(vf17, 2u), acc);
-        vf17 = Ps2Vu0.BlendMask(vf17, (acc + vf12), 0xEu);
+        vf17 = (acc + vf12);
         acc = (vf13 * Ps2Vu0.BroadcastBc(vf19, 0u));
         acc = FmaAdd(vf14, Ps2Vu0.BroadcastBc(vf19, 1u), acc);
-        vf19 = Ps2Vu0.BlendMask(vf19, FmaAdd(vf15, Ps2Vu0.BroadcastBc(vf19, 2u), acc), 0xEu);
+        vf19 = FmaAdd(vf15, Ps2Vu0.BroadcastBc(vf19, 2u), acc);
         acc = (vf1 * Ps2Vu0.BroadcastBc(vf17, 0u));
         acc = FmaAdd(vf2, Ps2Vu0.BroadcastBc(vf17, 1u), acc);
         acc = FmaAdd(vf3, Ps2Vu0.BroadcastBc(vf17, 2u), acc);
@@ -17314,10 +17498,10 @@ internal static class Vu1AotPrograms
         Unsafe.Add(ref vf, 9) = vf9;
         Unsafe.Add(ref vf, 10) = vf10;
         Unsafe.Add(ref vf, 11) = vf11;
-        Unsafe.Add(ref vf, 12) = vf12;
-        Unsafe.Add(ref vf, 13) = vf13;
-        Unsafe.Add(ref vf, 14) = vf14;
-        Unsafe.Add(ref vf, 15) = vf15;
+        { ref Vector128<float> fl_12 = ref Unsafe.Add(ref vf, 12); fl_12 = Ps2Vu0.BlendMask(fl_12, vf12, 0xEu); }
+        { ref Vector128<float> fl_13 = ref Unsafe.Add(ref vf, 13); fl_13 = Ps2Vu0.BlendMask(fl_13, vf13, 0xEu); }
+        { ref Vector128<float> fl_14 = ref Unsafe.Add(ref vf, 14); fl_14 = Ps2Vu0.BlendMask(fl_14, vf14, 0xEu); }
+        { ref Vector128<float> fl_15 = ref Unsafe.Add(ref vf, 15); fl_15 = Ps2Vu0.BlendMask(fl_15, vf15, 0xEu); }
         Unsafe.Add(ref vf, 16) = vf16;
         Unsafe.Add(ref vf, 17) = vf17;
         Unsafe.Add(ref vf, 18) = vf18;
@@ -17434,10 +17618,10 @@ internal static class Vu1AotPrograms
         Unsafe.Add(ref vf, 9) = vf9;
         Unsafe.Add(ref vf, 10) = vf10;
         Unsafe.Add(ref vf, 11) = vf11;
-        Unsafe.Add(ref vf, 12) = vf12;
-        Unsafe.Add(ref vf, 13) = vf13;
-        Unsafe.Add(ref vf, 14) = vf14;
-        Unsafe.Add(ref vf, 15) = vf15;
+        { ref Vector128<float> fl_12 = ref Unsafe.Add(ref vf, 12); fl_12 = Ps2Vu0.BlendMask(fl_12, vf12, 0xEu); }
+        { ref Vector128<float> fl_13 = ref Unsafe.Add(ref vf, 13); fl_13 = Ps2Vu0.BlendMask(fl_13, vf13, 0xEu); }
+        { ref Vector128<float> fl_14 = ref Unsafe.Add(ref vf, 14); fl_14 = Ps2Vu0.BlendMask(fl_14, vf14, 0xEu); }
+        { ref Vector128<float> fl_15 = ref Unsafe.Add(ref vf, 15); fl_15 = Ps2Vu0.BlendMask(fl_15, vf15, 0xEu); }
         Unsafe.Add(ref vf, 16) = vf16;
         Unsafe.Add(ref vf, 17) = vf17;
         Unsafe.Add(ref vf, 18) = vf18;
@@ -17635,10 +17819,10 @@ internal static class Vu1AotPrograms
         Unsafe.Add(ref vf, 9) = vf9;
         Unsafe.Add(ref vf, 10) = vf10;
         Unsafe.Add(ref vf, 11) = vf11;
-        Unsafe.Add(ref vf, 12) = vf12;
-        Unsafe.Add(ref vf, 13) = vf13;
-        Unsafe.Add(ref vf, 14) = vf14;
-        Unsafe.Add(ref vf, 15) = vf15;
+        { ref Vector128<float> fl_12 = ref Unsafe.Add(ref vf, 12); fl_12 = Ps2Vu0.BlendMask(fl_12, vf12, 0xEu); }
+        { ref Vector128<float> fl_13 = ref Unsafe.Add(ref vf, 13); fl_13 = Ps2Vu0.BlendMask(fl_13, vf13, 0xEu); }
+        { ref Vector128<float> fl_14 = ref Unsafe.Add(ref vf, 14); fl_14 = Ps2Vu0.BlendMask(fl_14, vf14, 0xEu); }
+        { ref Vector128<float> fl_15 = ref Unsafe.Add(ref vf, 15); fl_15 = Ps2Vu0.BlendMask(fl_15, vf15, 0xEu); }
         Unsafe.Add(ref vf, 16) = vf16;
         Unsafe.Add(ref vf, 17) = vf17;
         Unsafe.Add(ref vf, 18) = vf18;
@@ -17774,10 +17958,10 @@ internal static class Vu1AotPrograms
         Unsafe.Add(ref vf, 9) = vf9;
         Unsafe.Add(ref vf, 10) = vf10;
         Unsafe.Add(ref vf, 11) = vf11;
-        Unsafe.Add(ref vf, 12) = vf12;
-        Unsafe.Add(ref vf, 13) = vf13;
-        Unsafe.Add(ref vf, 14) = vf14;
-        Unsafe.Add(ref vf, 15) = vf15;
+        { ref Vector128<float> fl_12 = ref Unsafe.Add(ref vf, 12); fl_12 = Ps2Vu0.BlendMask(fl_12, vf12, 0xEu); }
+        { ref Vector128<float> fl_13 = ref Unsafe.Add(ref vf, 13); fl_13 = Ps2Vu0.BlendMask(fl_13, vf13, 0xEu); }
+        { ref Vector128<float> fl_14 = ref Unsafe.Add(ref vf, 14); fl_14 = Ps2Vu0.BlendMask(fl_14, vf14, 0xEu); }
+        { ref Vector128<float> fl_15 = ref Unsafe.Add(ref vf, 15); fl_15 = Ps2Vu0.BlendMask(fl_15, vf15, 0xEu); }
         Unsafe.Add(ref vf, 16) = vf16;
         Unsafe.Add(ref vf, 17) = vf17;
         Unsafe.Add(ref vf, 18) = vf18;
@@ -17931,10 +18115,10 @@ internal static class Vu1AotPrograms
         Unsafe.Add(ref vf, 9) = vf9;
         Unsafe.Add(ref vf, 10) = vf10;
         Unsafe.Add(ref vf, 11) = vf11;
-        Unsafe.Add(ref vf, 12) = vf12;
-        Unsafe.Add(ref vf, 13) = vf13;
-        Unsafe.Add(ref vf, 14) = vf14;
-        Unsafe.Add(ref vf, 15) = vf15;
+        { ref Vector128<float> fl_12 = ref Unsafe.Add(ref vf, 12); fl_12 = Ps2Vu0.BlendMask(fl_12, vf12, 0xEu); }
+        { ref Vector128<float> fl_13 = ref Unsafe.Add(ref vf, 13); fl_13 = Ps2Vu0.BlendMask(fl_13, vf13, 0xEu); }
+        { ref Vector128<float> fl_14 = ref Unsafe.Add(ref vf, 14); fl_14 = Ps2Vu0.BlendMask(fl_14, vf14, 0xEu); }
+        { ref Vector128<float> fl_15 = ref Unsafe.Add(ref vf, 15); fl_15 = Ps2Vu0.BlendMask(fl_15, vf15, 0xEu); }
         Unsafe.Add(ref vf, 16) = vf16;
         Unsafe.Add(ref vf, 17) = vf17;
         Unsafe.Add(ref vf, 18) = vf18;
@@ -17979,10 +18163,10 @@ internal static class Vu1AotPrograms
         Unsafe.Add(ref vf, 9) = vf9;
         Unsafe.Add(ref vf, 10) = vf10;
         Unsafe.Add(ref vf, 11) = vf11;
-        Unsafe.Add(ref vf, 12) = vf12;
-        Unsafe.Add(ref vf, 13) = vf13;
-        Unsafe.Add(ref vf, 14) = vf14;
-        Unsafe.Add(ref vf, 15) = vf15;
+        { ref Vector128<float> fl_12 = ref Unsafe.Add(ref vf, 12); fl_12 = Ps2Vu0.BlendMask(fl_12, vf12, 0xEu); }
+        { ref Vector128<float> fl_13 = ref Unsafe.Add(ref vf, 13); fl_13 = Ps2Vu0.BlendMask(fl_13, vf13, 0xEu); }
+        { ref Vector128<float> fl_14 = ref Unsafe.Add(ref vf, 14); fl_14 = Ps2Vu0.BlendMask(fl_14, vf14, 0xEu); }
+        { ref Vector128<float> fl_15 = ref Unsafe.Add(ref vf, 15); fl_15 = Ps2Vu0.BlendMask(fl_15, vf15, 0xEu); }
         Unsafe.Add(ref vf, 16) = vf16;
         Unsafe.Add(ref vf, 17) = vf17;
         Unsafe.Add(ref vf, 18) = vf18;
@@ -18106,6 +18290,7 @@ internal static class Vu1AotPrograms
         steps += 14;
         if (btTmp) goto slot_452;
     slot_434:
+        if ((short)vi12 >= 3) Vu1AotFastLoops.RunLightingLoop_434(ref dm, vf1, vf2, vf3, vf4, vf5, vf6, vf7, vf8, vf9, ref vi10, ref vi11, ref vi12, vi13, vi14, ref steps);
         vf10 = Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, ((vi10 & 0x3FF)) << 4));
         acc = (vf2 * Ps2Vu0.BroadcastBc(vf10, 0u));
         vi10 = unchecked((ushort)(vi10 + vi14));
@@ -18137,23 +18322,23 @@ internal static class Vu1AotPrograms
             default: goto exit_stepcap;
         }
     slot_787:
-        vf21 = Ps2Vu0.BlendMask(vf21, Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, ((vi4 & 0x3FF)) << 4)), 0xEu);
+        vf21 = Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, ((vi4 & 0x3FF)) << 4));
         vf20 = vf16;
-        vf19 = Ps2Vu0.BlendMask(vf19, Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, ((((short)vi4 + (1)) & 0x3FF)) << 4)), 0xEu);
+        vf19 = Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, ((((short)vi4 + (1)) & 0x3FF)) << 4));
         vf16 = vf17;
         vi10 = unchecked((ushort)(((ushort)0) + 32767u));
-        vf17 = Ps2Vu0.BlendMask(vf17, Vector128.ConvertToSingle(vf21.AsInt32()), 0xEu);
+        vf17 = Vector128.ConvertToSingle(vf21.AsInt32());
         vi10 = unchecked((ushort)(vi10 + 1u));
         vu.ExecClip(vf20, vf20);
-        vf19 = Ps2Vu0.BlendMask(vf19, Vector128.ConvertToSingle(vf19.AsInt32()), 0xEu);
+        vf19 = Vector128.ConvertToSingle(vf19.AsInt32());
         vu.ExecClip(vf16, vf16);
         acc = (vf9 * Ps2Vu0.BroadcastBc(vf17, 0u));
         acc = FmaAdd(vf10, Ps2Vu0.BroadcastBc(vf17, 1u), acc);
         acc = FmaAdd(vf11, Ps2Vu0.BroadcastBc(vf17, 2u), acc);
-        vf17 = Ps2Vu0.BlendMask(vf17, (acc + vf12), 0xEu);
+        vf17 = (acc + vf12);
         acc = (vf13 * Ps2Vu0.BroadcastBc(vf19, 0u));
         acc = FmaAdd(vf14, Ps2Vu0.BroadcastBc(vf19, 1u), acc);
-        vf19 = Ps2Vu0.BlendMask(vf19, FmaAdd(vf15, Ps2Vu0.BroadcastBc(vf19, 2u), acc), 0xEu);
+        vf19 = FmaAdd(vf15, Ps2Vu0.BroadcastBc(vf19, 2u), acc);
         acc = (vf1 * Ps2Vu0.BroadcastBc(vf17, 0u));
         acc = FmaAdd(vf2, Ps2Vu0.BroadcastBc(vf17, 1u), acc);
         acc = FmaAdd(vf3, Ps2Vu0.BroadcastBc(vf17, 2u), acc);
@@ -19369,6 +19554,7 @@ internal static class Vu1AotPrograms
         ushort vi15 = Unsafe.Add(ref vi, 15);
         float regQ = vu.Q;
         float regI = vu.I;
+        ushort macFlags = vu.MacFlags;
         goto slot_1154;
     slot_420:
         vf5 = SanitizeFloatMask(Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, (0x38) << 4)), 0xE);
@@ -19400,6 +19586,7 @@ internal static class Vu1AotPrograms
         steps += 14;
         if (btTmp) goto slot_452;
     slot_434:
+        if ((short)vi12 >= 3) Vu1AotFastLoops.RunLightingLoop_434(ref dm, vf1, vf2, vf3, vf4, vf5, vf6, vf7, vf8, vf9, ref vi10, ref vi11, ref vi12, vi13, vi14, ref steps);
         vf10 = Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, ((vi10 & 0x3FF)) << 4));
         acc = (vf2 * Ps2Vu0.BroadcastBc(vf10, 0u));
         vi10 = unchecked((ushort)(vi10 + vi14));
@@ -19440,65 +19627,65 @@ internal static class Vu1AotPrograms
         vf2 = SanitizeFloat(Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, (0x44) << 4)));
         vf3 = Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, (0x45) << 4));
         vf4 = Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, (0x46) << 4));
-        vf5 = Ps2Vu0.BlendMask(vf5, Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, (0x6) << 4)), 0xEu);
-        vf6 = Ps2Vu0.BlendMask(vf6, Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, (0x7) << 4)), 0xEu);
+        vf5 = Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, (0x6) << 4));
+        vf6 = Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, (0x7) << 4));
         vf7 = Ps2Vu0.BlendMask(vf7, Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, (0x8) << 4)), 0xEu);
         vf8 = Ps2Vu0.BlendMask(vf8, Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, (0x9) << 4)), 0xEu);
         vf9 = Ps2Vu0.BlendMask(vf9, Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, (0x3B) << 4)), 0xEu);
         vf10 = Ps2Vu0.BlendMask(vf10, Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, (0x3C) << 4)), 0xEu);
         vf11 = Ps2Vu0.BlendMask(vf11, Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, (0x3D) << 4)), 0xEu);
         vf14 = SanitizeFloat(Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, (0x5) << 4)));
-        vf12 = Ps2Vu0.BlendMask(vf12, Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, (0x2) << 4)), 0xEu);
-        vf13 = Ps2Vu0.BlendMask(vf13, Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, (0x3) << 4)), 0xEu);
+        vf12 = Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, (0x2) << 4));
+        vf13 = Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, (0x3) << 4));
         vi5 = unchecked((ushort)(((ushort)0) + 0u));
         vf14 = Vu1State.ExecFtoi0(vf14);
         vi6 = unchecked((ushort)(((ushort)0) + 0u));
         steps += 21;
     slot_1175:
         vi8 = Unsafe.ReadUnaligned<ushort>(ref Unsafe.Add(ref dm, (((((short)vi4 + (5)) & 0x3FF)) << 4) + 12));
-        vf17 = Ps2Vu0.BlendMask(vf17, Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, ((((short)vi4 + (5)) & 0x3FF)) << 4)), 0xEu);
+        vf17 = Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, ((((short)vi4 + (5)) & 0x3FF)) << 4));
         vf15 = Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, ((vi4 & 0x3FF)) << 4));
         vi7 = Unsafe.ReadUnaligned<ushort>(ref Unsafe.Add(ref dm, (((((short)vi4 + (6)) & 0x3FF)) << 4) + 12));
-        vf16 = Ps2Vu0.BlendMask(vf16, Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, ((((short)vi4 + (6)) & 0x3FF)) << 4)), 0xEu);
-        vf17 = Ps2Vu0.BlendMask(vf17, Vector128.ConvertToSingle(vf17.AsInt32()), 0xEu);
+        vf16 = Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, ((((short)vi4 + (6)) & 0x3FF)) << 4));
+        vf17 = Vector128.ConvertToSingle(vf17.AsInt32());
         vf5 = Ps2Vu0.BlendMask(vf5, SanitizeFloatMask(Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, ((((short)vi8 + (931)) & 0x3FF)) << 4)), 0x1), 0x1u);
         vi8 = Unsafe.ReadUnaligned<ushort>(ref Unsafe.Add(ref dm, (((((short)vi4 + (7)) & 0x3FF)) << 4) + 12));
         vf15 = Vector128.ConvertToSingle(vf15.AsInt32());
-        vf18 = Ps2Vu0.BlendMask(vf18, Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, ((((short)vi4 + (7)) & 0x3FF)) << 4)), 0xEu);
-        vf16 = Ps2Vu0.BlendMask(vf16, Vector128.ConvertToSingle(vf16.AsInt32()), 0xEu);
+        vf18 = Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, ((((short)vi4 + (7)) & 0x3FF)) << 4));
+        vf16 = Vector128.ConvertToSingle(vf16.AsInt32());
         vf6 = Ps2Vu0.BlendMask(vf6, Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, ((((short)vi7 + (931)) & 0x3FF)) << 4)), 0x1u);
-        vf20 = Ps2Vu0.BlendMask(vf20, (vf17 * Ps2Vu0.BroadcastBc(vf5, 3u)), 0xEu);
-        vf17 = Ps2Vu0.BlendMask(vf17, Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, ((((short)vi4 + (8)) & 0x3FF)) << 4)), 0xEu);
-        vf18 = Ps2Vu0.BlendMask(vf18, Vector128.ConvertToSingle(vf18.AsInt32()), 0xEu);
+        vf20 = (vf17 * Ps2Vu0.BroadcastBc(vf5, 3u));
+        vf17 = Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, ((((short)vi4 + (8)) & 0x3FF)) << 4));
+        vf18 = Vector128.ConvertToSingle(vf18.AsInt32());
         vf5 = Ps2Vu0.BlendMask(vf5, SanitizeFloatMask(Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, ((((short)vi8 + (931)) & 0x3FF)) << 4)), 0x1), 0x1u);
-        vf19 = Ps2Vu0.BlendMask(vf19, (vf16 * Ps2Vu0.BroadcastBc(vf6, 3u)), 0xEu);
+        vf19 = (vf16 * Ps2Vu0.BroadcastBc(vf6, 3u));
         vi8 = Unsafe.ReadUnaligned<ushort>(ref Unsafe.Add(ref dm, (((((short)vi4 + (8)) & 0x3FF)) << 4) + 12));
-        vf20 = Ps2Vu0.BlendMask(vf20, (vf15 + vf20), 0xEu);
-        vf21 = Ps2Vu0.BlendMask(vf21, Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, ((((short)vi4 + (1)) & 0x3FF)) << 4)), 0xEu);
-        vf18 = Ps2Vu0.BlendMask(vf18, (vf18 * Ps2Vu0.BroadcastBc(vf5, 3u)), 0xEu);
+        vf20 = (vf15 + vf20);
+        vf21 = Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, ((((short)vi4 + (1)) & 0x3FF)) << 4));
+        vf18 = (vf18 * Ps2Vu0.BroadcastBc(vf5, 3u));
         vf15 = Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, ((((short)vi4 + (2)) & 0x3FF)) << 4));
-        vf17 = Ps2Vu0.BlendMask(vf17, Vector128.ConvertToSingle(vf17.AsInt32()), 0xEu);
+        vf17 = Vector128.ConvertToSingle(vf17.AsInt32());
         vf5 = Ps2Vu0.BlendMask(vf5, Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, ((((short)vi8 + (931)) & 0x3FF)) << 4)), 0x1u);
-        vf19 = Ps2Vu0.BlendMask(vf19, (vf20 + vf19), 0xEu);
+        vf19 = (vf20 + vf19);
         vi7 = Unsafe.ReadUnaligned<ushort>(ref Unsafe.Add(ref dm, (((vi4 & 0x3FF)) << 4) + 12));
-        vf16 = Ps2Vu0.BlendMask(vf16, Vector128.ConvertToSingle(vf21.AsInt32()), 0xEu);
+        vf16 = Vector128.ConvertToSingle(vf21.AsInt32());
         Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, ((((short)vi3 + (4)) & 0x3FF)) << 4)) = vf14;
         vf15 = Vu1State.ExecItof(vf15, 12);
-        vf17 = Ps2Vu0.BlendMask(vf17, (vf17 * Ps2Vu0.BroadcastBc(vf5, 3u)), 0xEu);
-        vf19 = Ps2Vu0.BlendMask(vf19, (vf19 + vf18), 0xEu);
+        vf17 = (vf17 * Ps2Vu0.BroadcastBc(vf5, 3u));
+        vf19 = (vf19 + vf18);
         vi5 = (ushort)(vi5 | vi7);
         acc = (vf9 * Ps2Vu0.BroadcastBc(vf16, 0u));
         vi7 = unchecked((ushort)(vi6 + 0u));
         acc = FmaAdd(vf10, Ps2Vu0.BroadcastBc(vf16, 1u), acc);
         Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, ((((short)vi4 + (2)) & 0x3FF)) << 4)) = vf15;
-        vf18 = Ps2Vu0.BlendMask(vf18, FmaAdd(vf11, Ps2Vu0.BroadcastBc(vf16, 2u), acc), 0xEu);
+        vf18 = FmaAdd(vf11, Ps2Vu0.BroadcastBc(vf16, 2u), acc);
         vf15 = Ps2Vu0.BlendMask(vf15, Vf0Mr32, 0x3u);
-        vf16 = Ps2Vu0.BlendMask(vf16, (vf19 + vf17), 0xEu);
+        vf16 = (vf19 + vf17);
         vi6 = unchecked((ushort)(((ushort)0) + 17u));
         acc = (vf5 * Ps2Vu0.BroadcastBc(vf16, 0u));
         acc = FmaAdd(vf6, Ps2Vu0.BroadcastBc(vf16, 1u), acc);
         acc = FmaAdd(vf7, Ps2Vu0.BroadcastBc(vf16, 2u), acc);
-        vf16 = Ps2Vu0.BlendMask(vf16, (acc + vf8), 0xEu);
+        vf16 = (acc + vf8);
         acc = (vf1 * Ps2Vu0.BroadcastBc(vf16, 0u));
         acc = FmaAdd(vf2, Ps2Vu0.BroadcastBc(vf16, 1u), acc);
         acc = FmaAdd(vf3, Ps2Vu0.BroadcastBc(vf16, 2u), acc);
@@ -19508,16 +19695,16 @@ internal static class Vu1AotPrograms
         regQ = Vu1State.VuDivFast(1.0f, vf16.GetElement(3));
         vf16 = Ps2Vu0.BlendMask(vf16, Vf0, 0x1u);
         tmp = (vf16 * Vector128.Create(regQ));
-        vu.UpdateMacFlagsOnly(tmp, 0xFu);
+        macFlags = Vu1State.ComputeMacFlagsOnly(tmp, 0xFu);
         vf16 = tmp;
         vi4 = unchecked((ushort)(vi4 + 9u));
-        vf17 = Ps2Vu0.BlendMask(vf17, VuMax(vf16, vf12), 0xEu);
+        vf17 = VuMax(vf16, vf12);
         vi3 = unchecked((ushort)(vi3 + 3u));
         vf16 = (vf15 * Vector128.Create(regQ));
         vi1 = unchecked((ushort)(vi1 - 1u));
         vf15 = Ps2Vu0.BlendMask(vf15, VuMin(vf17, vf13), 0xEu);
         { ref byte sq_1215 = ref Unsafe.Add(ref dm, ((((short)vi4 + (-8)) & 0x3FF)) << 4); Unsafe.WriteUnaligned(ref sq_1215, vf18.AsUInt64().GetElement(0)); Unsafe.WriteUnaligned(ref Unsafe.Add(ref sq_1215, 8), vf18.GetElement(2)); }
-        vi6 = (ushort)(vu.MacFlags & vi6);
+        vi6 = (ushort)(macFlags & vi6);
         vi6 = unchecked((ushort)(vi6 + 32767u));
         vi8 = (ushort)(vi5 | vi6);
         vf15 = Ps2Vu0.BlendMask(vf15, Vu1State.ExecFtoi(vf15, 4), 0xEu);
@@ -19597,16 +19784,16 @@ internal static class Vu1AotPrograms
         Unsafe.Add(ref vf, 9) = vf9;
         Unsafe.Add(ref vf, 10) = vf10;
         Unsafe.Add(ref vf, 11) = vf11;
-        Unsafe.Add(ref vf, 12) = vf12;
-        Unsafe.Add(ref vf, 13) = vf13;
+        { ref Vector128<float> fl_12 = ref Unsafe.Add(ref vf, 12); fl_12 = Ps2Vu0.BlendMask(fl_12, vf12, 0xEu); }
+        { ref Vector128<float> fl_13 = ref Unsafe.Add(ref vf, 13); fl_13 = Ps2Vu0.BlendMask(fl_13, vf13, 0xEu); }
         Unsafe.Add(ref vf, 14) = vf14;
         Unsafe.Add(ref vf, 15) = vf15;
         Unsafe.Add(ref vf, 16) = vf16;
-        Unsafe.Add(ref vf, 17) = vf17;
-        Unsafe.Add(ref vf, 18) = vf18;
-        Unsafe.Add(ref vf, 19) = vf19;
-        Unsafe.Add(ref vf, 20) = vf20;
-        Unsafe.Add(ref vf, 21) = vf21;
+        { ref Vector128<float> fl_17 = ref Unsafe.Add(ref vf, 17); fl_17 = Ps2Vu0.BlendMask(fl_17, vf17, 0xEu); }
+        { ref Vector128<float> fl_18 = ref Unsafe.Add(ref vf, 18); fl_18 = Ps2Vu0.BlendMask(fl_18, vf18, 0xEu); }
+        { ref Vector128<float> fl_19 = ref Unsafe.Add(ref vf, 19); fl_19 = Ps2Vu0.BlendMask(fl_19, vf19, 0xEu); }
+        { ref Vector128<float> fl_20 = ref Unsafe.Add(ref vf, 20); fl_20 = Ps2Vu0.BlendMask(fl_20, vf20, 0xEu); }
+        { ref Vector128<float> fl_21 = ref Unsafe.Add(ref vf, 21); fl_21 = Ps2Vu0.BlendMask(fl_21, vf21, 0xEu); }
         Unsafe.Add(ref vi, 1) = vi1;
         Unsafe.Add(ref vi, 2) = vi2;
         Unsafe.Add(ref vi, 3) = vi3;
@@ -19623,6 +19810,7 @@ internal static class Vu1AotPrograms
         Unsafe.Add(ref vi, 15) = vi15;
         vu.Q = regQ;
         vu.I = regI;
+        vu.MacFlags = macFlags;
         Sub_Base1_0898(vu, ref steps, ref acc, true);
         if (steps >= 65536) { vu.ACC = acc; vu.TotalInstructionsExecuted += steps; return; }
         vf1 = Unsafe.Add(ref vf, 1);
@@ -19662,6 +19850,7 @@ internal static class Vu1AotPrograms
         vi15 = Unsafe.Add(ref vi, 15);
         regQ = vu.Q;
         regI = vu.I;
+        macFlags = vu.MacFlags;
     slot_1573:
         vi1 = Unsafe.ReadUnaligned<ushort>(ref Unsafe.Add(ref dm, ((0x48) << 4) + 12));
         vi3 = Unsafe.ReadUnaligned<ushort>(ref Unsafe.Add(ref dm, ((vi2 & 0x3FF)) << 4));
@@ -19721,16 +19910,16 @@ internal static class Vu1AotPrograms
         Unsafe.Add(ref vf, 9) = vf9;
         Unsafe.Add(ref vf, 10) = vf10;
         Unsafe.Add(ref vf, 11) = vf11;
-        Unsafe.Add(ref vf, 12) = vf12;
-        Unsafe.Add(ref vf, 13) = vf13;
+        { ref Vector128<float> fl_12 = ref Unsafe.Add(ref vf, 12); fl_12 = Ps2Vu0.BlendMask(fl_12, vf12, 0xEu); }
+        { ref Vector128<float> fl_13 = ref Unsafe.Add(ref vf, 13); fl_13 = Ps2Vu0.BlendMask(fl_13, vf13, 0xEu); }
         Unsafe.Add(ref vf, 14) = vf14;
         Unsafe.Add(ref vf, 15) = vf15;
         Unsafe.Add(ref vf, 16) = vf16;
-        Unsafe.Add(ref vf, 17) = vf17;
-        Unsafe.Add(ref vf, 18) = vf18;
-        Unsafe.Add(ref vf, 19) = vf19;
-        Unsafe.Add(ref vf, 20) = vf20;
-        Unsafe.Add(ref vf, 21) = vf21;
+        { ref Vector128<float> fl_17 = ref Unsafe.Add(ref vf, 17); fl_17 = Ps2Vu0.BlendMask(fl_17, vf17, 0xEu); }
+        { ref Vector128<float> fl_18 = ref Unsafe.Add(ref vf, 18); fl_18 = Ps2Vu0.BlendMask(fl_18, vf18, 0xEu); }
+        { ref Vector128<float> fl_19 = ref Unsafe.Add(ref vf, 19); fl_19 = Ps2Vu0.BlendMask(fl_19, vf19, 0xEu); }
+        { ref Vector128<float> fl_20 = ref Unsafe.Add(ref vf, 20); fl_20 = Ps2Vu0.BlendMask(fl_20, vf20, 0xEu); }
+        { ref Vector128<float> fl_21 = ref Unsafe.Add(ref vf, 21); fl_21 = Ps2Vu0.BlendMask(fl_21, vf21, 0xEu); }
         Unsafe.Add(ref vi, 1) = vi1;
         Unsafe.Add(ref vi, 2) = vi2;
         Unsafe.Add(ref vi, 3) = vi3;
@@ -19747,6 +19936,7 @@ internal static class Vu1AotPrograms
         Unsafe.Add(ref vi, 15) = vi15;
         vu.Q = regQ;
         vu.I = regI;
+        vu.MacFlags = macFlags;
         Sub_Base1_0898(vu, ref steps, ref acc, true);
         if (steps >= 65536) { vu.ACC = acc; vu.TotalInstructionsExecuted += steps; return; }
         vf1 = Unsafe.Add(ref vf, 1);
@@ -19786,6 +19976,7 @@ internal static class Vu1AotPrograms
         vi15 = Unsafe.Add(ref vi, 15);
         regQ = vu.Q;
         regI = vu.I;
+        macFlags = vu.MacFlags;
         steps += 2;
         goto slot_1636;
     slot_1617:
@@ -19863,16 +20054,16 @@ internal static class Vu1AotPrograms
         Unsafe.Add(ref vf, 9) = vf9;
         Unsafe.Add(ref vf, 10) = vf10;
         Unsafe.Add(ref vf, 11) = vf11;
-        Unsafe.Add(ref vf, 12) = vf12;
-        Unsafe.Add(ref vf, 13) = vf13;
+        { ref Vector128<float> fl_12 = ref Unsafe.Add(ref vf, 12); fl_12 = Ps2Vu0.BlendMask(fl_12, vf12, 0xEu); }
+        { ref Vector128<float> fl_13 = ref Unsafe.Add(ref vf, 13); fl_13 = Ps2Vu0.BlendMask(fl_13, vf13, 0xEu); }
         Unsafe.Add(ref vf, 14) = vf14;
         Unsafe.Add(ref vf, 15) = vf15;
         Unsafe.Add(ref vf, 16) = vf16;
-        Unsafe.Add(ref vf, 17) = vf17;
-        Unsafe.Add(ref vf, 18) = vf18;
-        Unsafe.Add(ref vf, 19) = vf19;
-        Unsafe.Add(ref vf, 20) = vf20;
-        Unsafe.Add(ref vf, 21) = vf21;
+        { ref Vector128<float> fl_17 = ref Unsafe.Add(ref vf, 17); fl_17 = Ps2Vu0.BlendMask(fl_17, vf17, 0xEu); }
+        { ref Vector128<float> fl_18 = ref Unsafe.Add(ref vf, 18); fl_18 = Ps2Vu0.BlendMask(fl_18, vf18, 0xEu); }
+        { ref Vector128<float> fl_19 = ref Unsafe.Add(ref vf, 19); fl_19 = Ps2Vu0.BlendMask(fl_19, vf19, 0xEu); }
+        { ref Vector128<float> fl_20 = ref Unsafe.Add(ref vf, 20); fl_20 = Ps2Vu0.BlendMask(fl_20, vf20, 0xEu); }
+        { ref Vector128<float> fl_21 = ref Unsafe.Add(ref vf, 21); fl_21 = Ps2Vu0.BlendMask(fl_21, vf21, 0xEu); }
         Unsafe.Add(ref vi, 1) = vi1;
         Unsafe.Add(ref vi, 2) = vi2;
         Unsafe.Add(ref vi, 3) = vi3;
@@ -19889,6 +20080,7 @@ internal static class Vu1AotPrograms
         Unsafe.Add(ref vi, 15) = vi15;
         vu.Q = regQ;
         vu.I = regI;
+        vu.MacFlags = macFlags;
         vu.ACC = acc;
         vu.Tpc = 0x33B0;
         vu.TotalInstructionsExecuted += steps;
@@ -19905,16 +20097,16 @@ internal static class Vu1AotPrograms
         Unsafe.Add(ref vf, 9) = vf9;
         Unsafe.Add(ref vf, 10) = vf10;
         Unsafe.Add(ref vf, 11) = vf11;
-        Unsafe.Add(ref vf, 12) = vf12;
-        Unsafe.Add(ref vf, 13) = vf13;
+        { ref Vector128<float> fl_12 = ref Unsafe.Add(ref vf, 12); fl_12 = Ps2Vu0.BlendMask(fl_12, vf12, 0xEu); }
+        { ref Vector128<float> fl_13 = ref Unsafe.Add(ref vf, 13); fl_13 = Ps2Vu0.BlendMask(fl_13, vf13, 0xEu); }
         Unsafe.Add(ref vf, 14) = vf14;
         Unsafe.Add(ref vf, 15) = vf15;
         Unsafe.Add(ref vf, 16) = vf16;
-        Unsafe.Add(ref vf, 17) = vf17;
-        Unsafe.Add(ref vf, 18) = vf18;
-        Unsafe.Add(ref vf, 19) = vf19;
-        Unsafe.Add(ref vf, 20) = vf20;
-        Unsafe.Add(ref vf, 21) = vf21;
+        { ref Vector128<float> fl_17 = ref Unsafe.Add(ref vf, 17); fl_17 = Ps2Vu0.BlendMask(fl_17, vf17, 0xEu); }
+        { ref Vector128<float> fl_18 = ref Unsafe.Add(ref vf, 18); fl_18 = Ps2Vu0.BlendMask(fl_18, vf18, 0xEu); }
+        { ref Vector128<float> fl_19 = ref Unsafe.Add(ref vf, 19); fl_19 = Ps2Vu0.BlendMask(fl_19, vf19, 0xEu); }
+        { ref Vector128<float> fl_20 = ref Unsafe.Add(ref vf, 20); fl_20 = Ps2Vu0.BlendMask(fl_20, vf20, 0xEu); }
+        { ref Vector128<float> fl_21 = ref Unsafe.Add(ref vf, 21); fl_21 = Ps2Vu0.BlendMask(fl_21, vf21, 0xEu); }
         Unsafe.Add(ref vi, 1) = vi1;
         Unsafe.Add(ref vi, 2) = vi2;
         Unsafe.Add(ref vi, 3) = vi3;
@@ -19931,6 +20123,7 @@ internal static class Vu1AotPrograms
         Unsafe.Add(ref vi, 15) = vi15;
         vu.Q = regQ;
         vu.I = regI;
+        vu.MacFlags = macFlags;
         vu.ACC = acc;
         vu.TotalInstructionsExecuted += steps;
         return;
@@ -19997,6 +20190,9 @@ internal static class Vu1AotPrograms
         ushort vi15 = Unsafe.Add(ref vi, 15);
         float regQ = vu.Q;
         float regI = vu.I;
+        float regP = vu.P;
+        float regPendingP = vu.PendingP; _ = regPendingP;
+        ushort macFlags = vu.MacFlags;
         goto slot_1226;
     slot_420:
         vf5 = SanitizeFloatMask(Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, (0x38) << 4)), 0xE);
@@ -20028,6 +20224,7 @@ internal static class Vu1AotPrograms
         steps += 14;
         if (btTmp) goto slot_452;
     slot_434:
+        if ((short)vi12 >= 3) Vu1AotFastLoops.RunLightingLoop_434(ref dm, vf1, vf2, vf3, vf4, vf5, vf6, vf7, vf8, vf9, ref vi10, ref vi11, ref vi12, vi13, vi14, ref steps);
         vf10 = Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, ((vi10 & 0x3FF)) << 4));
         acc = (vf2 * Ps2Vu0.BroadcastBc(vf10, 0u));
         vi10 = unchecked((ushort)(vi10 + vi14));
@@ -20062,7 +20259,7 @@ internal static class Vu1AotPrograms
         vi2 = vu.Top;
         vi4 = unchecked((ushort)(vi2 + 1u));
         vi1 = Unsafe.ReadUnaligned<ushort>(ref Unsafe.Add(ref dm, ((vi2 & 0x3FF)) << 4));
-        vf2 = Ps2Vu0.BlendMask(vf2, SanitizeFloatMask(Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, (0x7) << 4)), 0xE), 0xEu);
+        vf2 = SanitizeFloatMask(Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, (0x7) << 4)), 0xE);
         vf3 = Ps2Vu0.BlendMask(vf3, Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, (0x8) << 4)), 0xEu);
         vf4 = Ps2Vu0.BlendMask(vf4, Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, (0x9) << 4)), 0xEu);
         vf5 = Ps2Vu0.BlendMask(vf5, Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, (0xA) << 4)), 0xEu);
@@ -20072,24 +20269,24 @@ internal static class Vu1AotPrograms
         vf9 = Ps2Vu0.BlendMask(vf9, Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, (0xE) << 4)), 0xEu);
         vf10 = Ps2Vu0.BlendMask(vf10, Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, (0xF) << 4)), 0xEu);
         vf11 = Ps2Vu0.BlendMask(vf11, Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, (0x10) << 4)), 0xEu);
-        vf12 = Ps2Vu0.BlendMask(vf12, Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, (0x11) << 4)), 0xEu);
-        vf13 = Ps2Vu0.BlendMask(vf13, Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, (0x12) << 4)), 0xEu);
-        vf14 = Ps2Vu0.BlendMask(vf14, Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, (0x13) << 4)), 0xEu);
-        vf15 = Ps2Vu0.BlendMask(vf15, Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, (0x14) << 4)), 0xEu);
+        vf12 = Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, (0x11) << 4));
+        vf13 = Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, (0x12) << 4));
+        vf14 = Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, (0x13) << 4));
+        vf15 = Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, (0x14) << 4));
         regI = BitConverter.UInt32BitsToSingle(0x3B808081u);
-        vf16 = Ps2Vu0.BlendMask(vf16, Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, (0x15) << 4)), 0xEu);
+        vf16 = Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, (0x15) << 4));
         vi5 = unchecked((ushort)(((ushort)0) + 31u));
         vf18 = Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, (0x43) << 4));
         vf19 = Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, (0x44) << 4));
         vf20 = Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, (0x45) << 4));
         vf21 = Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, (0x46) << 4));
-        vf22 = Ps2Vu0.BlendMask(vf22, Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, (0x2) << 4)), 0xEu);
-        vf23 = Ps2Vu0.BlendMask(vf23, Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, (0x3) << 4)), 0xEu);
+        vf22 = Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, (0x2) << 4));
+        vf23 = Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, (0x3) << 4));
         vi6 = unchecked((ushort)(((ushort)0) + 0u));
         vf24 = SanitizeFloat(Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, (0x5) << 4)));
         vi3 = Unsafe.ReadUnaligned<ushort>(ref Unsafe.Add(ref dm, (0x39) << 4));
         vi7 = unchecked((ushort)(((ushort)0) + 16384u));
-        vf1 = Ps2Vu0.BlendMask(vf1, SanitizeFloatMask(Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, (0x6) << 4)), 0xE), 0xEu);
+        vf1 = SanitizeFloatMask(Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, (0x6) << 4)), 0xE);
         vi14 = unchecked((ushort)(((ushort)0) + 9u));
         vi8 = (ushort)(vi3 & vi7);
         vi3 = Unsafe.ReadUnaligned<ushort>(ref Unsafe.Add(ref dm, ((0x48) << 4) + 12));
@@ -20105,38 +20302,38 @@ internal static class Vu1AotPrograms
         vf17 = Ps2Vu0.BlendMask(vf17, Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, ((((short)vi4 + (6)) & 0x3FF)) << 4)), 0xEu);
         vi8 = Unsafe.ReadUnaligned<ushort>(ref Unsafe.Add(ref dm, (((((short)vi4 + (6)) & 0x3FF)) << 4) + 12));
         vf25 = Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, ((vi4 & 0x3FF)) << 4));
-        vf27 = Ps2Vu0.BlendMask(vf27, Vector128.ConvertToSingle(vf26.AsInt32()), 0xEu);
+        vf27 = Vector128.ConvertToSingle(vf26.AsInt32());
         vf2 = Ps2Vu0.BlendMask(vf2, SanitizeFloatMask(Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, ((((short)vi9 + (931)) & 0x3FF)) << 4)), 0x1), 0x1u);
         vf26 = Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, ((((short)vi4 + (7)) & 0x3FF)) << 4));
         vf17 = Ps2Vu0.BlendMask(vf17, Vector128.ConvertToSingle(vf17.AsInt32()), 0xEu);
         vf1 = Ps2Vu0.BlendMask(vf1, SanitizeFloatMask(Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, ((((short)vi8 + (931)) & 0x3FF)) << 4)), 0x1), 0x1u);
         vf25 = Vector128.ConvertToSingle(vf25.AsInt32());
         vi9 = Unsafe.ReadUnaligned<ushort>(ref Unsafe.Add(ref dm, (((((short)vi4 + (7)) & 0x3FF)) << 4) + 12));
-        vf29 = Ps2Vu0.BlendMask(vf29, (vf27 * Ps2Vu0.BroadcastBc(vf2, 3u)), 0xEu);
+        vf29 = (vf27 * Ps2Vu0.BroadcastBc(vf2, 3u));
         vi8 = Unsafe.ReadUnaligned<ushort>(ref Unsafe.Add(ref dm, (((((short)vi4 + (8)) & 0x3FF)) << 4) + 12));
-        vf27 = Ps2Vu0.BlendMask(vf27, Vector128.ConvertToSingle(vf26.AsInt32()), 0xEu);
+        vf27 = Vector128.ConvertToSingle(vf26.AsInt32());
         vf28 = Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, ((((short)vi4 + (8)) & 0x3FF)) << 4));
         vf17 = Ps2Vu0.BlendMask(vf17, (vf17 * Ps2Vu0.BroadcastBc(vf1, 3u)), 0xEu);
         vf2 = Ps2Vu0.BlendMask(vf2, SanitizeFloatMask(Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, ((((short)vi9 + (931)) & 0x3FF)) << 4)), 0x1), 0x1u);
         vf25 = (vf25 + vf29);
         vi9 = Unsafe.ReadUnaligned<ushort>(ref Unsafe.Add(ref dm, (((vi4 & 0x3FF)) << 4) + 12));
         vf26 = Vector128.ConvertToSingle(vf28.AsInt32());
-        vf29 = Ps2Vu0.BlendMask(vf29, Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, ((((short)vi4 + (1)) & 0x3FF)) << 4)), 0xEu);
+        vf29 = Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, ((((short)vi4 + (1)) & 0x3FF)) << 4));
         vf28 = (vf27 * Ps2Vu0.BroadcastBc(vf2, 3u));
         vf1 = Ps2Vu0.BlendMask(vf1, SanitizeFloatMask(Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, ((((short)vi8 + (931)) & 0x3FF)) << 4)), 0x1), 0x1u);
-        vf27 = Ps2Vu0.BlendMask(vf27, (vf25 + vf17), 0xEu);
+        vf27 = (vf25 + vf17);
         vf30 = Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, ((((short)vi4 + (4)) & 0x3FF)) << 4));
         vf17 = Ps2Vu0.BlendMask(vf17, Vector128.ConvertToSingle(vf29.AsInt32()), 0xEu);
         vi9 = (ushort)(vi9 & vi5);
         vf26 = (vf26 * Ps2Vu0.BroadcastBc(vf1, 3u));
-        vf31 = Ps2Vu0.BlendMask(vf31, Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, ((((short)vi9 + (6)) & 0x3FF)) << 4)), 0xEu);
-        vf27 = Ps2Vu0.BlendMask(vf27, (vf27 + vf28), 0xEu);
-        vf29 = Ps2Vu0.BlendMask(vf29, SanitizeFloatMask(Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, ((((short)vi9 + (7)) & 0x3FF)) << 4)), 0xE), 0xEu);
+        vf31 = Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, ((((short)vi9 + (6)) & 0x3FF)) << 4));
+        vf27 = (vf27 + vf28);
+        vf29 = SanitizeFloatMask(Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, ((((short)vi9 + (7)) & 0x3FF)) << 4)), 0xE);
         vf28 = Vector128.ConvertToSingle(vf30.AsInt32());
         vf30 = Ps2Vu0.BlendMask(vf30, SanitizeFloatMask(Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, ((((short)vi9 + (8)) & 0x3FF)) << 4)), 0xE), 0xEu);
         acc = (vf31 * Ps2Vu0.BroadcastBc(vf17, 0u));
         vf25 = Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, ((((short)vi4 + (2)) & 0x3FF)) << 4));
-        vf27 = Ps2Vu0.BlendMask(vf27, (vf27 + vf26), 0xEu);
+        vf27 = (vf27 + vf26);
         vi8 = Unsafe.ReadUnaligned<ushort>(ref Unsafe.Add(ref dm, (((vi4 & 0x3FF)) << 4) + 12));
         acc = FmaAdd(vf29, Ps2Vu0.BroadcastBc(vf17, 1u), acc);
         Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, ((((short)vi3 + (4)) & 0x3FF)) << 4)) = vf24;
@@ -20150,11 +20347,11 @@ internal static class Vu1AotPrograms
         acc = (vf5 * Ps2Vu0.BroadcastBc(vf27, 0u));
         acc = FmaAdd(vf6, Ps2Vu0.BroadcastBc(vf27, 1u), acc);
         acc = FmaAdd(vf7, Ps2Vu0.BroadcastBc(vf27, 2u), acc);
-        vf29 = Ps2Vu0.BlendMask(vf29, (acc + vf8), 0xEu);
+        vf29 = (acc + vf8);
         acc = (vf9 * Ps2Vu0.BroadcastBc(vf27, 0u));
         {
-            var v = vf17;
-            vu.P = vu.PendingP = Vu1State.VuRsqrtFast(1.0f, v.GetElement(0) * v.GetElement(0) + v.GetElement(1) * v.GetElement(1) + v.GetElement(2) * v.GetElement(2));
+            var v = vf17; v *= v;
+            regP = Vu1State.VuRsqrtFast(1.0f, v.GetElement(0) + v.GetElement(1) + v.GetElement(2));
         }
         acc = FmaAdd(vf10, Ps2Vu0.BroadcastBc(vf27, 1u), acc);
         acc = FmaAdd(vf11, Ps2Vu0.BroadcastBc(vf27, 2u), acc);
@@ -20162,12 +20359,11 @@ internal static class Vu1AotPrograms
         acc = (vf13 * Ps2Vu0.BroadcastBc(vf27, 0u));
         acc = FmaAdd(vf14, Ps2Vu0.BroadcastBc(vf27, 1u), acc);
         acc = FmaAdd(vf15, Ps2Vu0.BroadcastBc(vf27, 2u), acc);
-        vf27 = Ps2Vu0.BlendMask(vf27, (acc + vf16), 0xEu);
+        vf27 = (acc + vf16);
         acc = (vf28 * Ps2Vu0.BroadcastBc(vf26, 0u));
         acc = FmaAdd(vf29, Ps2Vu0.BroadcastBc(vf26, 1u), acc);
         acc = FmaAdd(vf30, Ps2Vu0.BroadcastBc(vf26, 2u), acc);
-        vf26 = Ps2Vu0.BlendMask(vf26, FmaAdd(vf27, Ps2Vu0.BroadcastBc(vf26, 3u), acc), 0xEu);
-        vu.P = vu.PendingP;
+        vf26 = FmaAdd(vf27, Ps2Vu0.BroadcastBc(vf26, 3u), acc);
         acc = (vf18 * Ps2Vu0.BroadcastBc(vf26, 0u));
         acc = FmaAdd(vf19, Ps2Vu0.BroadcastBc(vf26, 1u), acc);
         acc = FmaAdd(vf20, Ps2Vu0.BroadcastBc(vf26, 2u), acc);
@@ -20177,12 +20373,12 @@ internal static class Vu1AotPrograms
         tmp = Vf0;
         regQ = Vu1State.VuDivFast(1.0f, vf26.GetElement(3));
         vf26 = Ps2Vu0.BlendMask(vf26, tmp, 0x1u);
-        vf1 = Ps2Vu0.BlendMask(vf1, Vector128.Create(vu.P), 0x1u);
+        vf1 = Ps2Vu0.BlendMask(vf1, Vector128.Create(regP), 0x1u);
         vf25 = Vu1State.ExecItof(vf25, 12);
         vf17 = Ps2Vu0.BlendMask(vf17, (vf17 * Ps2Vu0.BroadcastBc(vf1, 3u)), 0xEu);
         vi6 = (ushort)(vi6 | vi8);
         tmp = (vf26 * Vector128.Create(regQ));
-        vu.UpdateMacFlagsOnly(tmp, 0xFu);
+        macFlags = Vu1State.ComputeMacFlagsW(tmp);
         vf28 = tmp;
         vi8 = unchecked((ushort)(vi7 + 0u));
         Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, ((((short)vi4 + (2)) & 0x3FF)) << 4)) = vf25;
@@ -20191,7 +20387,7 @@ internal static class Vu1AotPrograms
         tmp = VuMax(vf28, vf22);
         { ref byte sq_1320 = ref Unsafe.Add(ref dm, ((((short)vi4 + (1)) & 0x3FF)) << 4); Unsafe.WriteUnaligned(ref sq_1320, vf17.AsUInt64().GetElement(0)); Unsafe.WriteUnaligned(ref Unsafe.Add(ref sq_1320, 8), vf17.GetElement(2)); }
         vf17 = Ps2Vu0.BlendMask(vf17, tmp, 0xEu);
-        vi7 = (ushort)(vu.MacFlags & vi7);
+        vi7 = (ushort)(macFlags & vi7);
         vf26 = (vf25 * Vector128.Create(regQ));
         vi4 = unchecked((ushort)(vi4 + 9u));
         vf17 = Ps2Vu0.BlendMask(vf17, VuMin(vf17, vf23), 0xEu);
@@ -20222,7 +20418,7 @@ internal static class Vu1AotPrograms
         acc = (vf5 * Ps2Vu0.BroadcastBc(vf17, 0u));
         acc = FmaAdd(vf6, Ps2Vu0.BroadcastBc(vf17, 1u), acc);
         acc = FmaAdd(vf7, Ps2Vu0.BroadcastBc(vf17, 2u), acc);
-        vf27 = Ps2Vu0.BlendMask(vf27, (acc + vf8), 0xEu);
+        vf27 = (acc + vf8);
         acc = (vf9 * Ps2Vu0.BroadcastBc(vf17, 0u));
         acc = FmaAdd(vf10, Ps2Vu0.BroadcastBc(vf17, 1u), acc);
         acc = FmaAdd(vf11, Ps2Vu0.BroadcastBc(vf17, 2u), acc);
@@ -20243,7 +20439,7 @@ internal static class Vu1AotPrograms
         regQ = Vu1State.VuDivFast(1.0f, vf25.GetElement(3));
         vf25 = Ps2Vu0.BlendMask(vf25, Vf0, 0x1u);
         tmp = (vf25 * Vector128.Create(regQ));
-        vu.UpdateMacFlagsOnly(tmp, 0xFu);
+        macFlags = Vu1State.ComputeMacFlagsW(tmp);
         vf26 = tmp;
         vi5 = Unsafe.ReadUnaligned<ushort>(ref Unsafe.Add(ref dm, (((vi4 & 0x3FF)) << 4) + 12));
         vf25 = Vf0Mr32;
@@ -20257,7 +20453,7 @@ internal static class Vu1AotPrograms
         vi7 = unchecked((ushort)(((ushort)0) + 17u));
         vf25 = Ps2Vu0.BlendMask(vf25, VuMin(vf17, vf23), 0xEu);
         vi1 = unchecked((ushort)(vi1 - 1u));
-        vi7 = (ushort)(vu.MacFlags & vi7);
+        vi7 = (ushort)(macFlags & vi7);
         vi7 = unchecked((ushort)(vi7 + 32767u));
         vi8 = (ushort)(vi6 | vi7);
         vf25 = Ps2Vu0.BlendMask(vf25, Vu1State.ExecFtoi(vf25, 4), 0xEu);
@@ -20337,26 +20533,26 @@ internal static class Vu1AotPrograms
         Unsafe.Add(ref vf, 9) = vf9;
         Unsafe.Add(ref vf, 10) = vf10;
         Unsafe.Add(ref vf, 11) = vf11;
-        Unsafe.Add(ref vf, 12) = vf12;
-        Unsafe.Add(ref vf, 13) = vf13;
-        Unsafe.Add(ref vf, 14) = vf14;
-        Unsafe.Add(ref vf, 15) = vf15;
-        Unsafe.Add(ref vf, 16) = vf16;
+        { ref Vector128<float> fl_12 = ref Unsafe.Add(ref vf, 12); fl_12 = Ps2Vu0.BlendMask(fl_12, vf12, 0xEu); }
+        { ref Vector128<float> fl_13 = ref Unsafe.Add(ref vf, 13); fl_13 = Ps2Vu0.BlendMask(fl_13, vf13, 0xEu); }
+        { ref Vector128<float> fl_14 = ref Unsafe.Add(ref vf, 14); fl_14 = Ps2Vu0.BlendMask(fl_14, vf14, 0xEu); }
+        { ref Vector128<float> fl_15 = ref Unsafe.Add(ref vf, 15); fl_15 = Ps2Vu0.BlendMask(fl_15, vf15, 0xEu); }
+        { ref Vector128<float> fl_16 = ref Unsafe.Add(ref vf, 16); fl_16 = Ps2Vu0.BlendMask(fl_16, vf16, 0xEu); }
         Unsafe.Add(ref vf, 17) = vf17;
         Unsafe.Add(ref vf, 18) = vf18;
         Unsafe.Add(ref vf, 19) = vf19;
         Unsafe.Add(ref vf, 20) = vf20;
         Unsafe.Add(ref vf, 21) = vf21;
-        Unsafe.Add(ref vf, 22) = vf22;
-        Unsafe.Add(ref vf, 23) = vf23;
+        { ref Vector128<float> fl_22 = ref Unsafe.Add(ref vf, 22); fl_22 = Ps2Vu0.BlendMask(fl_22, vf22, 0xEu); }
+        { ref Vector128<float> fl_23 = ref Unsafe.Add(ref vf, 23); fl_23 = Ps2Vu0.BlendMask(fl_23, vf23, 0xEu); }
         Unsafe.Add(ref vf, 24) = vf24;
         Unsafe.Add(ref vf, 25) = vf25;
         Unsafe.Add(ref vf, 26) = vf26;
-        Unsafe.Add(ref vf, 27) = vf27;
+        { ref Vector128<float> fl_27 = ref Unsafe.Add(ref vf, 27); fl_27 = Ps2Vu0.BlendMask(fl_27, vf27, 0xEu); }
         Unsafe.Add(ref vf, 28) = vf28;
-        Unsafe.Add(ref vf, 29) = vf29;
+        { ref Vector128<float> fl_29 = ref Unsafe.Add(ref vf, 29); fl_29 = Ps2Vu0.BlendMask(fl_29, vf29, 0xEu); }
         Unsafe.Add(ref vf, 30) = vf30;
-        Unsafe.Add(ref vf, 31) = vf31;
+        { ref Vector128<float> fl_31 = ref Unsafe.Add(ref vf, 31); fl_31 = Ps2Vu0.BlendMask(fl_31, vf31, 0xEu); }
         Unsafe.Add(ref vi, 1) = vi1;
         Unsafe.Add(ref vi, 2) = vi2;
         Unsafe.Add(ref vi, 3) = vi3;
@@ -20374,6 +20570,9 @@ internal static class Vu1AotPrograms
         Unsafe.Add(ref vi, 15) = vi15;
         vu.Q = regQ;
         vu.I = regI;
+        vu.P = regP;
+        vu.PendingP = regP;
+        vu.MacFlags = macFlags;
         Sub_Base1_0898(vu, ref steps, ref acc, true);
         if (steps >= 65536) { vu.ACC = acc; vu.TotalInstructionsExecuted += steps; return; }
         vf1 = Unsafe.Add(ref vf, 1);
@@ -20424,6 +20623,9 @@ internal static class Vu1AotPrograms
         vi15 = Unsafe.Add(ref vi, 15);
         regQ = vu.Q;
         regI = vu.I;
+        regP = vu.P;
+        regPendingP = vu.PendingP;
+        macFlags = vu.MacFlags;
     slot_1573:
         vi1 = Unsafe.ReadUnaligned<ushort>(ref Unsafe.Add(ref dm, ((0x48) << 4) + 12));
         vi3 = Unsafe.ReadUnaligned<ushort>(ref Unsafe.Add(ref dm, ((vi2 & 0x3FF)) << 4));
@@ -20483,26 +20685,26 @@ internal static class Vu1AotPrograms
         Unsafe.Add(ref vf, 9) = vf9;
         Unsafe.Add(ref vf, 10) = vf10;
         Unsafe.Add(ref vf, 11) = vf11;
-        Unsafe.Add(ref vf, 12) = vf12;
-        Unsafe.Add(ref vf, 13) = vf13;
-        Unsafe.Add(ref vf, 14) = vf14;
-        Unsafe.Add(ref vf, 15) = vf15;
-        Unsafe.Add(ref vf, 16) = vf16;
+        { ref Vector128<float> fl_12 = ref Unsafe.Add(ref vf, 12); fl_12 = Ps2Vu0.BlendMask(fl_12, vf12, 0xEu); }
+        { ref Vector128<float> fl_13 = ref Unsafe.Add(ref vf, 13); fl_13 = Ps2Vu0.BlendMask(fl_13, vf13, 0xEu); }
+        { ref Vector128<float> fl_14 = ref Unsafe.Add(ref vf, 14); fl_14 = Ps2Vu0.BlendMask(fl_14, vf14, 0xEu); }
+        { ref Vector128<float> fl_15 = ref Unsafe.Add(ref vf, 15); fl_15 = Ps2Vu0.BlendMask(fl_15, vf15, 0xEu); }
+        { ref Vector128<float> fl_16 = ref Unsafe.Add(ref vf, 16); fl_16 = Ps2Vu0.BlendMask(fl_16, vf16, 0xEu); }
         Unsafe.Add(ref vf, 17) = vf17;
         Unsafe.Add(ref vf, 18) = vf18;
         Unsafe.Add(ref vf, 19) = vf19;
         Unsafe.Add(ref vf, 20) = vf20;
         Unsafe.Add(ref vf, 21) = vf21;
-        Unsafe.Add(ref vf, 22) = vf22;
-        Unsafe.Add(ref vf, 23) = vf23;
+        { ref Vector128<float> fl_22 = ref Unsafe.Add(ref vf, 22); fl_22 = Ps2Vu0.BlendMask(fl_22, vf22, 0xEu); }
+        { ref Vector128<float> fl_23 = ref Unsafe.Add(ref vf, 23); fl_23 = Ps2Vu0.BlendMask(fl_23, vf23, 0xEu); }
         Unsafe.Add(ref vf, 24) = vf24;
         Unsafe.Add(ref vf, 25) = vf25;
         Unsafe.Add(ref vf, 26) = vf26;
-        Unsafe.Add(ref vf, 27) = vf27;
+        { ref Vector128<float> fl_27 = ref Unsafe.Add(ref vf, 27); fl_27 = Ps2Vu0.BlendMask(fl_27, vf27, 0xEu); }
         Unsafe.Add(ref vf, 28) = vf28;
-        Unsafe.Add(ref vf, 29) = vf29;
+        { ref Vector128<float> fl_29 = ref Unsafe.Add(ref vf, 29); fl_29 = Ps2Vu0.BlendMask(fl_29, vf29, 0xEu); }
         Unsafe.Add(ref vf, 30) = vf30;
-        Unsafe.Add(ref vf, 31) = vf31;
+        { ref Vector128<float> fl_31 = ref Unsafe.Add(ref vf, 31); fl_31 = Ps2Vu0.BlendMask(fl_31, vf31, 0xEu); }
         Unsafe.Add(ref vi, 1) = vi1;
         Unsafe.Add(ref vi, 2) = vi2;
         Unsafe.Add(ref vi, 3) = vi3;
@@ -20520,6 +20722,9 @@ internal static class Vu1AotPrograms
         Unsafe.Add(ref vi, 15) = vi15;
         vu.Q = regQ;
         vu.I = regI;
+        vu.P = regP;
+        vu.PendingP = regP;
+        vu.MacFlags = macFlags;
         Sub_Base1_0898(vu, ref steps, ref acc, true);
         if (steps >= 65536) { vu.ACC = acc; vu.TotalInstructionsExecuted += steps; return; }
         vf1 = Unsafe.Add(ref vf, 1);
@@ -20570,6 +20775,9 @@ internal static class Vu1AotPrograms
         vi15 = Unsafe.Add(ref vi, 15);
         regQ = vu.Q;
         regI = vu.I;
+        regP = vu.P;
+        regPendingP = vu.PendingP;
+        macFlags = vu.MacFlags;
         steps += 2;
         goto slot_1636;
     slot_1617:
@@ -20647,26 +20855,26 @@ internal static class Vu1AotPrograms
         Unsafe.Add(ref vf, 9) = vf9;
         Unsafe.Add(ref vf, 10) = vf10;
         Unsafe.Add(ref vf, 11) = vf11;
-        Unsafe.Add(ref vf, 12) = vf12;
-        Unsafe.Add(ref vf, 13) = vf13;
-        Unsafe.Add(ref vf, 14) = vf14;
-        Unsafe.Add(ref vf, 15) = vf15;
-        Unsafe.Add(ref vf, 16) = vf16;
+        { ref Vector128<float> fl_12 = ref Unsafe.Add(ref vf, 12); fl_12 = Ps2Vu0.BlendMask(fl_12, vf12, 0xEu); }
+        { ref Vector128<float> fl_13 = ref Unsafe.Add(ref vf, 13); fl_13 = Ps2Vu0.BlendMask(fl_13, vf13, 0xEu); }
+        { ref Vector128<float> fl_14 = ref Unsafe.Add(ref vf, 14); fl_14 = Ps2Vu0.BlendMask(fl_14, vf14, 0xEu); }
+        { ref Vector128<float> fl_15 = ref Unsafe.Add(ref vf, 15); fl_15 = Ps2Vu0.BlendMask(fl_15, vf15, 0xEu); }
+        { ref Vector128<float> fl_16 = ref Unsafe.Add(ref vf, 16); fl_16 = Ps2Vu0.BlendMask(fl_16, vf16, 0xEu); }
         Unsafe.Add(ref vf, 17) = vf17;
         Unsafe.Add(ref vf, 18) = vf18;
         Unsafe.Add(ref vf, 19) = vf19;
         Unsafe.Add(ref vf, 20) = vf20;
         Unsafe.Add(ref vf, 21) = vf21;
-        Unsafe.Add(ref vf, 22) = vf22;
-        Unsafe.Add(ref vf, 23) = vf23;
+        { ref Vector128<float> fl_22 = ref Unsafe.Add(ref vf, 22); fl_22 = Ps2Vu0.BlendMask(fl_22, vf22, 0xEu); }
+        { ref Vector128<float> fl_23 = ref Unsafe.Add(ref vf, 23); fl_23 = Ps2Vu0.BlendMask(fl_23, vf23, 0xEu); }
         Unsafe.Add(ref vf, 24) = vf24;
         Unsafe.Add(ref vf, 25) = vf25;
         Unsafe.Add(ref vf, 26) = vf26;
-        Unsafe.Add(ref vf, 27) = vf27;
+        { ref Vector128<float> fl_27 = ref Unsafe.Add(ref vf, 27); fl_27 = Ps2Vu0.BlendMask(fl_27, vf27, 0xEu); }
         Unsafe.Add(ref vf, 28) = vf28;
-        Unsafe.Add(ref vf, 29) = vf29;
+        { ref Vector128<float> fl_29 = ref Unsafe.Add(ref vf, 29); fl_29 = Ps2Vu0.BlendMask(fl_29, vf29, 0xEu); }
         Unsafe.Add(ref vf, 30) = vf30;
-        Unsafe.Add(ref vf, 31) = vf31;
+        { ref Vector128<float> fl_31 = ref Unsafe.Add(ref vf, 31); fl_31 = Ps2Vu0.BlendMask(fl_31, vf31, 0xEu); }
         Unsafe.Add(ref vi, 1) = vi1;
         Unsafe.Add(ref vi, 2) = vi2;
         Unsafe.Add(ref vi, 3) = vi3;
@@ -20684,6 +20892,9 @@ internal static class Vu1AotPrograms
         Unsafe.Add(ref vi, 15) = vi15;
         vu.Q = regQ;
         vu.I = regI;
+        vu.P = regP;
+        vu.PendingP = regP;
+        vu.MacFlags = macFlags;
         vu.ACC = acc;
         vu.Tpc = 0x33B0;
         vu.TotalInstructionsExecuted += steps;
@@ -20700,26 +20911,26 @@ internal static class Vu1AotPrograms
         Unsafe.Add(ref vf, 9) = vf9;
         Unsafe.Add(ref vf, 10) = vf10;
         Unsafe.Add(ref vf, 11) = vf11;
-        Unsafe.Add(ref vf, 12) = vf12;
-        Unsafe.Add(ref vf, 13) = vf13;
-        Unsafe.Add(ref vf, 14) = vf14;
-        Unsafe.Add(ref vf, 15) = vf15;
-        Unsafe.Add(ref vf, 16) = vf16;
+        { ref Vector128<float> fl_12 = ref Unsafe.Add(ref vf, 12); fl_12 = Ps2Vu0.BlendMask(fl_12, vf12, 0xEu); }
+        { ref Vector128<float> fl_13 = ref Unsafe.Add(ref vf, 13); fl_13 = Ps2Vu0.BlendMask(fl_13, vf13, 0xEu); }
+        { ref Vector128<float> fl_14 = ref Unsafe.Add(ref vf, 14); fl_14 = Ps2Vu0.BlendMask(fl_14, vf14, 0xEu); }
+        { ref Vector128<float> fl_15 = ref Unsafe.Add(ref vf, 15); fl_15 = Ps2Vu0.BlendMask(fl_15, vf15, 0xEu); }
+        { ref Vector128<float> fl_16 = ref Unsafe.Add(ref vf, 16); fl_16 = Ps2Vu0.BlendMask(fl_16, vf16, 0xEu); }
         Unsafe.Add(ref vf, 17) = vf17;
         Unsafe.Add(ref vf, 18) = vf18;
         Unsafe.Add(ref vf, 19) = vf19;
         Unsafe.Add(ref vf, 20) = vf20;
         Unsafe.Add(ref vf, 21) = vf21;
-        Unsafe.Add(ref vf, 22) = vf22;
-        Unsafe.Add(ref vf, 23) = vf23;
+        { ref Vector128<float> fl_22 = ref Unsafe.Add(ref vf, 22); fl_22 = Ps2Vu0.BlendMask(fl_22, vf22, 0xEu); }
+        { ref Vector128<float> fl_23 = ref Unsafe.Add(ref vf, 23); fl_23 = Ps2Vu0.BlendMask(fl_23, vf23, 0xEu); }
         Unsafe.Add(ref vf, 24) = vf24;
         Unsafe.Add(ref vf, 25) = vf25;
         Unsafe.Add(ref vf, 26) = vf26;
-        Unsafe.Add(ref vf, 27) = vf27;
+        { ref Vector128<float> fl_27 = ref Unsafe.Add(ref vf, 27); fl_27 = Ps2Vu0.BlendMask(fl_27, vf27, 0xEu); }
         Unsafe.Add(ref vf, 28) = vf28;
-        Unsafe.Add(ref vf, 29) = vf29;
+        { ref Vector128<float> fl_29 = ref Unsafe.Add(ref vf, 29); fl_29 = Ps2Vu0.BlendMask(fl_29, vf29, 0xEu); }
         Unsafe.Add(ref vf, 30) = vf30;
-        Unsafe.Add(ref vf, 31) = vf31;
+        { ref Vector128<float> fl_31 = ref Unsafe.Add(ref vf, 31); fl_31 = Ps2Vu0.BlendMask(fl_31, vf31, 0xEu); }
         Unsafe.Add(ref vi, 1) = vi1;
         Unsafe.Add(ref vi, 2) = vi2;
         Unsafe.Add(ref vi, 3) = vi3;
@@ -20737,6 +20948,9 @@ internal static class Vu1AotPrograms
         Unsafe.Add(ref vi, 15) = vi15;
         vu.Q = regQ;
         vu.I = regI;
+        vu.P = regP;
+        vu.PendingP = regP;
+        vu.MacFlags = macFlags;
         vu.ACC = acc;
         vu.TotalInstructionsExecuted += steps;
         return;
@@ -20802,6 +21016,9 @@ internal static class Vu1AotPrograms
         ushort vi15 = Unsafe.Add(ref vi, 15);
         float regQ = vu.Q;
         float regI = vu.I;
+        float regP = vu.P;
+        float regPendingP = vu.PendingP; _ = regPendingP;
+        ushort macFlags = vu.MacFlags;
         goto slot_1333;
     slot_420:
         vf5 = SanitizeFloatMask(Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, (0x38) << 4)), 0xE);
@@ -20833,6 +21050,7 @@ internal static class Vu1AotPrograms
         steps += 14;
         if (btTmp) goto slot_452;
     slot_434:
+        if ((short)vi12 >= 3) Vu1AotFastLoops.RunLightingLoop_434(ref dm, vf1, vf2, vf3, vf4, vf5, vf6, vf7, vf8, vf9, ref vi10, ref vi11, ref vi12, vi13, vi14, ref steps);
         vf10 = Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, ((vi10 & 0x3FF)) << 4));
         acc = (vf2 * Ps2Vu0.BroadcastBc(vf10, 0u));
         vi10 = unchecked((ushort)(vi10 + vi14));
@@ -20867,7 +21085,7 @@ internal static class Vu1AotPrograms
         vi2 = vu.Top;
         vi4 = unchecked((ushort)(vi2 + 1u));
         vi1 = Unsafe.ReadUnaligned<ushort>(ref Unsafe.Add(ref dm, ((vi2 & 0x3FF)) << 4));
-        vf2 = Ps2Vu0.BlendMask(vf2, SanitizeFloatMask(Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, (0x7) << 4)), 0xE), 0xEu);
+        vf2 = SanitizeFloatMask(Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, (0x7) << 4)), 0xE);
         vf3 = Ps2Vu0.BlendMask(vf3, Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, (0x8) << 4)), 0xEu);
         vf4 = Ps2Vu0.BlendMask(vf4, Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, (0x9) << 4)), 0xEu);
         vf5 = Ps2Vu0.BlendMask(vf5, Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, (0xA) << 4)), 0xEu);
@@ -20877,24 +21095,24 @@ internal static class Vu1AotPrograms
         vf9 = Ps2Vu0.BlendMask(vf9, Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, (0xE) << 4)), 0xEu);
         vf10 = Ps2Vu0.BlendMask(vf10, Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, (0xF) << 4)), 0xEu);
         vf11 = Ps2Vu0.BlendMask(vf11, Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, (0x10) << 4)), 0xEu);
-        vf12 = Ps2Vu0.BlendMask(vf12, Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, (0x11) << 4)), 0xEu);
-        vf13 = Ps2Vu0.BlendMask(vf13, Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, (0x12) << 4)), 0xEu);
-        vf14 = Ps2Vu0.BlendMask(vf14, Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, (0x13) << 4)), 0xEu);
-        vf15 = Ps2Vu0.BlendMask(vf15, Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, (0x14) << 4)), 0xEu);
+        vf12 = Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, (0x11) << 4));
+        vf13 = Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, (0x12) << 4));
+        vf14 = Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, (0x13) << 4));
+        vf15 = Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, (0x14) << 4));
         regI = BitConverter.UInt32BitsToSingle(0x3B808081u);
-        vf16 = Ps2Vu0.BlendMask(vf16, Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, (0x15) << 4)), 0xEu);
+        vf16 = Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, (0x15) << 4));
         vi5 = unchecked((ushort)(((ushort)0) + 31u));
         vf18 = Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, (0x43) << 4));
         vf19 = Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, (0x44) << 4));
         vf20 = Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, (0x45) << 4));
         vf21 = Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, (0x46) << 4));
-        vf22 = Ps2Vu0.BlendMask(vf22, Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, (0x2) << 4)), 0xEu);
-        vf23 = Ps2Vu0.BlendMask(vf23, Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, (0x3) << 4)), 0xEu);
+        vf22 = Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, (0x2) << 4));
+        vf23 = Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, (0x3) << 4));
         vi6 = unchecked((ushort)(((ushort)0) + 0u));
         vf24 = SanitizeFloat(Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, (0x5) << 4)));
         vi3 = Unsafe.ReadUnaligned<ushort>(ref Unsafe.Add(ref dm, (0x39) << 4));
         vi7 = unchecked((ushort)(((ushort)0) + 16384u));
-        vf1 = Ps2Vu0.BlendMask(vf1, SanitizeFloatMask(Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, (0x6) << 4)), 0xE), 0xEu);
+        vf1 = SanitizeFloatMask(Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, (0x6) << 4)), 0xE);
         vi14 = unchecked((ushort)(((ushort)0) + 5u));
         vi8 = (ushort)(vi3 & vi7);
         vi3 = Unsafe.ReadUnaligned<ushort>(ref Unsafe.Add(ref dm, ((0x48) << 4) + 12));
@@ -20905,10 +21123,11 @@ internal static class Vu1AotPrograms
         steps += 36;
         if (btTmp) goto slot_1425;
     slot_1369:
-        vf26 = Ps2Vu0.BlendMask(vf26, Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, ((vi4 & 0x3FF)) << 4)), 0xEu);
+        if ((short)vi1 >= 3) Vu1AotFastLoops.RunSkinnedTransformLoop_1369(ref dm, in vf1, in vf2, in vf3, in vf4, in vf5, in vf6, in vf7, in vf8, in vf9, in vf10, in vf11, in vf12, in vf13, in vf14, in vf15, in vf16, vf17.GetElement(3), in vf18, in vf19, in vf20, in vf21, in vf22, in vf23, in vf24, vi5, ref vi1, ref vi3, ref vi4, ref vi6, ref vi7, ref steps);
+        vf26 = Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, ((vi4 & 0x3FF)) << 4));
         vf25 = Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, ((((short)vi4 + (4)) & 0x3FF)) << 4));
         vf17 = Ps2Vu0.BlendMask(vf17, Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, ((((short)vi4 + (1)) & 0x3FF)) << 4)), 0xEu);
-        vf26 = Ps2Vu0.BlendMask(vf26, Vector128.ConvertToSingle(vf26.AsInt32()), 0xEu);
+        vf26 = Vector128.ConvertToSingle(vf26.AsInt32());
         vi9 = Unsafe.ReadUnaligned<ushort>(ref Unsafe.Add(ref dm, (((vi4 & 0x3FF)) << 4) + 12));
         vf25 = Vector128.ConvertToSingle(vf25.AsInt32());
         vi4 = unchecked((ushort)(vi4 + 5u));
@@ -20919,28 +21138,28 @@ internal static class Vu1AotPrograms
         vf25 = (vf25 * Ps2Vu0.BroadcastBc(vf17, 3u));
         acc = FmaAdd(vf2, Ps2Vu0.BroadcastBc(vf26, 1u), acc);
         acc = FmaAdd(vf3, Ps2Vu0.BroadcastBc(vf26, 2u), acc);
-        vf27 = Ps2Vu0.BlendMask(vf27, (acc + vf4), 0xEu);
+        vf27 = (acc + vf4);
         acc = (vf5 * Ps2Vu0.BroadcastBc(vf26, 0u));
         acc = FmaAdd(vf6, Ps2Vu0.BroadcastBc(vf26, 1u), acc);
         acc = FmaAdd(vf7, Ps2Vu0.BroadcastBc(vf26, 2u), acc);
-        vf28 = Ps2Vu0.BlendMask(vf28, (acc + vf8), 0xEu);
+        vf28 = (acc + vf8);
         acc = (vf9 * Ps2Vu0.BroadcastBc(vf26, 0u));
         acc = FmaAdd(vf10, Ps2Vu0.BroadcastBc(vf26, 1u), acc);
         acc = FmaAdd(vf11, Ps2Vu0.BroadcastBc(vf26, 2u), acc);
-        vf29 = Ps2Vu0.BlendMask(vf29, (acc + vf12), 0xEu);
+        vf29 = (acc + vf12);
         vi8 = Unsafe.ReadUnaligned<ushort>(ref Unsafe.Add(ref dm, (((((short)vi4 + (-5)) & 0x3FF)) << 4) + 12));
         acc = (vf13 * Ps2Vu0.BroadcastBc(vf26, 0u));
         acc = FmaAdd(vf14, Ps2Vu0.BroadcastBc(vf26, 1u), acc);
         acc = FmaAdd(vf15, Ps2Vu0.BroadcastBc(vf26, 2u), acc);
-        vf26 = Ps2Vu0.BlendMask(vf26, (acc + vf16), 0xEu);
+        vf26 = (acc + vf16);
         vi8 = (ushort)(vi8 & vi5);
         acc = (vf27 * Ps2Vu0.BroadcastBc(vf25, 0u));
-        vf30 = Ps2Vu0.BlendMask(vf30, Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, ((((short)vi8 + (6)) & 0x3FF)) << 4)), 0xEu);
+        vf30 = Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, ((((short)vi8 + (6)) & 0x3FF)) << 4));
         acc = FmaAdd(vf28, Ps2Vu0.BroadcastBc(vf25, 1u), acc);
-        vf28 = Ps2Vu0.BlendMask(vf28, Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, ((((short)vi8 + (7)) & 0x3FF)) << 4)), 0xEu);
+        vf28 = Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, ((((short)vi8 + (7)) & 0x3FF)) << 4));
         acc = FmaAdd(vf29, Ps2Vu0.BroadcastBc(vf25, 2u), acc);
-        vf27 = Ps2Vu0.BlendMask(vf27, SanitizeFloatMask(Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, ((((short)vi8 + (8)) & 0x3FF)) << 4)), 0xE), 0xEu);
-        vf26 = Ps2Vu0.BlendMask(vf26, FmaAdd(vf26, Ps2Vu0.BroadcastBc(vf25, 3u), acc), 0xEu);
+        vf27 = SanitizeFloatMask(Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, ((((short)vi8 + (8)) & 0x3FF)) << 4)), 0xE);
+        vf26 = FmaAdd(vf26, Ps2Vu0.BroadcastBc(vf25, 3u), acc);
         vf25 = Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, ((((short)vi4 + (-3)) & 0x3FF)) << 4));
         acc = (vf30 * Ps2Vu0.BroadcastBc(vf17, 0u));
         acc = FmaAdd(vf28, Ps2Vu0.BroadcastBc(vf17, 1u), acc);
@@ -20948,8 +21167,8 @@ internal static class Vu1AotPrograms
         vf25 = Vu1State.ExecItof(vf25, 12);
         acc = (vf18 * Ps2Vu0.BroadcastBc(vf26, 0u));
         {
-            var v = vf17;
-            vu.P = vu.PendingP = Vu1State.VuRsqrtFast(1.0f, v.GetElement(0) * v.GetElement(0) + v.GetElement(1) * v.GetElement(1) + v.GetElement(2) * v.GetElement(2));
+            var v = vf17; v *= v;
+            regP = Vu1State.VuRsqrtFast(1.0f, v.GetElement(0) + v.GetElement(1) + v.GetElement(2));
         }
         acc = FmaAdd(vf19, Ps2Vu0.BroadcastBc(vf26, 1u), acc);
         Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, ((((short)vi4 + (-3)) & 0x3FF)) << 4)) = vf25;
@@ -20961,18 +21180,17 @@ internal static class Vu1AotPrograms
         regQ = Vu1State.VuDivFast(1.0f, vf26.GetElement(3));
         vf26 = Ps2Vu0.BlendMask(vf26, Vf0, 0x1u);
         tmp = (vf26 * Vector128.Create(regQ));
-        vu.UpdateMacFlagsOnly(tmp, 0xFu);
+        macFlags = Vu1State.ComputeMacFlagsW(tmp);
         vf26 = tmp;
         Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, ((((short)vi3 + (1)) & 0x3FF)) << 4)) = vf24;
-        vf27 = Ps2Vu0.BlendMask(vf27, VuMax(vf26, vf22), 0xEu);
+        vf27 = VuMax(vf26, vf22);
         vi6 = (ushort)(vi6 | vi9);
         vf26 = (vf25 * Vector128.Create(regQ));
         vi8 = unchecked((ushort)(vi7 + 0u));
-        vu.P = vu.PendingP;
         vf25 = Ps2Vu0.BlendMask(vf25, VuMin(vf27, vf23), 0xEu);
         vi7 = unchecked((ushort)(((ushort)0) + 17u));
-        vi7 = (ushort)(vu.MacFlags & vi7);
-        vf1 = Ps2Vu0.BlendMask(vf1, Vector128.Create(vu.P), 0x1u);
+        vi7 = (ushort)(macFlags & vi7);
+        vf1 = Ps2Vu0.BlendMask(vf1, Vector128.Create(regP), 0x1u);
         vi7 = unchecked((ushort)(vi7 + 32767u));
         vf25 = Ps2Vu0.BlendMask(vf25, Vu1State.ExecFtoi(vf25, 4), 0xEu);
         vi9 = (ushort)(vi6 | vi7);
@@ -21001,11 +21219,11 @@ internal static class Vu1AotPrograms
         acc = (vf5 * Ps2Vu0.BroadcastBc(vf17, 0u));
         acc = FmaAdd(vf6, Ps2Vu0.BroadcastBc(vf17, 1u), acc);
         acc = FmaAdd(vf7, Ps2Vu0.BroadcastBc(vf17, 2u), acc);
-        vf27 = Ps2Vu0.BlendMask(vf27, (acc + vf8), 0xEu);
+        vf27 = (acc + vf8);
         acc = (vf9 * Ps2Vu0.BroadcastBc(vf17, 0u));
         acc = FmaAdd(vf10, Ps2Vu0.BroadcastBc(vf17, 1u), acc);
         acc = FmaAdd(vf11, Ps2Vu0.BroadcastBc(vf17, 2u), acc);
-        vf28 = Ps2Vu0.BlendMask(vf28, (acc + vf12), 0xEu);
+        vf28 = (acc + vf12);
         acc = (vf13 * Ps2Vu0.BroadcastBc(vf17, 0u));
         acc = FmaAdd(vf14, Ps2Vu0.BroadcastBc(vf17, 1u), acc);
         acc = FmaAdd(vf15, Ps2Vu0.BroadcastBc(vf17, 2u), acc);
@@ -21022,7 +21240,7 @@ internal static class Vu1AotPrograms
         regQ = Vu1State.VuDivFast(1.0f, vf25.GetElement(3));
         vf25 = Ps2Vu0.BlendMask(vf25, Vf0, 0x1u);
         tmp = (vf25 * Vector128.Create(regQ));
-        vu.UpdateMacFlagsOnly(tmp, 0xFu);
+        macFlags = Vu1State.ComputeMacFlagsW(tmp);
         vf26 = tmp;
         vi5 = Unsafe.ReadUnaligned<ushort>(ref Unsafe.Add(ref dm, (((vi4 & 0x3FF)) << 4) + 12));
         vf25 = Vf0Mr32;
@@ -21036,7 +21254,7 @@ internal static class Vu1AotPrograms
         vi7 = unchecked((ushort)(((ushort)0) + 17u));
         vf25 = Ps2Vu0.BlendMask(vf25, VuMin(vf17, vf23), 0xEu);
         vi1 = unchecked((ushort)(vi1 - 1u));
-        vi7 = (ushort)(vu.MacFlags & vi7);
+        vi7 = (ushort)(macFlags & vi7);
         vi7 = unchecked((ushort)(vi7 + 32767u));
         vi8 = (ushort)(vi6 | vi7);
         vf25 = Ps2Vu0.BlendMask(vf25, Vu1State.ExecFtoi(vf25, 4), 0xEu);
@@ -21116,25 +21334,25 @@ internal static class Vu1AotPrograms
         Unsafe.Add(ref vf, 9) = vf9;
         Unsafe.Add(ref vf, 10) = vf10;
         Unsafe.Add(ref vf, 11) = vf11;
-        Unsafe.Add(ref vf, 12) = vf12;
-        Unsafe.Add(ref vf, 13) = vf13;
-        Unsafe.Add(ref vf, 14) = vf14;
-        Unsafe.Add(ref vf, 15) = vf15;
-        Unsafe.Add(ref vf, 16) = vf16;
+        { ref Vector128<float> fl_12 = ref Unsafe.Add(ref vf, 12); fl_12 = Ps2Vu0.BlendMask(fl_12, vf12, 0xEu); }
+        { ref Vector128<float> fl_13 = ref Unsafe.Add(ref vf, 13); fl_13 = Ps2Vu0.BlendMask(fl_13, vf13, 0xEu); }
+        { ref Vector128<float> fl_14 = ref Unsafe.Add(ref vf, 14); fl_14 = Ps2Vu0.BlendMask(fl_14, vf14, 0xEu); }
+        { ref Vector128<float> fl_15 = ref Unsafe.Add(ref vf, 15); fl_15 = Ps2Vu0.BlendMask(fl_15, vf15, 0xEu); }
+        { ref Vector128<float> fl_16 = ref Unsafe.Add(ref vf, 16); fl_16 = Ps2Vu0.BlendMask(fl_16, vf16, 0xEu); }
         Unsafe.Add(ref vf, 17) = vf17;
         Unsafe.Add(ref vf, 18) = vf18;
         Unsafe.Add(ref vf, 19) = vf19;
         Unsafe.Add(ref vf, 20) = vf20;
         Unsafe.Add(ref vf, 21) = vf21;
-        Unsafe.Add(ref vf, 22) = vf22;
-        Unsafe.Add(ref vf, 23) = vf23;
+        { ref Vector128<float> fl_22 = ref Unsafe.Add(ref vf, 22); fl_22 = Ps2Vu0.BlendMask(fl_22, vf22, 0xEu); }
+        { ref Vector128<float> fl_23 = ref Unsafe.Add(ref vf, 23); fl_23 = Ps2Vu0.BlendMask(fl_23, vf23, 0xEu); }
         Unsafe.Add(ref vf, 24) = vf24;
         Unsafe.Add(ref vf, 25) = vf25;
         Unsafe.Add(ref vf, 26) = vf26;
-        Unsafe.Add(ref vf, 27) = vf27;
-        Unsafe.Add(ref vf, 28) = vf28;
-        Unsafe.Add(ref vf, 29) = vf29;
-        Unsafe.Add(ref vf, 30) = vf30;
+        { ref Vector128<float> fl_27 = ref Unsafe.Add(ref vf, 27); fl_27 = Ps2Vu0.BlendMask(fl_27, vf27, 0xEu); }
+        { ref Vector128<float> fl_28 = ref Unsafe.Add(ref vf, 28); fl_28 = Ps2Vu0.BlendMask(fl_28, vf28, 0xEu); }
+        { ref Vector128<float> fl_29 = ref Unsafe.Add(ref vf, 29); fl_29 = Ps2Vu0.BlendMask(fl_29, vf29, 0xEu); }
+        { ref Vector128<float> fl_30 = ref Unsafe.Add(ref vf, 30); fl_30 = Ps2Vu0.BlendMask(fl_30, vf30, 0xEu); }
         Unsafe.Add(ref vi, 1) = vi1;
         Unsafe.Add(ref vi, 2) = vi2;
         Unsafe.Add(ref vi, 3) = vi3;
@@ -21152,6 +21370,9 @@ internal static class Vu1AotPrograms
         Unsafe.Add(ref vi, 15) = vi15;
         vu.Q = regQ;
         vu.I = regI;
+        vu.P = regP;
+        vu.PendingP = regP;
+        vu.MacFlags = macFlags;
         Sub_Base1_0898(vu, ref steps, ref acc, true);
         if (steps >= 65536) { vu.ACC = acc; vu.TotalInstructionsExecuted += steps; return; }
         vf1 = Unsafe.Add(ref vf, 1);
@@ -21201,6 +21422,9 @@ internal static class Vu1AotPrograms
         vi15 = Unsafe.Add(ref vi, 15);
         regQ = vu.Q;
         regI = vu.I;
+        regP = vu.P;
+        regPendingP = vu.PendingP;
+        macFlags = vu.MacFlags;
     slot_1573:
         vi1 = Unsafe.ReadUnaligned<ushort>(ref Unsafe.Add(ref dm, ((0x48) << 4) + 12));
         vi3 = Unsafe.ReadUnaligned<ushort>(ref Unsafe.Add(ref dm, ((vi2 & 0x3FF)) << 4));
@@ -21260,25 +21484,25 @@ internal static class Vu1AotPrograms
         Unsafe.Add(ref vf, 9) = vf9;
         Unsafe.Add(ref vf, 10) = vf10;
         Unsafe.Add(ref vf, 11) = vf11;
-        Unsafe.Add(ref vf, 12) = vf12;
-        Unsafe.Add(ref vf, 13) = vf13;
-        Unsafe.Add(ref vf, 14) = vf14;
-        Unsafe.Add(ref vf, 15) = vf15;
-        Unsafe.Add(ref vf, 16) = vf16;
+        { ref Vector128<float> fl_12 = ref Unsafe.Add(ref vf, 12); fl_12 = Ps2Vu0.BlendMask(fl_12, vf12, 0xEu); }
+        { ref Vector128<float> fl_13 = ref Unsafe.Add(ref vf, 13); fl_13 = Ps2Vu0.BlendMask(fl_13, vf13, 0xEu); }
+        { ref Vector128<float> fl_14 = ref Unsafe.Add(ref vf, 14); fl_14 = Ps2Vu0.BlendMask(fl_14, vf14, 0xEu); }
+        { ref Vector128<float> fl_15 = ref Unsafe.Add(ref vf, 15); fl_15 = Ps2Vu0.BlendMask(fl_15, vf15, 0xEu); }
+        { ref Vector128<float> fl_16 = ref Unsafe.Add(ref vf, 16); fl_16 = Ps2Vu0.BlendMask(fl_16, vf16, 0xEu); }
         Unsafe.Add(ref vf, 17) = vf17;
         Unsafe.Add(ref vf, 18) = vf18;
         Unsafe.Add(ref vf, 19) = vf19;
         Unsafe.Add(ref vf, 20) = vf20;
         Unsafe.Add(ref vf, 21) = vf21;
-        Unsafe.Add(ref vf, 22) = vf22;
-        Unsafe.Add(ref vf, 23) = vf23;
+        { ref Vector128<float> fl_22 = ref Unsafe.Add(ref vf, 22); fl_22 = Ps2Vu0.BlendMask(fl_22, vf22, 0xEu); }
+        { ref Vector128<float> fl_23 = ref Unsafe.Add(ref vf, 23); fl_23 = Ps2Vu0.BlendMask(fl_23, vf23, 0xEu); }
         Unsafe.Add(ref vf, 24) = vf24;
         Unsafe.Add(ref vf, 25) = vf25;
         Unsafe.Add(ref vf, 26) = vf26;
-        Unsafe.Add(ref vf, 27) = vf27;
-        Unsafe.Add(ref vf, 28) = vf28;
-        Unsafe.Add(ref vf, 29) = vf29;
-        Unsafe.Add(ref vf, 30) = vf30;
+        { ref Vector128<float> fl_27 = ref Unsafe.Add(ref vf, 27); fl_27 = Ps2Vu0.BlendMask(fl_27, vf27, 0xEu); }
+        { ref Vector128<float> fl_28 = ref Unsafe.Add(ref vf, 28); fl_28 = Ps2Vu0.BlendMask(fl_28, vf28, 0xEu); }
+        { ref Vector128<float> fl_29 = ref Unsafe.Add(ref vf, 29); fl_29 = Ps2Vu0.BlendMask(fl_29, vf29, 0xEu); }
+        { ref Vector128<float> fl_30 = ref Unsafe.Add(ref vf, 30); fl_30 = Ps2Vu0.BlendMask(fl_30, vf30, 0xEu); }
         Unsafe.Add(ref vi, 1) = vi1;
         Unsafe.Add(ref vi, 2) = vi2;
         Unsafe.Add(ref vi, 3) = vi3;
@@ -21296,6 +21520,9 @@ internal static class Vu1AotPrograms
         Unsafe.Add(ref vi, 15) = vi15;
         vu.Q = regQ;
         vu.I = regI;
+        vu.P = regP;
+        vu.PendingP = regP;
+        vu.MacFlags = macFlags;
         Sub_Base1_0898(vu, ref steps, ref acc, true);
         if (steps >= 65536) { vu.ACC = acc; vu.TotalInstructionsExecuted += steps; return; }
         vf1 = Unsafe.Add(ref vf, 1);
@@ -21345,6 +21572,9 @@ internal static class Vu1AotPrograms
         vi15 = Unsafe.Add(ref vi, 15);
         regQ = vu.Q;
         regI = vu.I;
+        regP = vu.P;
+        regPendingP = vu.PendingP;
+        macFlags = vu.MacFlags;
         steps += 2;
         goto slot_1636;
     slot_1617:
@@ -21422,25 +21652,25 @@ internal static class Vu1AotPrograms
         Unsafe.Add(ref vf, 9) = vf9;
         Unsafe.Add(ref vf, 10) = vf10;
         Unsafe.Add(ref vf, 11) = vf11;
-        Unsafe.Add(ref vf, 12) = vf12;
-        Unsafe.Add(ref vf, 13) = vf13;
-        Unsafe.Add(ref vf, 14) = vf14;
-        Unsafe.Add(ref vf, 15) = vf15;
-        Unsafe.Add(ref vf, 16) = vf16;
+        { ref Vector128<float> fl_12 = ref Unsafe.Add(ref vf, 12); fl_12 = Ps2Vu0.BlendMask(fl_12, vf12, 0xEu); }
+        { ref Vector128<float> fl_13 = ref Unsafe.Add(ref vf, 13); fl_13 = Ps2Vu0.BlendMask(fl_13, vf13, 0xEu); }
+        { ref Vector128<float> fl_14 = ref Unsafe.Add(ref vf, 14); fl_14 = Ps2Vu0.BlendMask(fl_14, vf14, 0xEu); }
+        { ref Vector128<float> fl_15 = ref Unsafe.Add(ref vf, 15); fl_15 = Ps2Vu0.BlendMask(fl_15, vf15, 0xEu); }
+        { ref Vector128<float> fl_16 = ref Unsafe.Add(ref vf, 16); fl_16 = Ps2Vu0.BlendMask(fl_16, vf16, 0xEu); }
         Unsafe.Add(ref vf, 17) = vf17;
         Unsafe.Add(ref vf, 18) = vf18;
         Unsafe.Add(ref vf, 19) = vf19;
         Unsafe.Add(ref vf, 20) = vf20;
         Unsafe.Add(ref vf, 21) = vf21;
-        Unsafe.Add(ref vf, 22) = vf22;
-        Unsafe.Add(ref vf, 23) = vf23;
+        { ref Vector128<float> fl_22 = ref Unsafe.Add(ref vf, 22); fl_22 = Ps2Vu0.BlendMask(fl_22, vf22, 0xEu); }
+        { ref Vector128<float> fl_23 = ref Unsafe.Add(ref vf, 23); fl_23 = Ps2Vu0.BlendMask(fl_23, vf23, 0xEu); }
         Unsafe.Add(ref vf, 24) = vf24;
         Unsafe.Add(ref vf, 25) = vf25;
         Unsafe.Add(ref vf, 26) = vf26;
-        Unsafe.Add(ref vf, 27) = vf27;
-        Unsafe.Add(ref vf, 28) = vf28;
-        Unsafe.Add(ref vf, 29) = vf29;
-        Unsafe.Add(ref vf, 30) = vf30;
+        { ref Vector128<float> fl_27 = ref Unsafe.Add(ref vf, 27); fl_27 = Ps2Vu0.BlendMask(fl_27, vf27, 0xEu); }
+        { ref Vector128<float> fl_28 = ref Unsafe.Add(ref vf, 28); fl_28 = Ps2Vu0.BlendMask(fl_28, vf28, 0xEu); }
+        { ref Vector128<float> fl_29 = ref Unsafe.Add(ref vf, 29); fl_29 = Ps2Vu0.BlendMask(fl_29, vf29, 0xEu); }
+        { ref Vector128<float> fl_30 = ref Unsafe.Add(ref vf, 30); fl_30 = Ps2Vu0.BlendMask(fl_30, vf30, 0xEu); }
         Unsafe.Add(ref vi, 1) = vi1;
         Unsafe.Add(ref vi, 2) = vi2;
         Unsafe.Add(ref vi, 3) = vi3;
@@ -21458,6 +21688,9 @@ internal static class Vu1AotPrograms
         Unsafe.Add(ref vi, 15) = vi15;
         vu.Q = regQ;
         vu.I = regI;
+        vu.P = regP;
+        vu.PendingP = regP;
+        vu.MacFlags = macFlags;
         vu.ACC = acc;
         vu.Tpc = 0x33B0;
         vu.TotalInstructionsExecuted += steps;
@@ -21474,25 +21707,25 @@ internal static class Vu1AotPrograms
         Unsafe.Add(ref vf, 9) = vf9;
         Unsafe.Add(ref vf, 10) = vf10;
         Unsafe.Add(ref vf, 11) = vf11;
-        Unsafe.Add(ref vf, 12) = vf12;
-        Unsafe.Add(ref vf, 13) = vf13;
-        Unsafe.Add(ref vf, 14) = vf14;
-        Unsafe.Add(ref vf, 15) = vf15;
-        Unsafe.Add(ref vf, 16) = vf16;
+        { ref Vector128<float> fl_12 = ref Unsafe.Add(ref vf, 12); fl_12 = Ps2Vu0.BlendMask(fl_12, vf12, 0xEu); }
+        { ref Vector128<float> fl_13 = ref Unsafe.Add(ref vf, 13); fl_13 = Ps2Vu0.BlendMask(fl_13, vf13, 0xEu); }
+        { ref Vector128<float> fl_14 = ref Unsafe.Add(ref vf, 14); fl_14 = Ps2Vu0.BlendMask(fl_14, vf14, 0xEu); }
+        { ref Vector128<float> fl_15 = ref Unsafe.Add(ref vf, 15); fl_15 = Ps2Vu0.BlendMask(fl_15, vf15, 0xEu); }
+        { ref Vector128<float> fl_16 = ref Unsafe.Add(ref vf, 16); fl_16 = Ps2Vu0.BlendMask(fl_16, vf16, 0xEu); }
         Unsafe.Add(ref vf, 17) = vf17;
         Unsafe.Add(ref vf, 18) = vf18;
         Unsafe.Add(ref vf, 19) = vf19;
         Unsafe.Add(ref vf, 20) = vf20;
         Unsafe.Add(ref vf, 21) = vf21;
-        Unsafe.Add(ref vf, 22) = vf22;
-        Unsafe.Add(ref vf, 23) = vf23;
+        { ref Vector128<float> fl_22 = ref Unsafe.Add(ref vf, 22); fl_22 = Ps2Vu0.BlendMask(fl_22, vf22, 0xEu); }
+        { ref Vector128<float> fl_23 = ref Unsafe.Add(ref vf, 23); fl_23 = Ps2Vu0.BlendMask(fl_23, vf23, 0xEu); }
         Unsafe.Add(ref vf, 24) = vf24;
         Unsafe.Add(ref vf, 25) = vf25;
         Unsafe.Add(ref vf, 26) = vf26;
-        Unsafe.Add(ref vf, 27) = vf27;
-        Unsafe.Add(ref vf, 28) = vf28;
-        Unsafe.Add(ref vf, 29) = vf29;
-        Unsafe.Add(ref vf, 30) = vf30;
+        { ref Vector128<float> fl_27 = ref Unsafe.Add(ref vf, 27); fl_27 = Ps2Vu0.BlendMask(fl_27, vf27, 0xEu); }
+        { ref Vector128<float> fl_28 = ref Unsafe.Add(ref vf, 28); fl_28 = Ps2Vu0.BlendMask(fl_28, vf28, 0xEu); }
+        { ref Vector128<float> fl_29 = ref Unsafe.Add(ref vf, 29); fl_29 = Ps2Vu0.BlendMask(fl_29, vf29, 0xEu); }
+        { ref Vector128<float> fl_30 = ref Unsafe.Add(ref vf, 30); fl_30 = Ps2Vu0.BlendMask(fl_30, vf30, 0xEu); }
         Unsafe.Add(ref vi, 1) = vi1;
         Unsafe.Add(ref vi, 2) = vi2;
         Unsafe.Add(ref vi, 3) = vi3;
@@ -21510,6 +21743,9 @@ internal static class Vu1AotPrograms
         Unsafe.Add(ref vi, 15) = vi15;
         vu.Q = regQ;
         vu.I = regI;
+        vu.P = regP;
+        vu.PendingP = regP;
+        vu.MacFlags = macFlags;
         vu.ACC = acc;
         vu.TotalInstructionsExecuted += steps;
         return;
@@ -21568,6 +21804,7 @@ internal static class Vu1AotPrograms
         ushort vi13 = Unsafe.Add(ref vi, 13);
         ushort vi15 = Unsafe.Add(ref vi, 15);
         float regQ = vu.Q;
+        ushort macFlags = vu.MacFlags;
     slot_1425:
         vf17 = Ps2Vu0.BlendMask(vf17, Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, ((vi4 & 0x3FF)) << 4)), 0xEu);
         vf25 = Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, ((((short)vi4 + (4)) & 0x3FF)) << 4));
@@ -21582,11 +21819,11 @@ internal static class Vu1AotPrograms
         acc = (vf5 * Ps2Vu0.BroadcastBc(vf17, 0u));
         acc = FmaAdd(vf6, Ps2Vu0.BroadcastBc(vf17, 1u), acc);
         acc = FmaAdd(vf7, Ps2Vu0.BroadcastBc(vf17, 2u), acc);
-        vf27 = Ps2Vu0.BlendMask(vf27, (acc + vf8), 0xEu);
+        vf27 = (acc + vf8);
         acc = (vf9 * Ps2Vu0.BroadcastBc(vf17, 0u));
         acc = FmaAdd(vf10, Ps2Vu0.BroadcastBc(vf17, 1u), acc);
         acc = FmaAdd(vf11, Ps2Vu0.BroadcastBc(vf17, 2u), acc);
-        vf28 = Ps2Vu0.BlendMask(vf28, (acc + vf12), 0xEu);
+        vf28 = (acc + vf12);
         acc = (vf13 * Ps2Vu0.BroadcastBc(vf17, 0u));
         acc = FmaAdd(vf14, Ps2Vu0.BroadcastBc(vf17, 1u), acc);
         acc = FmaAdd(vf15, Ps2Vu0.BroadcastBc(vf17, 2u), acc);
@@ -21603,7 +21840,7 @@ internal static class Vu1AotPrograms
         regQ = Vu1State.VuDivFast(1.0f, vf25.GetElement(3));
         vf25 = Ps2Vu0.BlendMask(vf25, Vf0, 0x1u);
         tmp = (vf25 * Vector128.Create(regQ));
-        vu.UpdateMacFlagsOnly(tmp, 0xFu);
+        macFlags = Vu1State.ComputeMacFlagsW(tmp);
         vf26 = tmp;
         vi5 = Unsafe.ReadUnaligned<ushort>(ref Unsafe.Add(ref dm, (((vi4 & 0x3FF)) << 4) + 12));
         vf25 = Vf0Mr32;
@@ -21617,7 +21854,7 @@ internal static class Vu1AotPrograms
         vi7 = unchecked((ushort)(((ushort)0) + 17u));
         vf25 = Ps2Vu0.BlendMask(vf25, VuMin(vf17, vf23), 0xEu);
         vi1 = unchecked((ushort)(vi1 - 1u));
-        vi7 = (ushort)(vu.MacFlags & vi7);
+        vi7 = (ushort)(macFlags & vi7);
         vi7 = unchecked((ushort)(vi7 + 32767u));
         vi8 = (ushort)(vi6 | vi7);
         vf25 = Ps2Vu0.BlendMask(vf25, Vu1State.ExecFtoi(vf25, 4), 0xEu);
@@ -21686,8 +21923,8 @@ internal static class Vu1AotPrograms
         Unsafe.Add(ref vf, 17) = vf17;
         Unsafe.Add(ref vf, 25) = vf25;
         Unsafe.Add(ref vf, 26) = vf26;
-        Unsafe.Add(ref vf, 27) = vf27;
-        Unsafe.Add(ref vf, 28) = vf28;
+        { ref Vector128<float> fl_27 = ref Unsafe.Add(ref vf, 27); fl_27 = Ps2Vu0.BlendMask(fl_27, vf27, 0xEu); }
+        { ref Vector128<float> fl_28 = ref Unsafe.Add(ref vf, 28); fl_28 = Ps2Vu0.BlendMask(fl_28, vf28, 0xEu); }
         Unsafe.Add(ref vi, 1) = vi1;
         Unsafe.Add(ref vi, 2) = vi2;
         Unsafe.Add(ref vi, 3) = vi3;
@@ -21700,6 +21937,7 @@ internal static class Vu1AotPrograms
         Unsafe.Add(ref vi, 13) = vi13;
         Unsafe.Add(ref vi, 15) = vi15;
         vu.Q = regQ;
+        vu.MacFlags = macFlags;
         Sub_Base1_0898(vu, ref steps, ref acc, true);
         if (steps >= 65536) { vu.ACC = acc; vu.TotalInstructionsExecuted += steps; return; }
         vf1 = Unsafe.Add(ref vf, 1);
@@ -21742,6 +21980,7 @@ internal static class Vu1AotPrograms
         vi13 = Unsafe.Add(ref vi, 13);
         vi15 = Unsafe.Add(ref vi, 15);
         regQ = vu.Q;
+        macFlags = vu.MacFlags;
         steps += 2;
         goto slot_1636;
     slot_1617:
@@ -21816,8 +22055,8 @@ internal static class Vu1AotPrograms
         Unsafe.Add(ref vf, 17) = vf17;
         Unsafe.Add(ref vf, 25) = vf25;
         Unsafe.Add(ref vf, 26) = vf26;
-        Unsafe.Add(ref vf, 27) = vf27;
-        Unsafe.Add(ref vf, 28) = vf28;
+        { ref Vector128<float> fl_27 = ref Unsafe.Add(ref vf, 27); fl_27 = Ps2Vu0.BlendMask(fl_27, vf27, 0xEu); }
+        { ref Vector128<float> fl_28 = ref Unsafe.Add(ref vf, 28); fl_28 = Ps2Vu0.BlendMask(fl_28, vf28, 0xEu); }
         Unsafe.Add(ref vi, 1) = vi1;
         Unsafe.Add(ref vi, 2) = vi2;
         Unsafe.Add(ref vi, 3) = vi3;
@@ -21830,6 +22069,7 @@ internal static class Vu1AotPrograms
         Unsafe.Add(ref vi, 13) = vi13;
         Unsafe.Add(ref vi, 15) = vi15;
         vu.Q = regQ;
+        vu.MacFlags = macFlags;
         vu.ACC = acc;
         vu.Tpc = 0x33B0;
         vu.TotalInstructionsExecuted += steps;
@@ -21843,8 +22083,8 @@ internal static class Vu1AotPrograms
         Unsafe.Add(ref vf, 17) = vf17;
         Unsafe.Add(ref vf, 25) = vf25;
         Unsafe.Add(ref vf, 26) = vf26;
-        Unsafe.Add(ref vf, 27) = vf27;
-        Unsafe.Add(ref vf, 28) = vf28;
+        { ref Vector128<float> fl_27 = ref Unsafe.Add(ref vf, 27); fl_27 = Ps2Vu0.BlendMask(fl_27, vf27, 0xEu); }
+        { ref Vector128<float> fl_28 = ref Unsafe.Add(ref vf, 28); fl_28 = Ps2Vu0.BlendMask(fl_28, vf28, 0xEu); }
         Unsafe.Add(ref vi, 1) = vi1;
         Unsafe.Add(ref vi, 2) = vi2;
         Unsafe.Add(ref vi, 3) = vi3;
@@ -21857,6 +22097,7 @@ internal static class Vu1AotPrograms
         Unsafe.Add(ref vi, 13) = vi13;
         Unsafe.Add(ref vi, 15) = vi15;
         vu.Q = regQ;
+        vu.MacFlags = macFlags;
         vu.ACC = acc;
         vu.TotalInstructionsExecuted += steps;
         return;
@@ -21907,6 +22148,7 @@ internal static class Vu1AotPrograms
         ushort vi15 = Unsafe.Add(ref vi, 15);
         float regQ = vu.Q;
         float regI = vu.I;
+        ushort macFlags = vu.MacFlags;
         goto slot_1476;
     slot_420:
         vf5 = SanitizeFloatMask(Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, (0x38) << 4)), 0xE);
@@ -21938,6 +22180,7 @@ internal static class Vu1AotPrograms
         steps += 14;
         if (btTmp) goto slot_452;
     slot_434:
+        if ((short)vi12 >= 3) Vu1AotFastLoops.RunLightingLoop_434(ref dm, vf1, vf2, vf3, vf4, vf5, vf6, vf7, vf8, vf9, ref vi10, ref vi11, ref vi12, vi13, vi14, ref steps);
         vf10 = Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, ((vi10 & 0x3FF)) << 4));
         acc = (vf2 * Ps2Vu0.BroadcastBc(vf10, 0u));
         vi10 = unchecked((ushort)(vi10 + vi14));
@@ -21986,22 +22229,22 @@ internal static class Vu1AotPrograms
         vf10 = Ps2Vu0.BlendMask(vf10, Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, (0x3C) << 4)), 0xEu);
         vf11 = Ps2Vu0.BlendMask(vf11, Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, (0x3D) << 4)), 0xEu);
         vf14 = SanitizeFloat(Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, (0x5) << 4)));
-        vf12 = Ps2Vu0.BlendMask(vf12, Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, (0x2) << 4)), 0xEu);
-        vf13 = Ps2Vu0.BlendMask(vf13, Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, (0x3) << 4)), 0xEu);
+        vf12 = Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, (0x2) << 4));
+        vf13 = Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, (0x3) << 4));
         vi5 = unchecked((ushort)(((ushort)0) + 0u));
         vf14 = Vu1State.ExecFtoi0(vf14);
         vi6 = unchecked((ushort)(((ushort)0) + 0u));
         steps += 21;
     slot_1497:
-        vf15 = Ps2Vu0.BlendMask(vf15, SanitizeFloatMask(Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, ((vi4 & 0x3FF)) << 4)), 0xE), 0xEu);
+        vf15 = SanitizeFloatMask(Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, ((vi4 & 0x3FF)) << 4)), 0xE);
         acc = (vf5 * Ps2Vu0.BroadcastBc(vf15, 0u));
         vi4 = unchecked((ushort)(vi4 + 5u));
         acc = FmaAdd(vf6, Ps2Vu0.BroadcastBc(vf15, 1u), acc);
         vi3 = unchecked((ushort)(vi3 + 3u));
         acc = FmaAdd(vf7, Ps2Vu0.BroadcastBc(vf15, 2u), acc);
-        vf15 = Ps2Vu0.BlendMask(vf15, Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, ((((short)vi4 + (-4)) & 0x3FF)) << 4)), 0xEu);
-        vf16 = Ps2Vu0.BlendMask(vf16, (acc + vf8), 0xEu);
-        vf15 = Ps2Vu0.BlendMask(vf15, Vector128.ConvertToSingle(vf15.AsInt32()), 0xEu);
+        vf15 = Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, ((((short)vi4 + (-4)) & 0x3FF)) << 4));
+        vf16 = (acc + vf8);
+        vf15 = Vector128.ConvertToSingle(vf15.AsInt32());
         acc = (vf1 * Ps2Vu0.BroadcastBc(vf16, 0u));
         acc = FmaAdd(vf2, Ps2Vu0.BroadcastBc(vf16, 1u), acc);
         acc = FmaAdd(vf3, Ps2Vu0.BroadcastBc(vf16, 2u), acc);
@@ -22015,16 +22258,16 @@ internal static class Vu1AotPrograms
         acc = Ps2Vu0.BlendMask(acc, (vf9 * Ps2Vu0.BroadcastBc(vf15, 0u)), 0xEu);
         vi5 = (ushort)(vi5 | vi7);
         tmp = (vf16 * Vector128.Create(regQ));
-        vu.UpdateMacFlagsOnly(tmp, 0xFu);
+        macFlags = Vu1State.ComputeMacFlagsW(tmp);
         vf16 = tmp;
         vi7 = unchecked((ushort)(vi6 + 0u));
         acc = Ps2Vu0.BlendMask(acc, FmaAdd(vf10, Ps2Vu0.BroadcastBc(vf15, 1u), acc), 0xEu);
         vf15 = Ps2Vu0.BlendMask(vf15, SanitizeFloatMask(Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, ((((short)vi4 + (-3)) & 0x3FF)) << 4)), 0xC), 0xCu);
-        vf17 = Ps2Vu0.BlendMask(vf17, FmaAdd(vf11, Ps2Vu0.BroadcastBc(vf15, 2u), acc), 0xEu);
+        vf17 = FmaAdd(vf11, Ps2Vu0.BroadcastBc(vf15, 2u), acc);
         vf15 = Ps2Vu0.BlendMask(vf15, Vf0Mr32, 0x3u);
         vi6 = unchecked((ushort)(((ushort)0) + 17u));
         vf16 = Ps2Vu0.BlendMask(vf16, VuMax(vf16, vf12), 0xEu);
-        vi6 = (ushort)(vu.MacFlags & vi6);
+        vi6 = (ushort)(macFlags & vi6);
         vi6 = unchecked((ushort)(vi6 + 32767u));
         vf15 = (vf15 * Vector128.Create(regQ));
         Unsafe.As<byte, Vector128<float>>(ref Unsafe.Add(ref dm, ((((short)vi3 + (1)) & 0x3FF)) << 4)) = vf14;
@@ -22106,12 +22349,12 @@ internal static class Vu1AotPrograms
         Unsafe.Add(ref vf, 9) = vf9;
         Unsafe.Add(ref vf, 10) = vf10;
         Unsafe.Add(ref vf, 11) = vf11;
-        Unsafe.Add(ref vf, 12) = vf12;
-        Unsafe.Add(ref vf, 13) = vf13;
+        { ref Vector128<float> fl_12 = ref Unsafe.Add(ref vf, 12); fl_12 = Ps2Vu0.BlendMask(fl_12, vf12, 0xEu); }
+        { ref Vector128<float> fl_13 = ref Unsafe.Add(ref vf, 13); fl_13 = Ps2Vu0.BlendMask(fl_13, vf13, 0xEu); }
         Unsafe.Add(ref vf, 14) = vf14;
         Unsafe.Add(ref vf, 15) = vf15;
         Unsafe.Add(ref vf, 16) = vf16;
-        Unsafe.Add(ref vf, 17) = vf17;
+        { ref Vector128<float> fl_17 = ref Unsafe.Add(ref vf, 17); fl_17 = Ps2Vu0.BlendMask(fl_17, vf17, 0xEu); }
         Unsafe.Add(ref vi, 1) = vi1;
         Unsafe.Add(ref vi, 2) = vi2;
         Unsafe.Add(ref vi, 3) = vi3;
@@ -22127,6 +22370,7 @@ internal static class Vu1AotPrograms
         Unsafe.Add(ref vi, 15) = vi15;
         vu.Q = regQ;
         vu.I = regI;
+        vu.MacFlags = macFlags;
         Sub_Base1_0898(vu, ref steps, ref acc, true);
         if (steps >= 65536) { vu.ACC = acc; vu.TotalInstructionsExecuted += steps; return; }
         vf1 = Unsafe.Add(ref vf, 1);
@@ -22161,6 +22405,7 @@ internal static class Vu1AotPrograms
         vi15 = Unsafe.Add(ref vi, 15);
         regQ = vu.Q;
         regI = vu.I;
+        macFlags = vu.MacFlags;
     slot_1573:
         vi1 = Unsafe.ReadUnaligned<ushort>(ref Unsafe.Add(ref dm, ((0x48) << 4) + 12));
         vi3 = Unsafe.ReadUnaligned<ushort>(ref Unsafe.Add(ref dm, ((vi2 & 0x3FF)) << 4));
@@ -22220,12 +22465,12 @@ internal static class Vu1AotPrograms
         Unsafe.Add(ref vf, 9) = vf9;
         Unsafe.Add(ref vf, 10) = vf10;
         Unsafe.Add(ref vf, 11) = vf11;
-        Unsafe.Add(ref vf, 12) = vf12;
-        Unsafe.Add(ref vf, 13) = vf13;
+        { ref Vector128<float> fl_12 = ref Unsafe.Add(ref vf, 12); fl_12 = Ps2Vu0.BlendMask(fl_12, vf12, 0xEu); }
+        { ref Vector128<float> fl_13 = ref Unsafe.Add(ref vf, 13); fl_13 = Ps2Vu0.BlendMask(fl_13, vf13, 0xEu); }
         Unsafe.Add(ref vf, 14) = vf14;
         Unsafe.Add(ref vf, 15) = vf15;
         Unsafe.Add(ref vf, 16) = vf16;
-        Unsafe.Add(ref vf, 17) = vf17;
+        { ref Vector128<float> fl_17 = ref Unsafe.Add(ref vf, 17); fl_17 = Ps2Vu0.BlendMask(fl_17, vf17, 0xEu); }
         Unsafe.Add(ref vi, 1) = vi1;
         Unsafe.Add(ref vi, 2) = vi2;
         Unsafe.Add(ref vi, 3) = vi3;
@@ -22241,6 +22486,7 @@ internal static class Vu1AotPrograms
         Unsafe.Add(ref vi, 15) = vi15;
         vu.Q = regQ;
         vu.I = regI;
+        vu.MacFlags = macFlags;
         Sub_Base1_0898(vu, ref steps, ref acc, true);
         if (steps >= 65536) { vu.ACC = acc; vu.TotalInstructionsExecuted += steps; return; }
         vf1 = Unsafe.Add(ref vf, 1);
@@ -22275,6 +22521,7 @@ internal static class Vu1AotPrograms
         vi15 = Unsafe.Add(ref vi, 15);
         regQ = vu.Q;
         regI = vu.I;
+        macFlags = vu.MacFlags;
         steps += 2;
         goto slot_1636;
     slot_1617:
@@ -22352,12 +22599,12 @@ internal static class Vu1AotPrograms
         Unsafe.Add(ref vf, 9) = vf9;
         Unsafe.Add(ref vf, 10) = vf10;
         Unsafe.Add(ref vf, 11) = vf11;
-        Unsafe.Add(ref vf, 12) = vf12;
-        Unsafe.Add(ref vf, 13) = vf13;
+        { ref Vector128<float> fl_12 = ref Unsafe.Add(ref vf, 12); fl_12 = Ps2Vu0.BlendMask(fl_12, vf12, 0xEu); }
+        { ref Vector128<float> fl_13 = ref Unsafe.Add(ref vf, 13); fl_13 = Ps2Vu0.BlendMask(fl_13, vf13, 0xEu); }
         Unsafe.Add(ref vf, 14) = vf14;
         Unsafe.Add(ref vf, 15) = vf15;
         Unsafe.Add(ref vf, 16) = vf16;
-        Unsafe.Add(ref vf, 17) = vf17;
+        { ref Vector128<float> fl_17 = ref Unsafe.Add(ref vf, 17); fl_17 = Ps2Vu0.BlendMask(fl_17, vf17, 0xEu); }
         Unsafe.Add(ref vi, 1) = vi1;
         Unsafe.Add(ref vi, 2) = vi2;
         Unsafe.Add(ref vi, 3) = vi3;
@@ -22373,6 +22620,7 @@ internal static class Vu1AotPrograms
         Unsafe.Add(ref vi, 15) = vi15;
         vu.Q = regQ;
         vu.I = regI;
+        vu.MacFlags = macFlags;
         vu.ACC = acc;
         vu.Tpc = 0x33B0;
         vu.TotalInstructionsExecuted += steps;
@@ -22389,12 +22637,12 @@ internal static class Vu1AotPrograms
         Unsafe.Add(ref vf, 9) = vf9;
         Unsafe.Add(ref vf, 10) = vf10;
         Unsafe.Add(ref vf, 11) = vf11;
-        Unsafe.Add(ref vf, 12) = vf12;
-        Unsafe.Add(ref vf, 13) = vf13;
+        { ref Vector128<float> fl_12 = ref Unsafe.Add(ref vf, 12); fl_12 = Ps2Vu0.BlendMask(fl_12, vf12, 0xEu); }
+        { ref Vector128<float> fl_13 = ref Unsafe.Add(ref vf, 13); fl_13 = Ps2Vu0.BlendMask(fl_13, vf13, 0xEu); }
         Unsafe.Add(ref vf, 14) = vf14;
         Unsafe.Add(ref vf, 15) = vf15;
         Unsafe.Add(ref vf, 16) = vf16;
-        Unsafe.Add(ref vf, 17) = vf17;
+        { ref Vector128<float> fl_17 = ref Unsafe.Add(ref vf, 17); fl_17 = Ps2Vu0.BlendMask(fl_17, vf17, 0xEu); }
         Unsafe.Add(ref vi, 1) = vi1;
         Unsafe.Add(ref vi, 2) = vi2;
         Unsafe.Add(ref vi, 3) = vi3;
@@ -22410,6 +22658,7 @@ internal static class Vu1AotPrograms
         Unsafe.Add(ref vi, 15) = vi15;
         vu.Q = regQ;
         vu.I = regI;
+        vu.MacFlags = macFlags;
         vu.ACC = acc;
         vu.TotalInstructionsExecuted += steps;
         return;

@@ -29,9 +29,11 @@ SLUS*
 *.cue
 *.img
 
-# Frame and VRAM Debug Dumps
+# Frame and VRAM Debug Dumps & Input Recordings
 *.bmp
 *.png
+*.inp
+Recordings/
 vu1_programs.json
 
 # Internal Documentation & Work History
@@ -53,6 +55,7 @@ Tools/PS2Recomp-main/
 Tools/tsc-blender-io-main/
 Tools/tsc-texture-extractor-main/
 Tools/Recomp agent skill/
+Tools/alternate ps2 castaway recomp/
 Tools/__pycache__/
 Tools/*.py
 Tools/trace_loop.cs
